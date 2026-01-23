@@ -1,0 +1,46 @@
+[gd_scene load_steps=8 format=3 uid="uid://dpvhf7r5xwv5f"]
+
+[ext_resource type="Script" uid="uid://cj0edidy8wr2s" path="res://scripts/player_blob_ctrl.gd" id="1_s7uw5"]
+[ext_resource type="Script" uid="uid://0dmyqqhr117q" path="res://scripts/spring_arm_3d_look.gd" id="2_cnvq6"]
+[ext_resource type="ArrayMesh" uid="uid://cyp3nk03i7m0v" path="res://3dAssets/slime_ico.obj" id="3_5fh1f"]
+[ext_resource type="Material" uid="uid://cw1qq67igdks2" path="res://3dAssets/Purple_blob_tex.tres" id="4_s7uw5"]
+[ext_resource type="Script" uid="uid://b2d4h5lawqfjw" path="res://scripts/limited_blob_body.gd" id="5_yxels"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
+radius = 0.25
+height = 0.5
+
+[sub_resource type="SeparationRayShape3D" id="SeparationRayShape3D_yq3el"]
+
+[node name="CharacterBody3D" type="CharacterBody3D" groups=["player"]]
+script = ExtResource("1_s7uw5")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("CapsuleShape3D_f14xy")
+
+[node name="Node3D" type="Node3D" parent="."]
+
+[node name="SpringArm3D" type="SpringArm3D" parent="."]
+shape = SubResource("SeparationRayShape3D_yq3el")
+spring_length = 5.0
+script = ExtResource("2_cnvq6")
+
+[node name="Camera3D" type="Camera3D" parent="SpringArm3D"]
+transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.9659258, 0, 0, 0)
+
+[node name="SoftBody3D" type="SoftBody3D" parent="." node_paths=PackedStringArray("follow_node")]
+mesh = ExtResource("3_5fh1f")
+surface_material_override/0 = ExtResource("4_s7uw5")
+parent_collision_ignore = NodePath("..")
+total_mass = 60.01
+linear_stiffness = 1.0
+pressure_coefficient = 1000.0
+damping_coefficient = 2.0
+script = ExtResource("5_yxels")
+stiffness = 90.0
+max_distance = 0.3
+vertex_mass_multiplier = 0.25
+velocity_match_multiplier = 0.25
+follow_node = NodePath("..")
+
+[node name="Blob" type="Node" parent="."]
