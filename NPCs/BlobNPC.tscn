@@ -1,5 +1,6 @@
-[gd_scene load_steps=11 format=3 uid="uid://dwyshoj764kfp"]
+[gd_scene load_steps=12 format=3 uid="uid://dwyshoj764kfp"]
 
+[ext_resource type="Script" uid="uid://b1etvmtvnxupa" path="res://NPCs/blob_npc_base.gd" id="1_vdoax"]
 [ext_resource type="Script" uid="uid://gmlq05jfav5a" path="res://NPCs/dialog_entry.gd" id="2_2rcv6"]
 [ext_resource type="Script" uid="uid://c5uy5yr5knbyd" path="res://NPCs/npc_dialog_system.gd" id="2_dqnjj"]
 [ext_resource type="ArrayMesh" uid="uid://cyp3nk03i7m0v" path="res://3dAssets/slime_ico.obj" id="3_7qlkw"]
@@ -37,6 +38,7 @@ jump_to_index = 3
 metadata/_custom_type_script = "uid://gmlq05jfav5a"
 
 [node name="CharacterBody3D" type="CharacterBody3D"]
+script = ExtResource("1_vdoax")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_f14xy")

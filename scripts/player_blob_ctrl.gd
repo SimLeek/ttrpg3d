@@ -1,6 +1,8 @@
 extends CharacterBody3D
 
 @export var SPEED = 7.5
+@export var SPEED_DECAY_AIR = .5
+@export var SPEED_DECAY_GROUND = 2.5
 @export var JUMP_VELOCITY = 12
 @export var TERMINAL_VELOCITY = 150.0 # m/s
 
@@ -9,13 +11,17 @@ extends CharacterBody3D
 
 func _physics_process(delta: float) -> void:
 	# 2. Add the gravity
+	var damping = 0
 	if not is_on_floor():
 		velocity += get_gravity() * delta
 		
+		damping = SPEED_DECAY_AIR
 		# Clamp the downward velocity to terminal velocity
 		# velocity.y is negative when falling
 		if velocity.y < -TERMINAL_VELOCITY:
 			velocity.y = -TERMINAL_VELOCITY
+	else:
+		damping = SPEED_DECAY_GROUND
 
 	# 3. Handle jump
 	if Input.is_action_just_pressed("jump") and is_on_floor():
@@ -32,10 +38,12 @@ func _physics_process(delta: float) -> void:
 		floor_max_angle = default_floor_angle
 	
 	if direction:
-		velocity.x = direction.x * SPEED
-		velocity.z = direction.z * SPEED
+		#velocity.x = direction.x * SPEED
+		#velocity.z = direction.z * SPEED
+		velocity.x = move_toward(velocity.x, direction.x * SPEED, damping)
+		velocity.z = move_toward(velocity.z, direction.z * SPEED, damping)
 	else:
-		velocity.x = move_toward(velocity.x, 0, SPEED)
-		velocity.z = move_toward(velocity.z, 0, SPEED)
+		velocity.x = move_toward(velocity.x, 0, damping)
+		velocity.z = move_toward(velocity.z, 0, damping)
 
 	move_and_slide()
