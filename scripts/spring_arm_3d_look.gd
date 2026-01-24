@@ -1,6 +1,7 @@
 extends SpringArm3D
 
 @export var mouse_sensitivity := 0.1
+@export var controller_sensitivity := 3.0
 @export var player_body: CharacterBody3D  # Link your player node here in the Inspector
 
 @export_group("Zoom Settings")
@@ -30,6 +31,15 @@ func _unhandled_input(event):
 	if event.is_action_pressed("ui_cancel"): # Usually mapped to Escape
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		#DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		
+	if event.is_action_pressed("zoom_click"):
+		target_zoom = target_zoom - zoom_speed
+		if target_zoom < min_zoom:
+			target_zoom = max_zoom
+		
+	#if event.is_action_pressed("zoom_out"):
+	#	target_zoom = clamp(target_zoom + zoom_speed, min_zoom, max_zoom)
+		
 	if event is InputEventMouseMotion:
 		# 1. Rotate the PLAYER horizontally (Y-axis)
 		player_body.rotate_y(deg_to_rad(-event.relative.x * mouse_sensitivity))
@@ -57,6 +67,12 @@ func _unhandled_input(event):
 			
 
 func _process(delta):
+	# --- CONTROLLER LOOK ---
+	var input_dir = Input.get_vector("look_left", "look_right", "look_up", "look_down")
+	if input_dir.length() > 0:
+		player_body.rotate_y(deg_to_rad(-input_dir.x * controller_sensitivity))
+		rotation.x -= deg_to_rad(input_dir.y * controller_sensitivity)
+		rotation.x = clamp(rotation.x, deg_to_rad(-70), deg_to_rad(30))
 	# 3. SMOOTH THE ZOOM
 	# lerp ensures the camera doesn't "snap" instantly when scrolling
 	spring_length = lerp(spring_length, target_zoom, delta * zoom_smoothness)

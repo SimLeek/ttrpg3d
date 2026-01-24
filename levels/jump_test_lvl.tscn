@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3 uid="uid://wqvqhjo6d3oa"]
+[gd_scene load_steps=17 format=3 uid="uid://wqvqhjo6d3oa"]
 
 [ext_resource type="Texture2D" uid="uid://cwjqjhi801dva" path="res://3dAssets/skybox/colle-della-lombarada (1).jpg" id="1_cnj6h"]
 [ext_resource type="MeshLibrary" uid="uid://d3lrsjujx54kd" path="res://meshlibs/StoneTemple.meshlib" id="2_5ag8f"]
@@ -57,6 +57,8 @@ text = "Ah! You found the slide! Press shift and you'll be able to slide down sl
 action = 2
 metadata/_custom_type_script = "uid://gmlq05jfav5a"
 
+[sub_resource type="BoxShape3D" id="BoxShape3D_cds03"]
+
 [node name="JumpTestLvl" type="Node3D"]
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
@@ -77,6 +79,10 @@ metadata/_editor_floor_ = Vector3(0, 0, 0)
 
 [node name="CharacterBody3D" parent="." instance=ExtResource("3_lra5m")]
 transform = Transform3D(-1, 0, -8.940697e-08, 0, 1, 0, 8.940697e-08, 0, -1, -5.9604645e-07, 2, -1)
+
+[node name="LedgeGrabber" parent="CharacterBody3D" index="1"]
+rest_length = null
+ledge_pull_strength = null
 
 [node name="CharacterBody3D2" parent="." instance=ExtResource("4_d3n8n")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 1, 4)
@@ -136,6 +142,13 @@ restart_radius = 2.0
 dialogs = Array[ExtResource("5_7a2dt")]([SubResource("Resource_n22ki")])
 billboard_height = 0.5
 
+[node name="StaticBody3D" type="StaticBody3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.8, 0)
+shape = SubResource("BoxShape3D_cds03")
+
+[editable path="CharacterBody3D"]
 [editable path="CharacterBody3D2"]
 [editable path="CharacterBody3D3"]
 [editable path="CharacterBody3D4"]

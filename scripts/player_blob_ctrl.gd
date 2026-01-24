@@ -9,10 +9,24 @@ extends CharacterBody3D
 # Capture the default inspector value at startup
 @onready var default_floor_angle = floor_max_angle
 
+@onready var ledge_grabber_node = $LedgeGrabber
+
+func get_child_classes() -> Node:
+	print("getting child classes")
+	for child in get_children():
+		if child.get_class() == "LedgeGrabber":
+			print("ledge grabber found")
+			ledge_grabber_node =  child
+	return null # Return null if no child of that class is found
+
+func _ready() -> void:
+	get_child_classes()
+
 func _physics_process(delta: float) -> void:
 	# 2. Add the gravity
 	var damping = 0
-	if not is_on_floor():
+	var should_fall = not is_on_floor() and not (ledge_grabber_node != null and ledge_grabber_node.is_grabbing_ledge)
+	if should_fall:
 		velocity += get_gravity() * delta
 		
 		damping = SPEED_DECAY_AIR
@@ -24,7 +38,7 @@ func _physics_process(delta: float) -> void:
 		damping = SPEED_DECAY_GROUND
 
 	# 3. Handle jump
-	if Input.is_action_just_pressed("jump") and is_on_floor():
+	if Input.is_action_just_pressed("jump") and not should_fall:
 		velocity.y = JUMP_VELOCITY
 
 	# 4. Handle movement
@@ -38,8 +52,6 @@ func _physics_process(delta: float) -> void:
 		floor_max_angle = default_floor_angle
 	
 	if direction:
-		#velocity.x = direction.x * SPEED
-		#velocity.z = direction.z * SPEED
 		velocity.x = move_toward(velocity.x, direction.x * SPEED, damping)
 		velocity.z = move_toward(velocity.z, direction.z * SPEED, damping)
 	else:

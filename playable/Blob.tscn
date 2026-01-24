@@ -1,16 +1,24 @@
-[gd_scene load_steps=8 format=3 uid="uid://dpvhf7r5xwv5f"]
+[gd_scene load_steps=11 format=3 uid="uid://dpvhf7r5xwv5f"]
 
 [ext_resource type="Script" uid="uid://cj0edidy8wr2s" path="res://scripts/player_blob_ctrl.gd" id="1_s7uw5"]
+[ext_resource type="Script" uid="uid://bv2ykx5uveb27" path="res://playable/ledge_grabber.gd" id="2_5fh1f"]
 [ext_resource type="Script" uid="uid://0dmyqqhr117q" path="res://scripts/spring_arm_3d_look.gd" id="2_cnvq6"]
 [ext_resource type="ArrayMesh" uid="uid://cyp3nk03i7m0v" path="res://3dAssets/slime_ico.obj" id="3_5fh1f"]
 [ext_resource type="Material" uid="uid://cw1qq67igdks2" path="res://3dAssets/Purple_blob_tex.tres" id="4_s7uw5"]
 [ext_resource type="Script" uid="uid://b2d4h5lawqfjw" path="res://scripts/limited_blob_body.gd" id="5_yxels"]
+[ext_resource type="Script" uid="uid://vulk4qg1iarx" path="res://playable/left_hand_gripper.gd" id="7_5fh1f"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
-height = 0.5
+height = 0.51
 
 [sub_resource type="SeparationRayShape3D" id="SeparationRayShape3D_yq3el"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_htvlb"]
+radius = 0.15
+height = 0.3
+radial_segments = 6
+rings = 6
 
 [node name="CharacterBody3D" type="CharacterBody3D" groups=["player"]]
 script = ExtResource("1_s7uw5")
@@ -18,7 +26,11 @@ script = ExtResource("1_s7uw5")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_f14xy")
 
-[node name="Node3D" type="Node3D" parent="."]
+[node name="LedgeGrabber" type="Node3D" parent="."]
+script = ExtResource("2_5fh1f")
+ray_length = 1.0
+rest_length = 0.5
+ledge_grab_key = "grab"
 
 [node name="SpringArm3D" type="SpringArm3D" parent="."]
 shape = SubResource("SeparationRayShape3D_yq3el")
@@ -44,4 +56,16 @@ vertex_mass_multiplier = 0.25
 velocity_match_multiplier = 0.25
 follow_node = NodePath("..")
 
-[node name="Blob" type="Node" parent="."]
+[node name="LeftHandMesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_htvlb")
+surface_material_override/0 = ExtResource("4_s7uw5")
+script = ExtResource("7_5fh1f")
+ledge_grabber_path = NodePath("../LedgeGrabber")
+
+[node name="RightHandMesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("SphereMesh_htvlb")
+surface_material_override/0 = ExtResource("4_s7uw5")
+script = ExtResource("7_5fh1f")
+hand_side = 1
+primary = true
+ledge_grabber_path = NodePath("../LedgeGrabber")
