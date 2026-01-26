@@ -1,8 +1,9 @@
-[gd_scene load_steps=17 format=3 uid="uid://b22qu5m3fnfcs"]
+[gd_scene load_steps=19 format=3 uid="uid://b22qu5m3fnfcs"]
 
 [ext_resource type="ArrayMesh" uid="uid://klbcbgn6x7ai" path="res://3dAssets/platform_10_10.obj" id="1_le1c3"]
 [ext_resource type="ArrayMesh" uid="uid://b685ceh12u65s" path="res://3dAssets/platform_2_2.obj" id="2_hehqc"]
 [ext_resource type="ArrayMesh" uid="uid://cy5rtj8xc6ta7" path="res://3dAssets/platform_1_1.obj" id="3_winmm"]
+[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://levels/xray_if_behind_full.gdshader" id="4_2snfq"]
 [ext_resource type="ArrayMesh" uid="uid://bsnt7hg5sne44" path="res://3dAssets/platform_3_3.obj" id="4_b1n6i"]
 [ext_resource type="ArrayMesh" uid="uid://c21th7mek88fq" path="res://3dAssets/platform_5_5.obj" id="5_4oexa"]
 
@@ -20,6 +21,21 @@ size = Vector3(2, 1, 2)
 [sub_resource type="BoxMesh" id="BoxMesh_winmm"]
 size = Vector3(2, 3, 2)
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_c0opy"]
+render_priority = 0
+shader = ExtResource("4_2snfq")
+shader_parameter/cutout_radius = 5.0
+shader_parameter/cutout_pow = 10.0
+shader_parameter/below_pow = 0.2
+shader_parameter/albedo_color = Color(0.8, 0.8, 0.8, 1)
+shader_parameter/normal_scale = 1.0
+shader_parameter/roughness = 1.0
+shader_parameter/metallic = 0.0
+shader_parameter/rim = 0.0
+shader_parameter/rim_tint = 0.5
+shader_parameter/emission = Color(0, 0, 0, 1)
+shader_parameter/emission_energy_multiplier = 1.0
+
 [sub_resource type="BoxShape3D" id="BoxShape3D_4oexa"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_2snfq"]
@@ -31,7 +47,7 @@ size = Vector3(3, 1, 3)
 [sub_resource type="BoxMesh" id="BoxMesh_c0opy"]
 size = Vector3(3, 3, 3)
 
-[sub_resource type="BoxShape3D" id="BoxShape3D_c0opy"]
+[sub_resource type="BoxShape3D" id="BoxShape3D_h2s0q"]
 size = Vector3(5, 1, 5)
 
 [sub_resource type="BoxMesh" id="BoxMesh_1hftq"]
@@ -136,6 +152,7 @@ skeleton = NodePath("../../..")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 22, 0, 0)
 top_level = true
 mesh = ExtResource("3_winmm")
+surface_material_override/0 = SubResource("ShaderMaterial_c0opy")
 
 [node name="StaticBody3D" type="StaticBody3D" parent="Platform_1_1_flat"]
 
@@ -176,7 +193,7 @@ mesh = ExtResource("5_4oexa")
 [node name="StaticBody3D" type="StaticBody3D" parent="Platform_5_5"]
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Platform_5_5/StaticBody3D"]
-shape = SubResource("BoxShape3D_c0opy")
+shape = SubResource("BoxShape3D_h2s0q")
 
 [node name="NavigationRegion3D" type="NavigationRegion3D" parent="Platform_5_5"]
 navigation_mesh = SubResource("NavigationMesh_0blk5")

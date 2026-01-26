@@ -6,6 +6,7 @@ global uniform vec3 camera_position;
 
 uniform float cutout_radius : hint_range(0.1, 10.0, 0.05) = 5;
 uniform float cutout_pow : hint_range(0.1, 10.0, 0.05) = 10;
+uniform float below_pow : hint_range(0.1, 10.0, 0.05) = 0.2;
 
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
@@ -58,15 +59,23 @@ void fragment() {
     vec3 origin = player_position;
     vec3 dir = normalize(camera_position - player_position);
     float line_length = length(camera_position - player_position);
+	vec3 up = vec3(0.0,1.0,0.0);
+	vec3 right = cross(up, dir);
+	vec3 forward = normalize(cross(right, up));
 
     float t = dot(frag_world_pos - origin, dir);
+	float t2 = dot(frag_world_pos - origin, forward);
 
     ALPHA = albedo_tex.a * albedo_color.a;
-    if (t > 0.0 && t < line_length) {
+    if (t > 0.0 && t < line_length && t2>0.0 && frag_world_pos.y > player_position.y) {
         vec3 closest = origin + t * dir;
         float perp_dist = length(frag_world_pos - closest);
+		float del_extra = 0.0;
+		if (closest.y-frag_world_pos.y>0.0){
+			del_extra = (closest.y-frag_world_pos.y)/cutout_radius;
+		}
         if (perp_dist < cutout_radius) {
-            ALPHA *= pow((perp_dist-cutout_radius)/cutout_radius+1.0,cutout_pow);
+            ALPHA *= pow((perp_dist-cutout_radius)/cutout_radius + pow(del_extra,below_pow) +1.0,cutout_pow);
         }
     }
 }

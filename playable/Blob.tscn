@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://dpvhf7r5xwv5f"]
+[gd_scene load_steps=13 format=3 uid="uid://dpvhf7r5xwv5f"]
 
 [ext_resource type="Script" uid="uid://cj0edidy8wr2s" path="res://scripts/player_blob_ctrl.gd" id="1_s7uw5"]
 [ext_resource type="Script" uid="uid://bv2ykx5uveb27" path="res://playable/ledge_grabber.gd" id="2_5fh1f"]
@@ -21,7 +21,12 @@ height = 0.3
 radial_segments = 6
 rings = 6
 
+[sub_resource type="CylinderShape3D" id="CylinderShape3D_htvlb"]
+height = 0.01
+radius = 0.25
+
 [node name="CharacterBody3D" type="CharacterBody3D" groups=["player"]]
+floor_snap_length = 0.0
 script = ExtResource("1_s7uw5")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
@@ -35,13 +40,12 @@ ledge_grab_key = "grab"
 debug_draw = true
 
 [node name="SpringArm3D" type="SpringArm3D" parent="."]
-collision_mask = 0
 shape = SubResource("SeparationRayShape3D_yq3el")
 spring_length = 5.0
 script = ExtResource("2_cnvq6")
 
 [node name="Camera3D" type="Camera3D" parent="SpringArm3D" node_paths=PackedStringArray("player_node")]
-transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.9659258, 0, 0.25881907, 0.9659258)
+transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.9659258, 0, 0, 0)
 script = ExtResource("4_htvlb")
 player_node = NodePath("../..")
 update_interval = 0.0
@@ -49,15 +53,18 @@ update_interval = 0.0
 [node name="SoftBody3D" type="SoftBody3D" parent="." node_paths=PackedStringArray("follow_node")]
 mesh = ExtResource("3_5fh1f")
 surface_material_override/0 = ExtResource("4_s7uw5")
+collision_layer = 3
+collision_mask = 3
 parent_collision_ignore = NodePath("..")
 total_mass = 60.01
 linear_stiffness = 1.0
 pressure_coefficient = 1000.0
 damping_coefficient = 2.0
 script = ExtResource("5_yxels")
-stiffness = 90.0
-max_distance = 1.2
-max_distance_hard = 2.4
+stiffness = 22.5
+max_force = 25.0
+max_distance = 0.3
+max_distance_hard = 0.6
 vertex_mass_multiplier = 0.25
 velocity_match_multiplier = 0.25
 follow_node = NodePath("..")
@@ -75,3 +82,9 @@ script = ExtResource("7_5fh1f")
 hand_side = 1
 primary = true
 ledge_grabber_path = NodePath("../LedgeGrabber")
+
+[node name="StepCast" type="ShapeCast3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 0)
+shape = SubResource("CylinderShape3D_htvlb")
+target_position = Vector3(0, -0.25, 0)
+collision_mask = 3

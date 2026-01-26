@@ -20,7 +20,12 @@ var vertex_mass: float = 0.0
 var last_parent_pos: Vector3
 var parent_velocity: Vector3
 
+var store_collision_layer
+var store_collision_mask
+
 func _ready() -> void:	
+	store_collision_layer = collision_layer
+	store_collision_mask = collision_mask
 	if mesh:
 		var surface_tool = SurfaceTool.new()
 		surface_tool.create_from(mesh, 0)
@@ -48,6 +53,9 @@ func _physics_process(delta: float) -> void:
 	last_parent_pos = current_parent_pos
 
 	var target_xform = follow_node.global_transform
+	var needs_rebuild = false
+	collision_layer = store_collision_layer
+	collision_mask = store_collision_mask
 
 	for i in range(vertex_count):
 		var ideal_global_pos = target_xform * original_local_positions[i]
@@ -59,8 +67,15 @@ func _physics_process(delta: float) -> void:
 		var vertex_velocity = (current_pos - last_positions[i]) / delta
 		last_positions[i] = current_pos
 		
+		# --- HARD LIMIT CHECK ---
+		if distance > max_distance_hard:
+			#if not needs_rebuild:
+			#	print("have to rebuild squishy mesh")
+
+			needs_rebuild = true
 		# 1. PRIORITY: KINEMATIC HARD LIMIT (Distance Constraint)
 		if distance > max_distance:
+				
 			var range_dist = max_distance_hard - max_distance
 			var normalized_dist = (distance - max_distance) / range_dist
 			var smooth_weight = tanh(normalized_dist * 2.0)
@@ -93,3 +108,7 @@ func _physics_process(delta: float) -> void:
 				
 				var force_vector = diff.normalized() * force_magnitude
 				apply_force(i, force_vector)
+	if needs_rebuild:
+		# disable colissions to extra force softbody to stop attaching to things
+		collision_layer = 0
+		collision_mask = 0
