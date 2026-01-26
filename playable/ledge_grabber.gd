@@ -53,9 +53,16 @@ var right_search_angle: float = 0.0
 
 var is_grabbing_ledge : bool= false
 
+var angle_rad: float
+var ray_vec_2d: Vector2
+var dir: Vector3
+var left_perp: Vector3
+
 func _ready() -> void:
 	character = get_parent() as CharacterBody3D
 	exclude = [character.get_rid()]
+	angle_rad = deg_to_rad(ray_angle_deg)
+	ray_vec_2d = Vector2(cos(angle_rad), sin(angle_rad))
 	for child in character.get_children():
 		if child is SoftBody3D:
 			exclude.append(child.get_physics_rid())
@@ -110,9 +117,10 @@ func _physics_process(delta: float) -> void:
 	var forward: Vector3 = -character.global_basis.z
 	var up: Vector3 = character.global_basis.y
 	
-	var angle_rad: float = deg_to_rad(ray_angle_deg)
-	var ray_vec_2d: Vector2 = Vector2(cos(angle_rad), sin(angle_rad))
-	var dir: Vector3 = (forward * ray_vec_2d.x + up * ray_vec_2d.y).normalized() * ray_length
+	
+	dir = (forward * ray_vec_2d.x + up * ray_vec_2d.y).normalized() * ray_length
+	# for other classes using this
+	left_perp = -character.global_basis.x
 	
 	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir)
 	query.exclude = exclude
@@ -173,7 +181,7 @@ func _physics_process(delta: float) -> void:
 	
 	var exit_pos: Vector3 = hit2.position
 	var slope_tan: float = tan(deg_to_rad(character.floor_max_angle))
-	var left_perp: Vector3 = wall_norm.cross(up).normalized()
+	left_perp = wall_norm.cross(up).normalized()
 	var right_perp: Vector3 = -left_perp
 	
 	var left_data: Array = _check_side(exit_pos, left_perp, slope_tan, forward, prev_left_failed, left_search_angle)
