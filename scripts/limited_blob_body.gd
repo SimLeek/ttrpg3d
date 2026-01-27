@@ -9,6 +9,11 @@ extends SoftBody3D
 @export var velocity_match_multiplier: float = 0.2 # Smaller version of the mass multiplier
 @export var follow_node: Node3D
 
+@export_group("Rotation Offsets")
+@export_range(-180, 180) var offset_pitch: float = 0.0
+@export_range(-180, 180) var offset_yaw: float = 0.0
+@export_range(-180, 180) var offset_roll: float = 0.0
+
 const epsilon = 0.001
 
 var original_local_positions: PackedVector3Array
@@ -22,6 +27,8 @@ var parent_velocity: Vector3
 
 var store_collision_layer
 var store_collision_mask
+
+var offset_basis
 
 func _ready() -> void:	
 	store_collision_layer = collision_layer
@@ -42,6 +49,12 @@ func _ready() -> void:
 	
 	if follow_node:
 		last_parent_pos = follow_node.global_position
+		
+	offset_basis = Basis.from_euler(Vector3(
+		deg_to_rad(offset_pitch),
+		deg_to_rad(offset_yaw),
+		deg_to_rad(offset_roll)
+	))
 
 func _physics_process(delta: float) -> void:
 	if not follow_node or vertex_count == 0 or delta == 0:
@@ -51,8 +64,10 @@ func _physics_process(delta: float) -> void:
 	var current_parent_pos = follow_node.global_position
 	parent_velocity = (current_parent_pos - last_parent_pos) / delta
 	last_parent_pos = current_parent_pos
-
+	
 	var target_xform = follow_node.global_transform
+	target_xform.basis = target_xform.basis * offset_basis
+
 	var needs_rebuild = false
 	collision_layer = store_collision_layer
 	collision_mask = store_collision_mask

@@ -1,7 +1,10 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://cw1qq67igdks2"]
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3 uid="uid://cw1qq67igdks2"]
+
+[ext_resource type="Texture2D" uid="uid://bsbrddvma5q7e" path="res://3dAssets/Razel_purps.png" id="1_1lnsn"]
 
 [resource]
-albedo_color = Color(0.6392157, 0.3372549, 0.7176471, 0.9137255)
+albedo_color = Color(1, 0.32171014, 0.80960435, 0.9137255)
+albedo_texture = ExtResource("1_1lnsn")
 metallic = 0.2
 metallic_specular = 0.75
 roughness = 0.2

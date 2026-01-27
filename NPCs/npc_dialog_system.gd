@@ -159,7 +159,7 @@ func _setup_nodes() -> void:
 	_sprite = Sprite3D.new()
 	_sprite.name = "_internal_sprite"
 	_sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	#_sprite.no_depth_test = true # Appears on top
+	_sprite.no_depth_test = true # Appears on top
 	_sprite.position.y = billboard_height
 	# Map the viewport to the sprite
 	_sprite.texture = _viewport.get_texture()

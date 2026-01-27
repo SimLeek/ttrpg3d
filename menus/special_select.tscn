@@ -1,0 +1,49 @@
+[gd_scene load_steps=4 format=3 uid="uid://rg6smt0w8xvl"]
+
+[ext_resource type="Script" uid="uid://bq2bhnv2a1xa8" path="res://menus/special_select.gd" id="1_6uixt"]
+[ext_resource type="Theme" uid="uid://bebbfwk8f8b7r" path="res://menus/title_theme.tres" id="2_02lfe"]
+[ext_resource type="Theme" uid="uid://ipsk780unxrm" path="res://menus/menu_button_theme.tres" id="3_lqt15"]
+
+[node name="SpecialMenu" type="Node2D"]
+script = ExtResource("1_6uixt")
+
+[node name="Control" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1150.0
+offset_bottom = 650.0
+
+[node name="MarginContainer" type="MarginContainer" parent="Control"]
+layout_mode = 0
+offset_right = 1150.0
+offset_bottom = 650.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Control/MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 42
+
+[node name="Label" type="Label" parent="Control/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("2_02lfe")
+text = "Special"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="basic_training" type="Button" parent="Control/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("3_lqt15")
+text = "Basic Training"
+
+[node name="grapple_training" type="Button" parent="Control/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("3_lqt15")
+text = "Grapple Training"
+
+[node name="jump_training" type="Button" parent="Control/MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("3_lqt15")
+text = "Jump Training"
+
+[connection signal="pressed" from="Control/MarginContainer/VBoxContainer/basic_training" to="." method="_on_basic_training_pressed"]
+[connection signal="pressed" from="Control/MarginContainer/VBoxContainer/grapple_training" to="." method="_on_grapple_training_pressed"]
+[connection signal="pressed" from="Control/MarginContainer/VBoxContainer/jump_training" to="." method="_on_jump_training_pressed"]

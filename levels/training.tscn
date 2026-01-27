@@ -1,0 +1,186 @@
+[gd_scene load_steps=20 format=3 uid="uid://wqvqhjo6d3oa"]
+
+[ext_resource type="Texture2D" uid="uid://cwjqjhi801dva" path="res://3dAssets/skybox/colle-della-lombarada (1).jpg" id="1_4dp8d"]
+[ext_resource type="MeshLibrary" uid="uid://d3lrsjujx54kd" path="res://meshlibs/StoneTemple.meshlib" id="2_fgpa1"]
+[ext_resource type="Script" uid="uid://be1dd1rq7g7sb" path="res://levels/gridmap_rotation_tool.gd" id="3_o72su"]
+[ext_resource type="PackedScene" uid="uid://dpvhf7r5xwv5f" path="res://playable/Blob.tscn" id="4_1u0yw"]
+[ext_resource type="PackedScene" uid="uid://dwyshoj764kfp" path="res://NPCs/BlobNPC.tscn" id="5_urevo"]
+[ext_resource type="Script" uid="uid://gmlq05jfav5a" path="res://NPCs/dialog_entry.gd" id="6_sptj5"]
+[ext_resource type="Script" uid="uid://clyjoxm4lvgg2" path="res://levels/area_3d.gd" id="7_3fv2u"]
+
+[sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_5ag8f"]
+panorama = ExtResource("1_4dp8d")
+
+[sub_resource type="Sky" id="Sky_284mm"]
+sky_material = SubResource("PanoramaSkyMaterial_5ag8f")
+
+[sub_resource type="Environment" id="Environment_lra5m"]
+background_mode = 2
+background_color = Color(0.6627451, 1, 1, 1)
+sky = SubResource("Sky_284mm")
+ambient_light_sky_contribution = 0.05
+
+[sub_resource type="Resource" id="Resource_cds03"]
+script = ExtResource("6_sptj5")
+text = "Ohai! I didn't expect to see you here. This is a hard jump after all."
+action = 2
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_7a2dt"]
+script = ExtResource("6_sptj5")
+text = "Good job making it over here. This is a pretty decent jump."
+action = 2
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_yml2y"]
+script = ExtResource("6_sptj5")
+text = "I see you took the easy path."
+action = 2
+jump_to_index = 1
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_gd6r4"]
+script = ExtResource("6_sptj5")
+text = "Nice balance!"
+action = 2
+jump_to_index = 1
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_fblk5"]
+script = ExtResource("6_sptj5")
+text = "This path is quite average."
+action = 2
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_4dp8d"]
+script = ExtResource("6_sptj5")
+text = "You are like a frog, hopping around like that."
+action = 2
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_n22ki"]
+script = ExtResource("6_sptj5")
+text = "Ah! You found the slide! Unfortunately it's currently out of order."
+action = 2
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_cds03"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_w5qhp"]
+size = Vector3(1000, 1000, 1000)
+
+[node name="JumpTestLvl" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_lra5m")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.9659258, 0.066987306, 0.24999999, -0.25881904, 0.24999996, 0.93301266, 1.8378428e-08, -0.9659258, 0.258819, 0, 10.372825, 0)
+shadow_enabled = true
+
+[node name="GridMap" type="GridMap" parent="."]
+mesh_library = ExtResource("2_fgpa1")
+cell_size = Vector3(0.5, 0.5, 0.5)
+data = {
+"cells": PackedInt32Array(524298, 0, 1507328, 589823, 65525, 393216, 589812, 0, 1376256, -1, 22, 1048576, -25, 22, 1048576, -65509, 22, 1048576, -65509, 65528, 1048576, -25, 65526, 1048576, 589822, 65514, 720896, 524288, 65514, 196608, 524288, 65494, 196608, 589822, 65494, 720896, -13, 65506, 655360, -65524, 65508, 655360, -1, 48, 1048576, -1, 0, 0, -65536, 67, 1048588, -65536, 79, 1048586, -65536, 88, 1048584, -65536, 95, 1048585, -65531, 88, 1048585, -4, 88, 1048585, -9, 79, 1048584, -17, 79, 1048584, -25, 79, 1048584, -25, 87, 1048584, -25, 95, 1048584, -25, 103, 1048584, -65526, 79, 1048586, -65516, 79, 1048586, -65506, 79, 1048586, -65506, 89, 1048586, -65506, 99, 1048586, -65506, 109, 1048586, -25, 111, 1048584, -65536, 101, 1048585, -65536, 107, 1048585, -65536, 113, 1048585, -65515, 109, 1048588, -17, 111, 1048588, -65529, 113, 1048588, 196623, 109, 196620, 196621, 113, 196620, 262133, 111, 196620, 196629, 103, 458764, 196629, 115, 458764, 196615, 119, 458764, 196615, 107, 458764, 262127, 117, 458764, 262127, 105, 458764, -65506, 119, 1441802, -65506, 129, 1441802, -65506, 139, 1441802, -65516, 139, 1441802, -65526, 139, 1441802, -65536, 139, 1441802, -25, 119, 1441800, -25, 127, 1441800, -25, 135, 1441800, -9, 139, 1441800, -17, 139, 1441800, -25, 139, 1441800, -21, 139, 1441800, -65536, 119, 1441801, -65536, 125, 1441801, -65536, 131, 1441801, 196563, 22, 1048577, 720833, 22, 1048578, 1572785, 22, 1048579, 2031520, 22, 1048576, 65526, 11, 786441, 131064, 11, 786441, 196602, 11, 786441, 262140, 11, 786441, 327678, 11, 786441, 327680, 11, 786441, 393218, 11, 786441, 458756, 11, 786441, 524294, 11, 786441, 589832, 11, 786441, 458760, 11, 786441, 393222, 11, 786441, 327688, 11, 786441, 327684, 11, 786441, 262150, 11, 786441, 262146, 11, 786441, 196612, 11, 786441, 196608, 11, 786441, 196616, 11, 786441, 131078, 11, 786441, 131074, 11, 786441, 196606, 11, 786441, 131068, 11, 786441, 65536, 11, 786441, 65540, 11, 786441, 65544, 11, 786441, 65530, 11, 786441, 65534, 11, 786441, 2, 11, 786441, 6, 11, 786441, -65536, 149, 10)
+}
+script = ExtResource("3_o72su")
+metadata/_editor_floor_ = Vector3(0, -1, 0)
+
+[node name="CharacterBody3D" parent="." instance=ExtResource("4_1u0yw")]
+transform = Transform3D(-1, 0, -8.940697e-08, 0, 1, 0, 8.940697e-08, 0, -1, -5.9604645e-07, 2, -1)
+
+[node name="LedgeGrabber" parent="CharacterBody3D" index="1"]
+debug_draw = true
+
+[node name="CharacterBody3D2" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, -2, 1, 4)
+
+[node name="Dialog" parent="CharacterBody3D2" index="1"]
+billboard_height = 0.5
+
+[node name="CharacterBody3D3" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 1, -12)
+
+[node name="Dialog" parent="CharacterBody3D3" index="1"]
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_cds03")])
+billboard_height = 0.5
+
+[node name="CharacterBody3D4" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 6, 1, -14)
+
+[node name="Dialog" parent="CharacterBody3D4" index="1"]
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_7a2dt")])
+billboard_height = 0.5
+
+[node name="CharacterBody3D5" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(-1, 0, 8.742278e-08, 0, 1, 0, -8.742278e-08, 0, -1, 10, 1, 55)
+
+[node name="Dialog" parent="CharacterBody3D5" index="1"]
+interaction_radius = 3.0
+restart_radius = 1.0
+displaying = false
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_yml2y")])
+billboard_height = 0.5
+
+[node name="CharacterBody3D6" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 1, 57)
+
+[node name="Dialog" parent="CharacterBody3D6" index="1"]
+interaction_radius = 3.0
+restart_radius = 1.0
+displaying = false
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_gd6r4")])
+billboard_height = 0.5
+
+[node name="CharacterBody3D7" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 1, 56)
+
+[node name="Dialog" parent="CharacterBody3D7" index="1"]
+interaction_radius = 3.0
+restart_radius = 2.0
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_fblk5")])
+billboard_height = 0.5
+
+[node name="CharacterBody3D9" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 1, 1, 75)
+
+[node name="Dialog" parent="CharacterBody3D9" index="1"]
+interaction_radius = 3.0
+restart_radius = 2.0
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_4dp8d")])
+billboard_height = 0.5
+
+[node name="CharacterBody3D8" parent="." instance=ExtResource("5_urevo")]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, -49, 17, 12)
+
+[node name="Dialog" parent="CharacterBody3D8" index="1"]
+interaction_radius = 3.0
+restart_radius = 2.0
+dialogs = Array[ExtResource("6_sptj5")]([SubResource("Resource_n22ki")])
+billboard_height = 0.5
+
+[node name="StaticBody3D" type="StaticBody3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.8, 0)
+shape = SubResource("BoxShape3D_cds03")
+
+[node name="Area3D" type="Area3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -505, 0)
+script = ExtResource("7_3fv2u")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Area3D"]
+shape = SubResource("BoxShape3D_w5qhp")
+
+[connection signal="body_entered" from="Area3D" to="Area3D" method="_on_body_entered"]
+
+[editable path="CharacterBody3D"]
+[editable path="CharacterBody3D2"]
+[editable path="CharacterBody3D3"]
+[editable path="CharacterBody3D4"]
+[editable path="CharacterBody3D5"]
+[editable path="CharacterBody3D6"]
+[editable path="CharacterBody3D7"]
+[editable path="CharacterBody3D9"]
+[editable path="CharacterBody3D8"]

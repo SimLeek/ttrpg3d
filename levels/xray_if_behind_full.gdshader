@@ -67,15 +67,19 @@ void fragment() {
 	float t2 = dot(frag_world_pos - origin, forward);
 
     ALPHA = albedo_tex.a * albedo_color.a;
-    if (t > 0.0 && t < line_length && t2>0.0 && frag_world_pos.y > player_position.y) {
+    if (t > 0.0 && t < line_length && t2>0.0) {
         vec3 closest = origin + t * dir;
         float perp_dist = length(frag_world_pos - closest);
 		float del_extra = 0.0;
-		if (closest.y-frag_world_pos.y>0.0){
+		/*if (closest.y-frag_world_pos.y>0.0){
 			del_extra = (closest.y-frag_world_pos.y)/cutout_radius;
-		}
+		}*/
+		/*if (player_position.y-frag_world_pos.y>0.0){
+			del_extra += (player_position.y-frag_world_pos.y)/cutout_radius;
+		}*/
         if (perp_dist < cutout_radius) {
             ALPHA *= pow((perp_dist-cutout_radius)/cutout_radius + pow(del_extra,below_pow) +1.0,cutout_pow);
         }
+		ALPHA = max(ALPHA, 0.25);
     }
 }

@@ -1,0 +1,5 @@
+[gd_scene load_steps=2 format=3 uid="uid://cyqx72lc0da2f"]
+
+[ext_resource type="PackedScene" uid="uid://drat4h68uiccc" path="res://3dAssets/Razel.glb" id="1_1rjb3"]
+
+[node name="Razel" instance=ExtResource("1_1rjb3")]

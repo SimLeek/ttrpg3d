@@ -1,7 +1,10 @@
-[gd_resource type="StandardMaterial3D" format=3 uid="uid://txl4uajlhnce"]
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3 uid="uid://txl4uajlhnce"]
+
+[ext_resource type="Texture2D" uid="uid://dpimmhfhr5qft" path="res://3dAssets/Ember_purps.png" id="1_a63l8"]
 
 [resource]
 albedo_color = Color(0.82375914, 0.24787474, 0.31220722, 0.8117647)
+albedo_texture = ExtResource("1_a63l8")
 metallic = 0.2
 metallic_specular = 0.75
 roughness = 0.2
