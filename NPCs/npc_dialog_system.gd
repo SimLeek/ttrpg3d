@@ -6,10 +6,10 @@ class_name NPCDialogSystem
 # --- Exports ---
 
 @export_group("Detection")
-@export var interaction_radius: float = 7.0
+@export var interaction_radius: float = 5.0
 @export var player_group: String = "player"
 @export var allow_restart: bool = true
-@export var restart_radius: float = 3.0
+@export var restart_radius: float = 1.5
 
 ## whether to auto display when the user is nearby or require restarting by jumping
 @export var displaying: bool = false
@@ -161,6 +161,7 @@ func _setup_nodes() -> void:
 	_sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_sprite.no_depth_test = true # Appears on top
 	_sprite.position.y = billboard_height
+	#_sprite.alpha_cut = Sprite3D.ALPHA_CUT_DISCARD
 	# Map the viewport to the sprite
 	_sprite.texture = _viewport.get_texture()
 	_spring_bone.add_child(_sprite)

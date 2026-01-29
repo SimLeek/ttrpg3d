@@ -25,7 +25,7 @@ settings/addon_root_folder="res://addons/debug_draw_3d"
 
 [display]
 
-window/stretch/mode="viewport"
+window/stretch/mode="canvas_items"
 
 [global_group]
 

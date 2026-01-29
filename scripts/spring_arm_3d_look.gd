@@ -6,7 +6,7 @@ extends SpringArm3D
 
 @export_group("Zoom Settings")
 @export var zoom_speed := 0.5
-@export var min_zoom := 1.5
+@export var min_zoom := 0.0
 @export var max_zoom := 8.0
 @export var zoom_smoothness := 10.0 # Higher = faster snap
 

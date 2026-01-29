@@ -7,6 +7,8 @@ global uniform vec3 camera_position;
 uniform float cutout_radius : hint_range(0.1, 10.0, 0.05) = 5;
 uniform float cutout_pow : hint_range(0.1, 10.0, 0.05) = 10;
 uniform float below_pow : hint_range(0.1, 10.0, 0.05) = 0.2;
+uniform float forward_pow : hint_range(0.01, 100.0, 0.05) = 0.05;
+uniform float cone_extra : hint_range(0.01, 100.0, 0.05) = 1;
 
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
@@ -56,30 +58,47 @@ void fragment() {
     RIM = rim_tex * rim;
     RIM_TINT = rim_tint;
 
-    vec3 origin = player_position;
-    vec3 dir = normalize(camera_position - player_position);
+	vec3 full_dir = camera_position - player_position;
+    vec3 dir = normalize(full_dir);
     float line_length = length(camera_position - player_position);
 	vec3 up = vec3(0.0,1.0,0.0);
 	vec3 right = cross(up, dir);
 	vec3 forward = normalize(cross(right, up));
 
-    float t = dot(frag_world_pos - origin, dir);
-	float t2 = dot(frag_world_pos - origin, forward);
+    float t = dot(frag_world_pos - player_position, dir);
+	float t2 = dot(frag_world_pos - player_position, forward);
 
     ALPHA = albedo_tex.a * albedo_color.a;
-    if (t > 0.0 && t < line_length && t2>0.0) {
-        vec3 closest = origin + t * dir;
-        float perp_dist = length(frag_world_pos - closest);
-		float del_extra = 0.0;
-		/*if (closest.y-frag_world_pos.y>0.0){
-			del_extra = (closest.y-frag_world_pos.y)/cutout_radius;
-		}*/
-		/*if (player_position.y-frag_world_pos.y>0.0){
-			del_extra += (player_position.y-frag_world_pos.y)/cutout_radius;
-		}*/
-        if (perp_dist < cutout_radius) {
-            ALPHA *= pow((perp_dist-cutout_radius)/cutout_radius + pow(del_extra,below_pow) +1.0,cutout_pow);
-        }
-		ALPHA = max(ALPHA, 0.25);
-    }
+    vec3 closest = player_position + t * dir;
+    float perp_dist = length(frag_world_pos - closest);
+	float del_extra = 0.0;
+
+	/*if(t<0.0){
+		ALPHA*=-t/line_length;
+	}*/
+	/*if (closest.y-frag_world_pos.y>0.0){
+		del_extra = (closest.y-frag_world_pos.y)/cutout_radius;
+	}*/
+	/*if (player_position.y-frag_world_pos.y>0.0){
+		del_extra += (player_position.y-frag_world_pos.y)/cutout_radius;
+	}*/
+	float cone_mult = cutout_radius*t/line_length+cone_extra;
+	//if(t>0.0){
+	if(line_length>0.5){
+	   if (perp_dist < cone_mult) {
+	    	ALPHA *= abs(pow((perp_dist-cone_mult)/cone_mult + pow(del_extra,below_pow) +1.0,cutout_pow));
+	    }
+	//}
+	/*if(t2<0.0){
+		ALPHA-=t2/(cutout_radius*forward_pow);//(cutout_radius*forward_pow);
+	}*/
+	if(t<0.0){
+		ALPHA-=t/(cutout_radius*forward_pow);//(cutout_radius*forward_pow);
+	}
+	/*else{
+		ALPHA-=t2/(cutout_radius*forward_pow);
+	}*/
+	ALPHA = min(max(ALPHA, 0.5), 1.0);
+	}
+	//ALPHA_SCISSOR_THRESHOLD = 0.5;
 }

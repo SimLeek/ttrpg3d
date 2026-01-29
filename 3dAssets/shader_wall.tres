@@ -5,9 +5,11 @@
 [resource]
 render_priority = 0
 shader = ExtResource("1_myddq")
-shader_parameter/cutout_radius = 5.0
+shader_parameter/cutout_radius = 3.0000000447036004
 shader_parameter/cutout_pow = 10.0
 shader_parameter/below_pow = 0.2
+shader_parameter/forward_pow = 0.05
+shader_parameter/cone_extra = 1.0
 shader_parameter/albedo_color = Color(1, 0.88, 0.55, 1)
 shader_parameter/normal_scale = 1.0
 shader_parameter/roughness = 1.0
