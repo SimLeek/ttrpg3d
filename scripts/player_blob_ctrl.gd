@@ -27,6 +27,11 @@ extends CharacterBody3D
 @onready var squeezer_node: Node3D = $SqueezerRays
 @onready var health_node: Node3D = $Health
 @onready var hud_node: CanvasLayer = $HUD
+@onready var left_hand: HandController = $LeftHandMesh
+@onready var right_hand: HandController = $RightHandMesh
+@onready var pause_menu_node: Node = $PauseMenu
+
+var can_be_seen: bool = true  # For enemy AI detection
 
 var tap_timer: float = 0.0
 var last_key: String = ""
@@ -64,6 +69,16 @@ func _input(event: InputEvent) -> void:
 
 	elif event.is_action_released("jump"):
 		jump_release_requested = true
+		
+	if event.is_action_pressed("primary_item_click"):
+		print("prim")
+		_handle_primary_hand_input(1.0)
+		
+	# Right click = right hand (or non-primary if has item)
+	elif event.is_action_pressed("secondary_item_click"):
+		print("sec")
+		_handle_non_primary_hand_input(1.0)
+	
 
 func _physics_process(delta: float) -> void:
 	if tap_timer > 0.0:
@@ -125,6 +140,16 @@ func _physics_process(delta: float) -> void:
 	# Apply squeeze slowdown (only when there's meaningful forward movement)
 	if direction.length() > 0.05:
 		speed *= squeeze_factor
+		
+	# ITEM USE SECTION
+	var right_trigger = Input.get_action_strength("primary_item_trigger")  # Primary hand
+	var left_trigger = Input.get_action_strength("secondary_item_trigger")    # Non-primary hand
+	
+	if right_trigger > 0.0:
+		_handle_primary_hand_input(right_trigger)
+	
+	if left_trigger > 0.0:
+		_handle_non_primary_hand_input(left_trigger)
 	
 	handle_wall_slide(direction)
 
@@ -132,6 +157,7 @@ func _physics_process(delta: float) -> void:
 		floor_max_angle = 0.0
 	else:
 		floor_max_angle = default_floor_angle
+	# END ITEM USE SECTION
 
 	if direction:
 		velocity.x = move_toward(velocity.x, direction.x * speed, friction)
@@ -186,6 +212,38 @@ func handle_wall_slide(direction):
 		if dot > cos_tolerance:
 			velocity.y = maxf(velocity.y, -WALL_SLIDE_SPEED)
 
+func _handle_primary_hand_input(pressure: float) -> void:
+	# Use whichever hand is marked as primary
+	if right_hand.primary:
+		right_hand.use_hand(pressure)
+	elif left_hand.primary:
+		left_hand.use_hand(pressure)
+	else:
+		push_warning("character should have a primary hand")
+		right_hand.use_hand(pressure)
+
+func _handle_non_primary_hand_input(pressure: float) -> void:
+	# Use whichever hand is NOT primary
+	if right_hand.primary:
+		left_hand.use_hand(pressure)
+	elif left_hand.primary:
+		right_hand.use_hand(pressure)
+	else:
+		push_warning("character should have at least one non-primary hand")
+		left_hand.use_hand(pressure)
+
 func die() -> void:
 	print("Player died. Reloading...")
 	get_tree().call_deferred("reload_current_scene")
+
+# Not used in this file. Used by other scripts.
+func handle_pause_menu_visibility(is_paused: bool) -> void:
+	# Hide/show items and HUDs when pause menu toggles
+	if left_hand and left_hand.held_item:
+		left_hand.held_item.handle_pause(not is_paused)
+	if right_hand and right_hand.held_item:
+		right_hand.held_item.handle_pause(not is_paused)
+	
+	# Hide main HUD during pause
+	if hud_node:
+		hud_node.visible = not is_paused
