@@ -1,36 +1,33 @@
 extends CharacterBody3D
+class_name BlobAICharacter
 
-# the player is a...
+# the AI is a...
 @export var mover: MoverResource
 @export var basic_jumper: BasicJumperResource
-@export var wall_jumper: WallJumperResource
 @export var faller: FallerResource
 @export var two_handed: TwoHandedResource
 @export var stair_stepper: StairStepperResource
+
+@export var blob_ai: BlobAIResource
 
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
 @onready var default_floor_angle: float = floor_max_angle
 
-# the player has a ...
-@onready var ledge_grabber_node: Node = $LedgeGrabber
+# the AI has a ...
 @onready var softy: SoftBody3D = $SoftBody3D
 @onready var hardy: CollisionShape3D = $CollisionShape3D
 @onready var squeezer_node: Node3D = $SqueezerRays
 @onready var health_node: Node3D = $Health
-@onready var hud_node: CanvasLayer = $HUD
-#@onready var left_hand: HandController = $LeftHandMesh
-#@onready var right_hand: HandController = $RightHandMesh
-@onready var pause_menu_node: Node = $PauseMenu
 
-var can_be_seen: bool = true  # For enemy AI detection
+#var can_be_seen: bool = true  # For enemy AI detection
+var players
 
 func _ready() -> void:
 	# Initialize resources if not assigned
 	if not mover: mover = MoverResource.new()
 	if not basic_jumper: basic_jumper = BasicJumperResource.new()
-	if not wall_jumper: wall_jumper = WallJumperResource.new()
 	if not faller: faller = FallerResource.new()
 	if not two_handed: two_handed = TwoHandedResource.new()
 	two_handed.left_hand = $LeftHandMesh
@@ -39,41 +36,54 @@ func _ready() -> void:
 	stair_stepper.step_cast = $StepCast
 	stair_stepper.step_cast.add_exception_rid(hardy.shape.get_rid())
 	stair_stepper.step_cast.add_exception_rid(softy.get_physics_rid())
+	if not blob_ai: blob_ai = BlobAIResource.new()
+	blob_ai.set_spawn_position(global_position)  # for restricting wandering
+	blob_ai.setup_detection_systems(self)
 	
-	if health_node and hud_node:
-		health_node.health_changed.connect(hud_node.update_health_ui)
+	players = get_tree().get_nodes_in_group("player")
+	
+	# saving this as commented for hp above head maybe
+	#if health_node:
+	#	health_node.health_changed.connect(hud_node.update_health_ui)
 
-func _input(event: InputEvent) -> void:
-	mover.handle_immediate_input(event)
-	basic_jumper.handle_immediate_input(event)
-	#wall_jump.handle_immediate_input(event)
-	two_handed.handle_immediate_input(event)
+func jump():
+	basic_jumper.request_jump()
+	
+func attack(look_dir:Vector3):
+	#look_at(look_dir, Vector3.UP)
+	# just a simple double bonk for now
+	print("AI is attacking")
+	two_handed.handle_primary_hand_input(1.0)
+	two_handed.handle_non_primary_hand_input(1.0)
 
 func _physics_process(delta: float) -> void:
+	var move_look = blob_ai.ai_think(delta, self, players[0])
+	var move_dir = move_look[0]
+	var look_dir = move_look[1]
+	
+	if look_dir.length() > 0.02:
+		# Smooth look-at style
+		var target_pos = global_position + look_dir
+		look_at(target_pos, Vector3.UP, true)  #use model front is true
+	
 	var sv_xyz = velocity  # immediate set velocity vector
 	var gv_xyz = Vector3.ZERO  # goal velocity vector
 	
-	var input_dir: Vector2 = Input.get_vector("left", "right", "up", "down")
-	var is_slow: bool = Input.is_action_pressed("slow")
-	var is_sprint: bool = Input.is_action_pressed("sprint")
+	var input_dir: Vector2 = Vector2(move_dir.x, move_dir.z)
+	var is_slow: bool = blob_ai.current_state in [blob_ai.AIState.CHASE_COOLDOWN,blob_ai.AIState.WANDER, blob_ai.AIState.WANDER_WALL_FOLLOW]
+	var is_sprint: bool = blob_ai.current_state == blob_ai.AIState.CHASE
 	gv_xyz = mover.handle_physics_process_input(input_dir, is_slow,is_sprint, gv_xyz, delta, transform)
 
 	var friction: float = SPEED_DECAY_GROUND
-	var should_fall: bool = not is_on_floor() and not (ledge_grabber_node and ledge_grabber_node.is_grabbing_ledge)
-	if should_fall:
-		friction = SPEED_DECAY_AIR
+	var should_fall: bool = not is_on_floor()
 
 	sv_xyz = faller.apply_gravity(sv_xyz, self, delta)
 
 	basic_jumper.update_coyote_time(not should_fall, delta)
 	# Messy jump stuff. Maybe wall jump should extend basic jump. Idk.
 	sv_xyz = basic_jumper.apply_jump(sv_xyz, not should_fall)
-	wall_jumper.jump_requested = basic_jumper.jump_requested
-	sv_xyz = wall_jumper.apply_jump(sv_xyz, self, not should_fall)
-	basic_jumper.jump_requested = wall_jumper.jump_requested
 
 	# Movement input
-	input_dir = Input.get_vector("left", "right", "up", "down")
 	var direction: Vector3 = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 
 	var squeeze_factor: float = 1.0
@@ -86,10 +96,8 @@ func _physics_process(delta: float) -> void:
 		gv_xyz[2] *= squeeze_factor
 		
 	# ITEM USE SECTION
-	two_handed.handle_physics_process_input()
+	#two_handed.handle_physics_process_input()
 	
-	sv_xyz = wall_jumper.handle_wall_slide(sv_xyz, self, direction)
-
 	if Input.is_action_pressed("slide"):
 		floor_max_angle = 0.0
 	else:
@@ -109,17 +117,5 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 func die() -> void:
-	print("Player died. Reloading...")
-	get_tree().call_deferred("reload_current_scene")
-
-# Not used in this file. Used by other scripts.
-func handle_pause_menu_visibility(is_paused: bool) -> void:
-	# Hide/show items and HUDs when pause menu toggles
-	if two_handed.left_hand and two_handed.left_hand.held_item:
-		two_handed.left_hand.held_item.handle_pause(not is_paused)
-	if two_handed.right_hand and two_handed.right_hand.held_item:
-		two_handed.right_hand.held_item.handle_pause(not is_paused)
-	
-	# Hide main HUD during pause
-	if hud_node:
-		hud_node.visible = not is_paused
+	print("Enemy died. Deleting...")
+	queue_free()

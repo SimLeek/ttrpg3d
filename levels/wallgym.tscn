@@ -1,4 +1,4 @@
-[gd_scene load_steps=25 format=3 uid="uid://bxw2648o2h7n7"]
+[gd_scene load_steps=26 format=3 uid="uid://bxw2648o2h7n7"]
 
 [ext_resource type="Texture2D" uid="uid://cwjqjhi801dva" path="res://3dAssets/skybox/colle-della-lombarada (1).jpg" id="1_mumyq"]
 [ext_resource type="PackedScene" uid="uid://dpvhf7r5xwv5f" path="res://playable/Blob.tscn" id="2_twa4m"]
@@ -7,6 +7,7 @@
 [ext_resource type="Texture2D" uid="uid://bj3osokhya3g7" path="res://3dAssets/ember_face.png" id="5_bb7w5"]
 [ext_resource type="Script" uid="uid://clyjoxm4lvgg2" path="res://levels/area_3d.gd" id="5_tqqsv"]
 [ext_resource type="ArrayMesh" uid="uid://ba5hbxsw2q321" path="res://3dAssets/test/wall gym.obj" id="6_m02ey"]
+[ext_resource type="PackedScene" uid="uid://c2yxw3bjwoygf" path="res://NPCs/evil_blob.tscn" id="6_tqqsv"]
 [ext_resource type="Material" uid="uid://brnctogxnqgdq" path="res://3dAssets/shader_wall.tres" id="7_74hhg"]
 [ext_resource type="ArrayMesh" uid="uid://7ooq01l1mhfi" path="res://3dAssets/test/tunnel gym.obj" id="7_m02ey"]
 [ext_resource type="ArrayMesh" uid="uid://bk1421v7hxgso" path="res://3dAssets/test/tunnel gym 2.obj" id="9_bb7w5"]
@@ -88,7 +89,7 @@ transform = Transform3D(0.9659258, 0.066987306, 0.24999999, -0.25881904, 0.24999
 shadow_enabled = true
 
 [node name="CharacterBody3D" parent="." instance=ExtResource("2_twa4m")]
-transform = Transform3D(-4.569558e-08, 0, 1, 0, 1, 0, -1, 0, -4.569558e-08, 1.0000004, 1, 9.000002)
+transform = Transform3D(-4.569558e-08, 0, 1, 0, 1, 0, -1, 0, -4.569558e-08, 0.9999996, 1, -7.999998)
 
 [node name="CharacterBody3D2" parent="." instance=ExtResource("3_hd7o8")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, -4, 1, 10)
@@ -105,6 +106,9 @@ transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 18, 
 dialogs = Array[ExtResource("4_bb7w5")]([SubResource("Resource_beouf")])
 billboard_height = 0.5
 box_size = Vector2(600, 180)
+
+[node name="CharacterBody3D" parent="CharacterBody3D8" instance=ExtResource("6_tqqsv")]
+transform = Transform3D(-1, 0, 8.742278e-08, 0, 1, 0, -8.742278e-08, 0, -1, 11.999999, 0, 13.999999)
 
 [node name="CharacterBody3D3" parent="." instance=ExtResource("3_hd7o8")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, -14, 18, 1.000001)

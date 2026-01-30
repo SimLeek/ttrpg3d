@@ -1,5 +1,5 @@
 extends Resource
-class_name BasicJumpResource
+class_name BasicJumperResource
 
 ## Jump mechanics - stats and control logic together
 

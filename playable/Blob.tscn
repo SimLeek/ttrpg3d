@@ -85,6 +85,7 @@ mesh = SubResource("SphereMesh_htvlb")
 surface_material_override/0 = ExtResource("4_s7uw5")
 script = ExtResource("7_5fh1f")
 ledge_grabber_path = NodePath("../LedgeGrabber")
+character_path = NodePath("..")
 
 [node name="RightHandMesh" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_htvlb")
@@ -93,6 +94,7 @@ script = ExtResource("7_5fh1f")
 hand_side = 1
 primary = true
 ledge_grabber_path = NodePath("../LedgeGrabber")
+character_path = NodePath("..")
 
 [node name="StepCast" type="ShapeCast3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 0)

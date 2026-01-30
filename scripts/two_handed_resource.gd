@@ -1,0 +1,53 @@
+extends Resource
+class_name TwoHandedResource
+
+## Gravity and falling - stats and control logic together
+
+var left_hand: HandController
+var right_hand: HandController
+
+func handle_immediate_input(event):
+	if not left_hand or not right_hand:
+		push_error("Assign the hands in the _ready function of the script that uses this.")
+	
+	if event.is_action_pressed("primary_item_click"):
+		print("prim")
+		handle_primary_hand_input(1.0)
+	elif event.is_action_pressed("secondary_item_click"):
+		print("sec")
+		handle_non_primary_hand_input(1.0)
+
+func handle_physics_process_input():
+	if not left_hand or not right_hand:
+		push_error("Assign the hands in the _ready function of the script that uses this.")
+	var right_trigger = Input.get_action_strength("primary_item_trigger")  # Primary hand
+	var left_trigger = Input.get_action_strength("secondary_item_trigger")    # Non-primary hand
+	
+	if right_trigger > 0.0:
+		handle_primary_hand_input(right_trigger)
+	
+	if left_trigger > 0.0:
+		handle_non_primary_hand_input(left_trigger)
+
+func handle_primary_hand_input(pressure: float) -> void:
+	# Use whichever hand is marked as primary
+	if right_hand.primary:
+		right_hand.use_hand(pressure)
+	elif left_hand.primary:
+		left_hand.use_hand(pressure)
+	else:
+		push_warning("character should have a primary hand")
+		right_hand.use_hand(pressure)
+
+func handle_non_primary_hand_input(pressure: float) -> void:
+	# Use whichever hand is NOT primary
+	if right_hand.primary:
+		left_hand.use_hand(pressure)
+	elif left_hand.primary:
+		right_hand.use_hand(pressure)
+	else:
+		push_warning("character should have at least one non-primary hand")
+		left_hand.use_hand(pressure)
+
+func reset() -> void:
+	pass

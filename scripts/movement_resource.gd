@@ -1,5 +1,5 @@
 extends Resource
-class_name MovementResource
+class_name MoverResource
 
 @export_group("Speeds")
 @export var normal_speed: float = 7.5
@@ -35,6 +35,9 @@ func handle_immediate_input(event: InputEvent, left="left", right="right", up="u
 			last_key = current_key
 
 func handle_physics_process_input(
+	input_dir: Vector2,
+	is_slow: bool,
+	is_sprint: bool,
 	vel_xyz: Vector3,
 	delta: float,
 	transform: Transform3D
@@ -42,12 +45,12 @@ func handle_physics_process_input(
 	if tap_timer > 0.0:
 		tap_timer -= delta
 	
-	if Input.is_action_pressed("sprint"):
+	if is_sprint:
 		sprinting = true
 
-	var input_dir: Vector2 = Input.get_vector("left", "right", "up", "down")
+	#var input_dir: Vector2 = Input.get_vector("left", "right", "up", "down")
 	var direction: Vector3 = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
-	var is_slow: bool = Input.is_action_pressed("slow")
+	#var is_slow: bool = Input.is_action_pressed("slow")
 
 	return get_vel_xyz(vel_xyz, direction, delta, is_slow)
 

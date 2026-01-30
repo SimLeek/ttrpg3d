@@ -1,7 +1,6 @@
-[gd_scene load_steps=12 format=3 uid="uid://c2yxw3bjwoygf"]
+[gd_scene load_steps=11 format=3 uid="uid://c2yxw3bjwoygf"]
 
-[ext_resource type="Script" uid="uid://bv2ykx5uveb27" path="res://playable/ledge_grabber.gd" id="2_nuj5y"]
-[ext_resource type="Material" uid="uid://7hxjrqx1hm5s" path="res://3dAssets/Blob_tex.tres" id="3_ef4g5"]
+[ext_resource type="Script" uid="uid://b7rrdh30m48fj" path="res://NPCs/evil_blob_ai.gd" id="1_vgo36"]
 [ext_resource type="ArrayMesh" uid="uid://cyp3nk03i7m0v" path="res://3dAssets/slime_ico.obj" id="5_6d3i8"]
 [ext_resource type="Material" uid="uid://cw1qq67igdks2" path="res://3dAssets/Purple_blob_tex.tres" id="6_xmbdc"]
 [ext_resource type="Script" uid="uid://b2d4h5lawqfjw" path="res://scripts/limited_blob_body.gd" id="7_r33o2"]
@@ -23,25 +22,19 @@ rings = 6
 height = 0.01
 radius = 0.25
 
-[node name="CharacterBody3D" type="CharacterBody3D" groups=["player"]]
+[node name="CharacterBody3D" type="CharacterBody3D"]
 collision_layer = 3
 collision_mask = 3
 floor_snap_length = 0.0
+script = ExtResource("1_vgo36")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_f14xy")
 
-[node name="LedgeGrabber" type="Node3D" parent="."]
-script = ExtResource("2_nuj5y")
-ray_length = 1.0
-rest_length = 0.5
-ledge_grab_key = "grab"
-debug_draw = true
-
 [node name="SoftBody3D" type="SoftBody3D" parent="." node_paths=PackedStringArray("follow_node")]
 transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0, 0, 0)
 mesh = ExtResource("5_6d3i8")
-surface_material_override/0 = ExtResource("3_ef4g5")
+surface_material_override/0 = ExtResource("6_xmbdc")
 collision_layer = 3
 collision_mask = 3
 parent_collision_ignore = NodePath("..")
@@ -56,13 +49,13 @@ max_distance_hard = 0.6
 vertex_mass_multiplier = 0.25
 velocity_match_multiplier = 0.25
 follow_node = NodePath("..")
-offset_yaw = -90.0
+offset_yaw = 90.0
 
 [node name="LeftHandMesh" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_htvlb")
 surface_material_override/0 = ExtResource("6_xmbdc")
 script = ExtResource("8_s4cst")
-ledge_grabber_path = NodePath("../LedgeGrabber")
+character_path = NodePath("..")
 
 [node name="RightHandMesh" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_htvlb")
@@ -70,7 +63,7 @@ surface_material_override/0 = ExtResource("6_xmbdc")
 script = ExtResource("8_s4cst")
 hand_side = 1
 primary = true
-ledge_grabber_path = NodePath("../LedgeGrabber")
+character_path = NodePath("..")
 
 [node name="StepCast" type="ShapeCast3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 0)

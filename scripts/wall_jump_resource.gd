@@ -1,5 +1,5 @@
 extends Resource
-class_name WallJumpResource
+class_name WallJumperResource
 
 ## Wall interactions - stats and control logic together
 

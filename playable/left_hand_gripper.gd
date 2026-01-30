@@ -7,6 +7,7 @@ enum HandSide { LEFT, RIGHT }
 ## if neither left nor right is valid, this hand will grab the center.
 @export var primary: bool = false
 @export var ledge_grabber_path: NodePath
+@export var character_path: NodePath
 @export var lerp_speed: float = 20.0  # Higher = faster movement
 
 @export_group("Combat")
@@ -22,12 +23,14 @@ var punch_timer: float = 0.0
 var punch_collider: Area3D = null
 
 var ledge_grabber: LedgeGrabber
+var character: CharacterBody3D
 var ledge_grabbed: bool = false
 var target_position: Vector3
 var is_lerping: bool = false
 
 func _ready() -> void:
 	ledge_grabber = get_node(ledge_grabber_path) as LedgeGrabber
+	character = get_node(character_path) as CharacterBody3D
 	if ledge_grabber:
 		ledge_grabber.hand_positions_updated.connect(_on_hand_positions_updated)
 		ledge_grabber.ledge_grab_released.connect(_on_ledge_grab_released)
@@ -156,7 +159,7 @@ func _process(delta: float) -> void:
 				global_position = target_position
 				is_lerping = false
 	else:
-		if Input.is_action_pressed(ledge_grabber.ledge_grab_key):
+		if ledge_grabber and Input.is_action_pressed(ledge_grabber.ledge_grab_key):
 			var base_pos = ledge_grabber.dir + ledge_grabber.character.global_position
 			if hand_side == HandSide.LEFT:
 				base_pos += ledge_grabber.left_perp / 2
@@ -170,7 +173,7 @@ func _process(delta: float) -> void:
 			stow_hands(delta)
 
 func stow_hands(delta):
-	target_position = ledge_grabber.character.global_position
+	target_position = character.global_position
 	global_position = global_position.lerp(target_position, lerp_speed * delta)
 	if global_position.distance_to(target_position) < 0.01:
 		global_position = target_position
