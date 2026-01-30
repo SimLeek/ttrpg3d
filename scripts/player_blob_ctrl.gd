@@ -1,12 +1,7 @@
 extends CharacterBody3D
 
-@export var SPEED: float = 7.5
-@export var SPRINT_SPEED: float = 15.0
-@export var SLOW_SPEED: float = 3.75
-@export var SPRINT_TIME_LIMIT: float = 10.0
-@export var SPRINT_RECOVERY_TIME: float = 5.0
+@export var movement: MovementResource
 
-@export var DOUBLE_TAP_TIME: float = 0.25
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 @export var JUMP_VELOCITY: float = 12.0
@@ -34,16 +29,15 @@ extends CharacterBody3D
 var can_be_seen: bool = true  # For enemy AI detection
 
 var tap_timer: float = 0.0
-var last_key: String = ""
-var sprinting: bool = false
-var sprint_elapsed: float = 0.0
-var sprint_exhausted: bool = false
 
 var coyote_time_left: float = 0.0
 var jump_requested: bool = false
 var jump_release_requested: bool = false
 
 func _ready() -> void:
+	# Initialize resources if not assigned
+	if not movement: movement = MovementResource.new()
+	
 	step_cast.add_exception_rid(hardy.shape.get_rid())
 	step_cast.add_exception_rid(softy.get_physics_rid())
 	
@@ -51,17 +45,7 @@ func _ready() -> void:
 		health_node.health_changed.connect(hud_node.update_health_ui)
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		var current_key: String = event.as_text()
-
-		if current_key == last_key and tap_timer > 0.0:
-			for action in ["left", "right", "up", "down"]:
-				if event.is_action_pressed(action):
-					sprinting = true
-					break
-		else:
-			tap_timer = DOUBLE_TAP_TIME
-			last_key = current_key
+	movement.handle_immediate_input(event)
 
 	if event.is_action_pressed("jump"):
 		jump_requested = true
@@ -81,10 +65,9 @@ func _input(event: InputEvent) -> void:
 	
 
 func _physics_process(delta: float) -> void:
-	if tap_timer > 0.0:
-		tap_timer -= delta
-
-	handle_sprint(delta)
+	
+	var v_xyz = [0.0, 0.0, 0.0]
+	v_xyz = movement.handle_physics_process_input(v_xyz, delta, transform)
 
 	var friction: float = SPEED_DECAY_GROUND
 	var should_fall: bool = not is_on_floor() and not (ledge_grabber_node and ledge_grabber_node.is_grabbing_ledge)
@@ -130,16 +113,11 @@ func _physics_process(delta: float) -> void:
 	var squeeze_factor: float = 1.0
 	if squeezer_node and squeezer_node.has_method("calculate_squeeze_factor"):
 		squeeze_factor = squeezer_node.calculate_squeeze_factor(direction)
-
-	var speed: float = SPEED
-	if sprinting:
-		speed = SPRINT_SPEED
-	if Input.is_action_pressed("slow"):
-		speed = SLOW_SPEED
 	
 	# Apply squeeze slowdown (only when there's meaningful forward movement)
 	if direction.length() > 0.05:
-		speed *= squeeze_factor
+		v_xyz[0] *= squeeze_factor
+		v_xyz[2] *= squeeze_factor
 		
 	# ITEM USE SECTION
 	var right_trigger = Input.get_action_strength("primary_item_trigger")  # Primary hand
@@ -160,35 +138,14 @@ func _physics_process(delta: float) -> void:
 	# END ITEM USE SECTION
 
 	if direction:
-		velocity.x = move_toward(velocity.x, direction.x * speed, friction)
-		velocity.z = move_toward(velocity.z, direction.z * speed, friction)
+		velocity.x = move_toward(velocity.x, v_xyz[0], friction)
+		velocity.z = move_toward(velocity.z, v_xyz[2], friction)
 	else:
-		sprinting = false
 		velocity.x = move_toward(velocity.x, 0.0, friction)
 		velocity.z = move_toward(velocity.z, 0.0, friction)
 
 	handle_step_up(delta)
 	move_and_slide()
-
-func handle_sprint(delta: float) -> void:
-	if Input.is_action_pressed("sprint"):
-		sprinting = true
-
-	if sprinting:
-		if sprint_exhausted:
-			sprinting = false
-		else:
-			sprint_elapsed += delta
-			if sprint_elapsed >= SPRINT_TIME_LIMIT:
-				sprint_elapsed = SPRINT_TIME_LIMIT
-				sprint_exhausted = true
-
-	if sprint_exhausted:
-		var recovery_rate: float = SPRINT_TIME_LIMIT / SPRINT_RECOVERY_TIME
-		sprint_elapsed -= recovery_rate * delta
-		if sprint_elapsed <= 0.0:
-			sprint_elapsed = 0.0
-			sprint_exhausted = false
 
 func handle_step_up(delta: float) -> void:
 	step_cast.global_position.x = global_position.x + velocity.x * delta
