@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode blend_mix, depth_draw_always, cull_back; //cull_disabled;
+render_mode blend_mix, depth_prepass_alpha, cull_disabled;
 
 global uniform vec3 player_position;
 global uniform vec3 camera_position;
@@ -9,7 +9,10 @@ uniform float cutout_pow : hint_range(0.1, 10.0, 0.05) = 10;
 uniform float below_pow : hint_range(0.1, 10.0, 0.05) = 0.2;
 uniform float forward_pow : hint_range(0.01, 100.0, 0.05) = 0.05;
 uniform float cone_extra : hint_range(0.01, 100.0, 0.05) = 1;
-
+uniform float floor_fade_start : hint_range(-2.0, 2.0, 0.01) = 0.0;
+uniform float floor_fade_length : hint_range(0.1, 5.0, 0.1) = 0.25;
+uniform float alpha_min : hint_range(0.1, 1.0, 0.1) = 0.2;
+uniform float camera_min_dist : hint_range(0.1, 10.0, 0.1) = 0.5;
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
 uniform vec4 albedo_color : source_color = vec4(1.0);
@@ -61,44 +64,32 @@ void fragment() {
 	vec3 full_dir = camera_position - player_position;
     vec3 dir = normalize(full_dir);
     float line_length = length(camera_position - player_position);
-	vec3 up = vec3(0.0,1.0,0.0);
-	vec3 right = cross(up, dir);
-	vec3 forward = normalize(cross(right, up));
 
     float t = dot(frag_world_pos - player_position, dir);
-	float t2 = dot(frag_world_pos - player_position, forward);
 
     ALPHA = albedo_tex.a * albedo_color.a;
     vec3 closest = player_position + t * dir;
     float perp_dist = length(frag_world_pos - closest);
 	float del_extra = 0.0;
 
-	/*if(t<0.0){
-		ALPHA*=-t/line_length;
-	}*/
-	/*if (closest.y-frag_world_pos.y>0.0){
-		del_extra = (closest.y-frag_world_pos.y)/cutout_radius;
-	}*/
-	/*if (player_position.y-frag_world_pos.y>0.0){
-		del_extra += (player_position.y-frag_world_pos.y)/cutout_radius;
-	}*/
 	float cone_mult = cutout_radius*t/line_length+cone_extra;
-	//if(t>0.0){
-	if(line_length>0.5){
+	if(line_length>camera_min_dist){
 	   if (perp_dist < cone_mult) {
 	    	ALPHA *= abs(pow((perp_dist-cone_mult)/cone_mult + pow(del_extra,below_pow) +1.0,cutout_pow));
 	    }
-	//}
-	/*if(t2<0.0){
-		ALPHA-=t2/(cutout_radius*forward_pow);//(cutout_radius*forward_pow);
-	}*/
 	if(t<0.0){
-		ALPHA-=t/(cutout_radius*forward_pow);//(cutout_radius*forward_pow);
+		ALPHA-=t/(cutout_radius*forward_pow);
 	}
-	/*else{
-		ALPHA-=t2/(cutout_radius*forward_pow);
-	}*/
-	ALPHA = min(max(ALPHA, 0.5), 1.0);
+
+	float y_dist = frag_world_pos.y - (player_position.y - floor_fade_start);
+
+	float vertical_mask = 0.0;
+
+	if (camera_position.y > player_position.y) {
+	    vertical_mask = clamp( -(y_dist / floor_fade_length), 0.0, 1.0);
 	}
-	//ALPHA_SCISSOR_THRESHOLD = 0.5;
+	ALPHA += vertical_mask;
+
+	ALPHA = min(max(ALPHA, alpha_min), 1.0);
+	}
 }

@@ -25,6 +25,8 @@ extends CharacterBody3D
 @onready var softy: SoftBody3D = $SoftBody3D
 @onready var hardy: CollisionShape3D = $CollisionShape3D
 @onready var squeezer_node: Node3D = $SqueezerRays
+@onready var health_node: Node3D = $Health
+@onready var hud_node: CanvasLayer = $HUD
 
 var tap_timer: float = 0.0
 var last_key: String = ""
@@ -39,6 +41,9 @@ var jump_release_requested: bool = false
 func _ready() -> void:
 	step_cast.add_exception_rid(hardy.shape.get_rid())
 	step_cast.add_exception_rid(softy.get_physics_rid())
+	
+	if health_node and hud_node:
+		health_node.health_changed.connect(hud_node.update_health_ui)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -180,3 +185,7 @@ func handle_wall_slide(direction):
 
 		if dot > cos_tolerance:
 			velocity.y = maxf(velocity.y, -WALL_SLIDE_SPEED)
+
+func die() -> void:
+	print("Player died. Reloading...")
+	get_tree().call_deferred("reload_current_scene")

@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://dpvhf7r5xwv5f"]
+[gd_scene load_steps=21 format=3 uid="uid://dpvhf7r5xwv5f"]
 
 [ext_resource type="Script" uid="uid://cj0edidy8wr2s" path="res://scripts/player_blob_ctrl.gd" id="1_s7uw5"]
 [ext_resource type="Script" uid="uid://bv2ykx5uveb27" path="res://playable/ledge_grabber.gd" id="2_5fh1f"]
@@ -12,6 +12,10 @@
 [ext_resource type="Script" uid="uid://bq3mqhl51b0kk" path="res://playable/pause_menu.gd" id="9_yri3r"]
 [ext_resource type="Theme" uid="uid://ipsk780unxrm" path="res://menus/menu_button_theme.tres" id="10_yri3r"]
 [ext_resource type="Script" uid="uid://bt6eb1wa0gx03" path="res://playable/squeezer_rays.gd" id="12_dk5x5"]
+[ext_resource type="Script" uid="uid://dxs6easmd0pto" path="res://levels/hud.gd" id="13_832iv"]
+[ext_resource type="Texture2D" uid="uid://bo016e0asqtb3" path="res://2dassets/hp_empty.png" id="14_jo7wf"]
+[ext_resource type="Texture2D" uid="uid://bui8sh57vg0j" path="res://2dassets/hp_full.png" id="15_ekptx"]
+[ext_resource type="Script" uid="uid://ro600jkcqukj" path="res://playable/health.gd" id="16_jo7wf"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -96,9 +100,10 @@ shape = SubResource("CylinderShape3D_htvlb")
 target_position = Vector3(0, -0.25, 0)
 collision_mask = 3
 
-[node name="PauseMenu" type="CanvasLayer" parent="."]
+[node name="PauseMenu" type="CanvasLayer" parent="." node_paths=PackedStringArray("hud")]
 process_mode = 3
 script = ExtResource("9_yri3r")
+hud = NodePath("../HUD")
 
 [node name="Control" type="Control" parent="PauseMenu"]
 layout_mode = 3
@@ -153,6 +158,39 @@ text = "Exit Game"
 
 [node name="SqueezerRays" type="Node3D" parent="."]
 script = ExtResource("12_dk5x5")
+
+[node name="HUD" type="CanvasLayer" parent="." node_paths=PackedStringArray("health_bar")]
+process_mode = 3
+script = ExtResource("13_832iv")
+health_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/TextureProgressBar")
+
+[node name="Control" type="Control" parent="HUD"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1150.0
+offset_bottom = 650.0
+mouse_filter = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="HUD/Control"]
+layout_mode = 0
+offset_right = 1150.0
+offset_bottom = 650.0
+
+[node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer"]
+layout_mode = 2
+
+[node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer/GridContainer"]
+layout_mode = 2
+columns = 2
+
+[node name="TextureProgressBar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer"]
+layout_mode = 2
+value = 100.0
+texture_under = ExtResource("14_jo7wf")
+texture_progress = ExtResource("15_ekptx")
+
+[node name="Health" type="Node3D" parent="."]
+script = ExtResource("16_jo7wf")
 
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/continue" to="PauseMenu" method="_on_continue_pressed"]
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/config" to="PauseMenu" method="_on_config_pressed"]

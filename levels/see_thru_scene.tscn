@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://bdykg3k6427vr"]
+[gd_scene load_steps=14 format=3 uid="uid://bdykg3k6427vr"]
 
 [ext_resource type="Texture2D" uid="uid://cwjqjhi801dva" path="res://3dAssets/skybox/colle-della-lombarada (1).jpg" id="1_2jdrd"]
 [ext_resource type="PackedScene" uid="uid://dpvhf7r5xwv5f" path="res://playable/Blob.tscn" id="2_lx7kc"]
@@ -6,7 +6,6 @@
 [ext_resource type="Script" uid="uid://gmlq05jfav5a" path="res://NPCs/dialog_entry.gd" id="4_3ebk1"]
 [ext_resource type="ArrayMesh" uid="uid://bmgk7jwsvho5w" path="res://3dAssets/test/Apartment Base with Rooms.obj" id="6_2jdrd"]
 [ext_resource type="Script" uid="uid://clyjoxm4lvgg2" path="res://levels/area_3d.gd" id="6_dx5dw"]
-[ext_resource type="Material" uid="uid://c588e54ol5m8a" path="res://3dAssets/basic_white.tres" id="7_2jdrd"]
 [ext_resource type="Material" uid="uid://brnctogxnqgdq" path="res://3dAssets/shader_wall.tres" id="8_s8bam"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_5ag8f"]
@@ -76,45 +75,45 @@ collision_mask = 2
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0, -11)
 mesh = ExtResource("6_2jdrd")
 skeleton = NodePath("../..")
-surface_material_override/0 = ExtResource("7_2jdrd")
-surface_material_override/1 = ExtResource("7_2jdrd")
-surface_material_override/2 = ExtResource("7_2jdrd")
-surface_material_override/3 = ExtResource("7_2jdrd")
-surface_material_override/4 = ExtResource("7_2jdrd")
-surface_material_override/5 = ExtResource("7_2jdrd")
-surface_material_override/6 = ExtResource("7_2jdrd")
-surface_material_override/7 = ExtResource("7_2jdrd")
-surface_material_override/8 = ExtResource("7_2jdrd")
-surface_material_override/9 = ExtResource("7_2jdrd")
-surface_material_override/10 = ExtResource("7_2jdrd")
-surface_material_override/11 = ExtResource("7_2jdrd")
-surface_material_override/12 = ExtResource("7_2jdrd")
-surface_material_override/13 = ExtResource("7_2jdrd")
-surface_material_override/14 = ExtResource("7_2jdrd")
-surface_material_override/15 = ExtResource("7_2jdrd")
+surface_material_override/0 = ExtResource("8_s8bam")
+surface_material_override/1 = ExtResource("8_s8bam")
+surface_material_override/2 = ExtResource("8_s8bam")
+surface_material_override/3 = ExtResource("8_s8bam")
+surface_material_override/4 = ExtResource("8_s8bam")
+surface_material_override/5 = ExtResource("8_s8bam")
+surface_material_override/6 = ExtResource("8_s8bam")
+surface_material_override/7 = ExtResource("8_s8bam")
+surface_material_override/8 = ExtResource("8_s8bam")
+surface_material_override/9 = ExtResource("8_s8bam")
+surface_material_override/10 = ExtResource("8_s8bam")
+surface_material_override/11 = ExtResource("8_s8bam")
+surface_material_override/12 = ExtResource("8_s8bam")
+surface_material_override/13 = ExtResource("8_s8bam")
+surface_material_override/14 = ExtResource("8_s8bam")
+surface_material_override/15 = ExtResource("8_s8bam")
 surface_material_override/16 = ExtResource("8_s8bam")
-surface_material_override/17 = ExtResource("7_2jdrd")
+surface_material_override/17 = ExtResource("8_s8bam")
 surface_material_override/18 = ExtResource("8_s8bam")
 surface_material_override/19 = ExtResource("8_s8bam")
-surface_material_override/20 = ExtResource("7_2jdrd")
+surface_material_override/20 = ExtResource("8_s8bam")
 surface_material_override/21 = ExtResource("8_s8bam")
 surface_material_override/22 = ExtResource("8_s8bam")
-surface_material_override/23 = ExtResource("7_2jdrd")
+surface_material_override/23 = ExtResource("8_s8bam")
 surface_material_override/24 = ExtResource("8_s8bam")
 surface_material_override/25 = ExtResource("8_s8bam")
-surface_material_override/26 = ExtResource("7_2jdrd")
+surface_material_override/26 = ExtResource("8_s8bam")
 surface_material_override/27 = ExtResource("8_s8bam")
 surface_material_override/28 = ExtResource("8_s8bam")
-surface_material_override/29 = ExtResource("7_2jdrd")
+surface_material_override/29 = ExtResource("8_s8bam")
 surface_material_override/30 = ExtResource("8_s8bam")
 surface_material_override/31 = ExtResource("8_s8bam")
 surface_material_override/32 = ExtResource("8_s8bam")
 surface_material_override/33 = ExtResource("8_s8bam")
-surface_material_override/34 = ExtResource("7_2jdrd")
+surface_material_override/34 = ExtResource("8_s8bam")
 surface_material_override/35 = ExtResource("8_s8bam")
 surface_material_override/36 = ExtResource("8_s8bam")
 surface_material_override/37 = ExtResource("8_s8bam")
-surface_material_override/38 = ExtResource("7_2jdrd")
+surface_material_override/38 = ExtResource("8_s8bam")
 surface_material_override/39 = ExtResource("8_s8bam")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D"]

@@ -1,9 +1,9 @@
 extends CanvasLayer
 
+@export var hud: CanvasLayer
 
-# Called when the node enters the scene tree for the first time.
 func _ready() -> void:
-	visible = false  # don't start paused while being able to move
+	visible = false
 
 func _input(event):
 	if event.is_action_pressed("pause"):
@@ -13,6 +13,7 @@ func handle_pause():
 		var new_pause_state = not get_tree().paused
 		get_tree().paused = new_pause_state
 		visible = new_pause_state
+		hud.visible = not new_pause_state
 		# Optional: Show/hide mouse cursor
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if new_pause_state else Input.MOUSE_MODE_CAPTURED)
 

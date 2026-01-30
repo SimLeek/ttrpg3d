@@ -1,13 +1,14 @@
-[gd_scene load_steps=23 format=3 uid="uid://bxw2648o2h7n7"]
+[gd_scene load_steps=25 format=3 uid="uid://bxw2648o2h7n7"]
 
 [ext_resource type="Texture2D" uid="uid://cwjqjhi801dva" path="res://3dAssets/skybox/colle-della-lombarada (1).jpg" id="1_mumyq"]
 [ext_resource type="PackedScene" uid="uid://dpvhf7r5xwv5f" path="res://playable/Blob.tscn" id="2_twa4m"]
 [ext_resource type="PackedScene" uid="uid://dwyshoj764kfp" path="res://NPCs/BlobNPC.tscn" id="3_hd7o8"]
 [ext_resource type="Script" uid="uid://gmlq05jfav5a" path="res://NPCs/dialog_entry.gd" id="4_bb7w5"]
+[ext_resource type="Texture2D" uid="uid://bj3osokhya3g7" path="res://3dAssets/ember_face.png" id="5_bb7w5"]
 [ext_resource type="Script" uid="uid://clyjoxm4lvgg2" path="res://levels/area_3d.gd" id="5_tqqsv"]
 [ext_resource type="ArrayMesh" uid="uid://ba5hbxsw2q321" path="res://3dAssets/test/wall gym.obj" id="6_m02ey"]
+[ext_resource type="Material" uid="uid://brnctogxnqgdq" path="res://3dAssets/shader_wall.tres" id="7_74hhg"]
 [ext_resource type="ArrayMesh" uid="uid://7ooq01l1mhfi" path="res://3dAssets/test/tunnel gym.obj" id="7_m02ey"]
-[ext_resource type="Material" uid="uid://s6dmxmqbcave" path="res://3dAssets/simple_transparent.tres" id="8_hd7o8"]
 [ext_resource type="ArrayMesh" uid="uid://bk1421v7hxgso" path="res://3dAssets/test/tunnel gym 2.obj" id="9_bb7w5"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_5ag8f"]
@@ -24,7 +25,14 @@ ambient_light_sky_contribution = 0.05
 
 [sub_resource type="Resource" id="Resource_twa4m"]
 script = ExtResource("4_bb7w5")
+face_texture = ExtResource("5_bb7w5")
 text = "Wellcome to the wall jump gym! Press your arrow keys or joystic against the wall, then jump! See what width you can handle."
+action = 2
+metadata/_custom_type_script = "uid://gmlq05jfav5a"
+
+[sub_resource type="Resource" id="Resource_beouf"]
+script = ExtResource("4_bb7w5")
+text = "This is the tunnel gym. Don't get stuck."
 action = 2
 metadata/_custom_type_script = "uid://gmlq05jfav5a"
 
@@ -82,15 +90,21 @@ shadow_enabled = true
 [node name="CharacterBody3D" parent="." instance=ExtResource("2_twa4m")]
 transform = Transform3D(-4.569558e-08, 0, 1, 0, 1, 0, -1, 0, -4.569558e-08, 1.0000004, 1, 9.000002)
 
-[node name="SpringArm3D" parent="CharacterBody3D" index="2"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
-
 [node name="CharacterBody3D2" parent="." instance=ExtResource("3_hd7o8")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, -4, 1, 10)
 
 [node name="Dialog" parent="CharacterBody3D2" index="1"]
 dialogs = Array[ExtResource("4_bb7w5")]([SubResource("Resource_twa4m")])
 billboard_height = 0.5
+box_size = Vector2(600, 180)
+
+[node name="CharacterBody3D8" parent="." instance=ExtResource("3_hd7o8")]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 18, 1, 1.9999981)
+
+[node name="Dialog" parent="CharacterBody3D8" index="1"]
+dialogs = Array[ExtResource("4_bb7w5")]([SubResource("Resource_beouf")])
+billboard_height = 0.5
+box_size = Vector2(600, 180)
 
 [node name="CharacterBody3D3" parent="." instance=ExtResource("3_hd7o8")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, -14, 18, 1.000001)
@@ -149,7 +163,7 @@ shape = SubResource("ConcavePolygonShape3D_m02ey")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 1, 2.000001)
 mesh = ExtResource("7_m02ey")
 skeleton = NodePath("../../CharacterBody3D")
-surface_material_override/0 = ExtResource("8_hd7o8")
+surface_material_override/0 = ExtResource("7_74hhg")
 
 [node name="CollisionShape3D2" type="CollisionShape3D" parent="StaticBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 1, 2.000001)
@@ -158,7 +172,7 @@ shape = SubResource("ConcavePolygonShape3D_twa4m")
 [node name="TunnelGym2" type="MeshInstance3D" parent="StaticBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 2)
 mesh = ExtResource("9_bb7w5")
-surface_material_override/0 = ExtResource("8_hd7o8")
+surface_material_override/0 = ExtResource("7_74hhg")
 
 [node name="CollisionShape3D3" type="CollisionShape3D" parent="StaticBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 2)
@@ -166,8 +180,8 @@ shape = SubResource("ConcavePolygonShape3D_tqqsv")
 
 [connection signal="body_entered" from="Area3D" to="Area3D" method="_on_body_entered"]
 
-[editable path="CharacterBody3D"]
 [editable path="CharacterBody3D2"]
+[editable path="CharacterBody3D8"]
 [editable path="CharacterBody3D3"]
 [editable path="CharacterBody3D4"]
 [editable path="CharacterBody3D5"]
