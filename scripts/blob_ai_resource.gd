@@ -5,7 +5,7 @@ class_name BlobAIResource
 
 @export_group("Detection")
 @export var horiz_degree_view: float = 180.0
-@export var vert_degree_view: float = 60.0
+@export var vert_degree_view: float = 120.0
 @export var detection_range: float = 60.0
 
 @export_group("Wandering")
@@ -58,9 +58,14 @@ var los_raycast: RayCast3D
 var exclude: Array[RID]
 var space_state: PhysicsDirectSpaceState3D
 var first_run:bool = false
+
+# Debug viz only
+var debug_move_dir: Vector3 = Vector3.ZERO
+var debug_look_dir: Vector3 = Vector3.ZERO
+
 func setup_detection_systems(body:CharacterBody3D) -> void:
 	# Personal space
-	var forward_direction: Vector3 = -body.global_transform.basis.z.normalized()
+	var forward_direction: Vector3 = body.global_transform.basis.z.normalized()
 	
 	#personal_space_cast = ShapeCast3D.new()
 	#var sphere_shape = SphereShape3D.new()
@@ -73,7 +78,7 @@ func setup_detection_systems(body:CharacterBody3D) -> void:
 	
 	# Cliff detector
 	cliff_detector = RayCast3D.new()
-	cliff_detector.target_position = forward_direction*check_in_front_dist + Vector3.DOWN * (max_safe_drop + 0.5)
+	cliff_detector.target_position = forward_direction*check_in_front_dist + Vector3(0, -1, 0) * (max_safe_drop + 0.5)
 	cliff_detector.enabled = true
 	cliff_detector.collision_mask = 1
 	cliff_detector.position = forward_direction*check_in_front_dist + Vector3(0, 0.1, 0)
@@ -81,7 +86,7 @@ func setup_detection_systems(body:CharacterBody3D) -> void:
 	
 	# Jump detector
 	jump_detector = RayCast3D.new()
-	jump_detector.target_position = forward_direction*check_in_front_dist + Vector3.DOWN * 0.5
+	jump_detector.target_position = forward_direction*check_in_front_dist + Vector3(0, -1, 0) * 0.1
 	jump_detector.enabled = true
 	jump_detector.collision_mask = 1
 	jump_detector.position = forward_direction*check_in_front_dist + Vector3(0, max_jump_height, 0)
@@ -90,8 +95,10 @@ func setup_detection_systems(body:CharacterBody3D) -> void:
 	# Line of sight
 	los_raycast = RayCast3D.new()
 	los_raycast.enabled = true
-	los_raycast.collision_mask = 1
+	los_raycast.collision_mask = 3 # 1 and 2 bits
 	los_raycast.exclude_parent = true
+	los_raycast.hit_from_inside = true  # ai sometimes shoves faces into things
+	los_raycast.position = Vector3(0, 0, -check_in_front_dist) # set behind a bit so ai doesn't shove eyes through walls
 
 	body.add_child(los_raycast)
 	
@@ -112,6 +119,7 @@ func can_see_player(
 	ai_body: Node3D, 
 	player: Node3D, 
 	) -> bool:
+	# soft body colliders aren't parented correctly for some reason
 	if first_run:
 		for child in player.get_children():
 			if child is SoftBody3D:
@@ -123,14 +131,15 @@ func can_see_player(
 	
 	if player.has_method("get") and player.get("can_be_seen") != null:
 		if not player.can_be_seen:
-			print("player is hiding in shadows")
+			#print("player is hiding in shadows")
 			return false
 	
-	var to_player = player.global_position - ai_body.global_position
+	var to_player = player.global_position - los_raycast.global_position
 	var distance = to_player.length()
+	var to_player_dir = to_player.normalized()
 	
 	if distance > detection_range:
-		print("player is out of detection range")
+		#print("player is out of detection range")
 		return false
 	
 	# Horizontal FOV
@@ -140,35 +149,46 @@ func can_see_player(
 	var horiz_angle = rad_to_deg(forward_flat.angle_to(to_player_flat))
 	
 	if horiz_angle > horiz_degree_view / 2.0:
-		print("player is out of horizontal angle")
-		print(horiz_angle)
+		#print("player is out of horizontal angle")
+		#print(horiz_angle)
 		return false
 	
 	# Vertical FOV
 	if distance > 0.01:
 		var vert_angle = rad_to_deg(asin(to_player.y / distance))
 		if abs(vert_angle) > vert_degree_view / 2.0:
-			print("player is out of vertical angle")
+			#print("player is out of vertical angle")
 			return false
 	
 	# Line of sight
 	if los_raycast:
-		los_raycast.target_position = to_player
-		var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(los_raycast.position, los_raycast.target_position)
+		los_raycast.target_position = to_player #+ to_player_dir*.1 # a bit thru player
+		var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(los_raycast.global_position, los_raycast.global_position+los_raycast.target_position)
 		query.exclude = exclude
 		query.collide_with_areas = false
 		query.collide_with_bodies = true
+		query.hit_from_inside = true
+		query.hit_back_faces = true
 		los_raycast.force_raycast_update()
-		
+				
 		var hit1: Dictionary = space_state.intersect_ray(query)
 		if hit1.is_empty():
-			pass
+			print("raycast hit nothing")
+			return false
 		else:
+		#if los_raycast.is_colliding():
 			var hit = hit1["collider"]
-			if hit != player:
+			#var hit = los_raycast.get_collider()
+			if player.is_ancestor_of(hit) or hit == player:
+				print("player is seen!")
+				return true
+			else:
 				print("player is blocked by line of sight")
-				return false
-	
+				return false				
+		#else:
+		#	print("raycast hit nothing")
+		#	return false
+	print("raycast doesn't exist")
 	return true
 
 func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
@@ -194,6 +214,8 @@ func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 		if current_state != AIState.WANDER:
 			current_state = AIState.WANDER
 		move_dir = get_wander_direction(ai_body.global_position, delta)
+		debug_move_dir = move_dir
+		debug_look_dir = look_dir
 		return [move_dir, move_dir]
 
 	# ── 3. Core visibility + distance checks ────────────────────────────────
@@ -277,6 +299,8 @@ func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 	if look_dir.length_squared() < 0.001 and last_valid_direction.length() > 0.01:
 		look_dir = last_valid_direction
 
+	debug_move_dir = move_dir
+	debug_look_dir = look_dir
 	return [move_dir, look_dir]
 
 ## Get wander direction
@@ -324,7 +348,7 @@ func register_attack() -> void:
 
 func _estimate_next_wall_follow_look(ai_body: CharacterBody3D) -> Vector3:
 	# Predict where wall-follow wants to go next frame
-	var forward = -ai_body.global_transform.basis.z
+	var forward = ai_body.global_transform.basis.z
 	var right = ai_body.global_transform.basis.x
 	return (forward + right * wall_follow_side * 0.7).normalized()
 
@@ -365,7 +389,7 @@ func get_wall_follow_direction(
 	if current_state == AIState.CHASE_WALL_FOLLOW:
 		wall_follow_timer -= delta
 
-	var forward = -ai_body.global_transform.basis.z
+	var forward = ai_body.global_transform.basis.z
 	var right   = ai_body.global_transform.basis.x   # already right vector
 
 	# Side ray – checks if wall/cliff is still on our "hand" side	
@@ -373,7 +397,7 @@ func get_wall_follow_direction(
 	var side_ray_dir = (forward + right * wall_follow_side * 0.9).normalized()
 
 	var side_cast = RayCast3D.new()  # temporary helper ray
-	side_cast.target_position = side_ray_dir * side_check_dist + Vector3.DOWN * max_safe_drop
+	side_cast.target_position = side_ray_dir * side_check_dist + Vector3(0,-1,0) * max_safe_drop
 	side_cast.position = side_ray_dir * side_check_dist + Vector3(0, 0.2, 0) #important that the ray is pointing directly down
 	side_cast.collision_mask = cliff_detector.collision_mask
 	ai_body.add_child(side_cast)
@@ -412,16 +436,23 @@ func _apply_cliff_check_and_wall_transition_if_needed(
 	if intended_dir.length_squared() < 0.01:
 		return Vector3.ZERO
 	
-	jump_detector.position = intended_dir*check_in_front_dist + Vector3(0, max_jump_height, 0)
-	jump_detector.target_position = intended_dir*check_in_front_dist + Vector3.DOWN * 0.5
+	jump_detector.position = -intended_dir*check_in_front_dist + Vector3(0, max_jump_height, 0)
+	jump_detector.target_position = Vector3(0, -max_jump_height, 0) +Vector3(0, 0.1, 0)
 
-	cliff_detector.position = intended_dir*check_in_front_dist + Vector3(0, 0.1, 0)
-	cliff_detector.target_position = intended_dir*check_in_front_dist + Vector3.DOWN * max_safe_drop
+	cliff_detector.position = -intended_dir*check_in_front_dist + Vector3(0, 0.1, 0)
+	cliff_detector.target_position = Vector3(0, -1, 0) * max_safe_drop
 
 	cliff_detector.force_raycast_update()
 	jump_detector.force_raycast_update()
 
-	if cliff_detector.is_colliding():
+	if jump_detector.is_colliding():  # needs to be checked first so we jump
+		if current_state == AIState.WANDER_WALL_FOLLOW:
+			current_state = AIState.WANDER
+		elif current_state == AIState.CHASE_WALL_FOLLOW:
+			current_state = AIState.CHASE
+		ai_body.jump()
+		return intended_dir  # also safe
+	elif cliff_detector.is_colliding():
 		if current_state == AIState.WANDER_WALL_FOLLOW:
 			current_state = AIState.WANDER
 		elif current_state == AIState.CHASE_WALL_FOLLOW:
@@ -429,13 +460,7 @@ func _apply_cliff_check_and_wall_transition_if_needed(
 		#var drop = ai_body.global_position.y - cliff_detector.get_collision_point().y
 		#if drop <= max_safe_drop:
 		return intended_dir  # safe
-	elif jump_detector.is_colliding():
-		if current_state == AIState.WANDER_WALL_FOLLOW:
-			current_state = AIState.WANDER
-		elif current_state == AIState.CHASE_WALL_FOLLOW:
-			current_state = AIState.CHASE
-		ai_body.jump()
-		return intended_dir  # also safe
+	
 
 	# cliff or unsafe drop → switch or stay in wall follow
 	if current_state == AIState.WANDER_WALL_FOLLOW or current_state == AIState.CHASE_WALL_FOLLOW:
@@ -466,6 +491,69 @@ func _generate_new_wander_target() -> void:
 	)
 	wander_target = spawn_position + random_offset
 	wander_timer = wander_wait_time
+
+func debug_visualize(ai_body: CharacterBody3D, player: Node3D = null) -> void:
+	# State label floating above head
+	var state_name = AIState.keys()[current_state]
+	DebugDraw3D.draw_text(ai_body.global_position + Vector3(0, 3.0, 0), state_name, 32, Color.WHITE)
+
+	# Move direction: blue arrow from feet
+	if debug_move_dir.length() > 0.01:
+		DebugDraw3D.draw_arrow(
+			ai_body.global_position,
+			ai_body.global_position + debug_move_dir.normalized() * 3.0,
+			Color.BLUE,
+			0.0
+		)
+
+	# Look direction: cyan arrow slightly higher
+	if debug_look_dir.length() > 0.01:
+		DebugDraw3D.draw_arrow(
+			ai_body.global_position + Vector3(0, 0.5, 0),
+			ai_body.global_position + Vector3(0, 0.5, 0) + debug_look_dir.normalized() * 3.0,
+			Color.CYAN,
+			0.0
+		)
+
+	# Cliff detector ray (angled down-forward)
+	if cliff_detector:
+		var start = ai_body.to_global(cliff_detector.position)
+		var end = start + cliff_detector.target_position
+		var color = Color.GREEN
+
+		cliff_detector.force_raycast_update()  # ensure fresh
+		if not cliff_detector.is_colliding():
+			color = Color.RED  # no hit = cliff/void
+		else:
+			var drop = ai_body.global_position.y - cliff_detector.get_collision_point().y
+			if drop > max_safe_drop:
+				color = Color.RED  # too far drop = unsafe
+		# else green = safe floor
+
+		DebugDraw3D.draw_line(start, end, color, 0.0)
+		if cliff_detector.is_colliding():
+			DebugDraw3D.draw_sphere(cliff_detector.get_collision_point(), 0.15, Color.YELLOW, 0.0)
+
+	# Jump detector ray (forward at head height, down a bit)
+	if jump_detector:
+		var start = ai_body.to_global(jump_detector.position)
+		var end = start + jump_detector.target_position
+		var color = Color.GREEN if not jump_detector.is_colliding() else Color.ORANGE  # green clear, orange obstacle
+
+		jump_detector.force_raycast_update()
+		DebugDraw3D.draw_line(start, end, color, 0.0)
+		if jump_detector.is_colliding():
+			DebugDraw3D.draw_sphere(jump_detector.get_collision_point(), 0.15, Color.YELLOW, 0.0)
+
+	# LOS raycast (approximate line to player if exists, color by can_see)
+	if player:
+		var start = ai_body.to_global(los_raycast.position)
+		var end = start + los_raycast.target_position
+		var los_color = Color.GREEN if can_see_player(ai_body, player) else Color.RED
+		DebugDraw3D.draw_line(start, end, los_color, 0.0)
+
+		# Optional: sphere at last seen
+		DebugDraw3D.draw_sphere(player_last_seen_at, 0.5, Color.PURPLE, 0.0)
 
 func reset() -> void:
 	wander_timer = 0.0

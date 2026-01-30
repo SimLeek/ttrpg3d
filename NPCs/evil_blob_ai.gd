@@ -13,6 +13,8 @@ class_name BlobAICharacter
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
+@export var debug_ai: bool = false
+
 @onready var default_floor_angle: float = floor_max_angle
 
 # the AI has a ...
@@ -47,6 +49,7 @@ func _ready() -> void:
 	#	health_node.health_changed.connect(hud_node.update_health_ui)
 
 func jump():
+	print("ai jump")
 	basic_jumper.request_jump()
 	
 func attack(look_dir:Vector3):
@@ -115,6 +118,9 @@ func _physics_process(delta: float) -> void:
 		velocity.z = move_toward(velocity.z, 0.0, friction)
 
 	move_and_slide()
+	
+	if debug_ai:
+		blob_ai.debug_visualize(self, players[0] if players and not players.is_empty() else null)
 
 func die() -> void:
 	print("Enemy died. Deleting...")
