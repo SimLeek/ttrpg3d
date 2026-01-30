@@ -35,10 +35,10 @@ func handle_immediate_input(event: InputEvent, left="left", right="right", up="u
 			last_key = current_key
 
 func handle_physics_process_input(
-	vel_xyz: PackedFloat32Array,
+	vel_xyz: Vector3,
 	delta: float,
 	transform: Transform3D
-)-> PackedFloat32Array:
+)-> Vector3:
 	if tap_timer > 0.0:
 		tap_timer -= delta
 	
@@ -52,11 +52,11 @@ func handle_physics_process_input(
 	return get_vel_xyz(vel_xyz, direction, delta, is_slow)
 
 func get_vel_xyz(
-	vel_xyz: PackedFloat32Array,
+	vel_xyz: Vector3,
 	direction: Vector3,
 	delta: float,
 	is_slow: bool = false,
-) -> PackedFloat32Array:
+) -> Vector3:
 	_update_sprint(delta)
 	
 	var speed: float = (sprint_speed if sprinting else (slow_speed if is_slow else normal_speed))

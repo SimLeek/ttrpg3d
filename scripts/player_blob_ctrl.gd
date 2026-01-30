@@ -1,6 +1,8 @@
 extends CharacterBody3D
 
 @export var movement: MovementResource
+@export var basic_jump: BasicJumpResource
+@export var wall_jump: WallJumpResource
 
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
@@ -30,14 +32,12 @@ var can_be_seen: bool = true  # For enemy AI detection
 
 var tap_timer: float = 0.0
 
-var coyote_time_left: float = 0.0
-var jump_requested: bool = false
-var jump_release_requested: bool = false
-
 func _ready() -> void:
 	# Initialize resources if not assigned
 	if not movement: movement = MovementResource.new()
-	
+	if not basic_jump: basic_jump = BasicJumpResource.new()
+	if not wall_jump: wall_jump = WallJumpResource.new()
+
 	step_cast.add_exception_rid(hardy.shape.get_rid())
 	step_cast.add_exception_rid(softy.get_physics_rid())
 	
@@ -46,13 +46,8 @@ func _ready() -> void:
 
 func _input(event: InputEvent) -> void:
 	movement.handle_immediate_input(event)
-
-	if event.is_action_pressed("jump"):
-		jump_requested = true
-		jump_release_requested = false  # This and the elif fix a weird bug
-
-	elif event.is_action_released("jump"):
-		jump_release_requested = true
+	basic_jump.handle_immediate_input(event)
+	#wall_jump.handle_immediate_input(event)
 		
 	if event.is_action_pressed("primary_item_click"):
 		print("prim")
@@ -66,45 +61,27 @@ func _input(event: InputEvent) -> void:
 
 func _physics_process(delta: float) -> void:
 	
-	var v_xyz = [0.0, 0.0, 0.0]
-	v_xyz = movement.handle_physics_process_input(v_xyz, delta, transform)
+	var sv_xyz = velocity  # immediate set velocity vector
+	var gv_xyz = Vector3.ZERO  # goal velocity vector
+	
+	gv_xyz = movement.handle_physics_process_input(gv_xyz, delta, transform)
 
 	var friction: float = SPEED_DECAY_GROUND
 	var should_fall: bool = not is_on_floor() and not (ledge_grabber_node and ledge_grabber_node.is_grabbing_ledge)
 
 	if should_fall:
-		velocity += get_gravity() * delta
+		sv_xyz += get_gravity() * delta
 		friction = SPEED_DECAY_AIR
 
-		if velocity.y < -TERMINAL_VELOCITY:
-			velocity.y = -TERMINAL_VELOCITY
-	else:
-		coyote_time_left = COYOTE_TIME
+		if sv_xyz.y < -TERMINAL_VELOCITY:
+			sv_xyz.y = -TERMINAL_VELOCITY
 
-	if should_fall:
-		coyote_time_left = maxf(0.0, coyote_time_left - delta)
-
-	# Jump impulse
-	if jump_requested and (not should_fall or coyote_time_left > 0.0):
-		velocity.y = JUMP_VELOCITY
-		coyote_time_left = 0.0
-		jump_requested = false
-	elif jump_requested and is_on_wall():
-		var wall_normal = get_wall_normal()
-		
-		var kick_strength = abs(JUMP_VELOCITY) * 1.25
-		velocity.x = wall_normal.x * kick_strength
-		velocity.z = wall_normal.z * kick_strength
-		
-		velocity.y = JUMP_VELOCITY * 0.75
-		coyote_time_left = 0.0
-		jump_requested = false
-
-	# Variable jump height: cut on release while still ascending
-	if jump_release_requested and velocity.y > 0.0:
-		print("jump release request")
-		velocity.y *= JUMP_CUTOFF_FACTOR
-		jump_release_requested = false
+	basic_jump.update_coyote_time(not should_fall, delta)
+	# Messy jump stuff. Maybe wall jump should extend basic jump. Idk.
+	sv_xyz = basic_jump.apply_jump(sv_xyz, not should_fall)
+	wall_jump.jump_requested = basic_jump.jump_requested
+	sv_xyz = wall_jump.apply_jump(sv_xyz, self, not should_fall)
+	basic_jump.jump_requested = wall_jump.jump_requested
 
 	# Movement input
 	var input_dir: Vector2 = Input.get_vector("left", "right", "up", "down")
@@ -116,8 +93,8 @@ func _physics_process(delta: float) -> void:
 	
 	# Apply squeeze slowdown (only when there's meaningful forward movement)
 	if direction.length() > 0.05:
-		v_xyz[0] *= squeeze_factor
-		v_xyz[2] *= squeeze_factor
+		gv_xyz[0] *= squeeze_factor
+		gv_xyz[2] *= squeeze_factor
 		
 	# ITEM USE SECTION
 	var right_trigger = Input.get_action_strength("primary_item_trigger")  # Primary hand
@@ -129,7 +106,7 @@ func _physics_process(delta: float) -> void:
 	if left_trigger > 0.0:
 		_handle_non_primary_hand_input(left_trigger)
 	
-	handle_wall_slide(direction)
+	sv_xyz = wall_jump.handle_wall_slide(sv_xyz, self, direction)
 
 	if Input.is_action_pressed("slide"):
 		floor_max_angle = 0.0
@@ -137,9 +114,10 @@ func _physics_process(delta: float) -> void:
 		floor_max_angle = default_floor_angle
 	# END ITEM USE SECTION
 
+	velocity = sv_xyz
 	if direction:
-		velocity.x = move_toward(velocity.x, v_xyz[0], friction)
-		velocity.z = move_toward(velocity.z, v_xyz[2], friction)
+		velocity.x = move_toward(velocity.x, gv_xyz[0], friction)
+		velocity.z = move_toward(velocity.z, gv_xyz[2], friction)
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, friction)
 		velocity.z = move_toward(velocity.z, 0.0, friction)
@@ -158,16 +136,6 @@ func handle_step_up(delta: float) -> void:
 		if normal.angle_to(Vector3.UP) < floor_max_angle:
 			global_position.y = step_cast.get_collision_point(0).y + STEP_UP
 			velocity.y = 0.0
-
-func handle_wall_slide(direction):
-	var wall_normal := get_wall_normal() if is_on_wall() else Vector3.ZERO
-	if is_on_wall() and direction.length() > 0.1:
-		var input_3d = direction.normalized()
-		var dot = input_3d.dot(-wall_normal)   # >0 = pressing towards wall
-		var cos_tolerance = cos(deg_to_rad(WALL_SLIDE_ANGLE_TOLERANCE))
-
-		if dot > cos_tolerance:
-			velocity.y = maxf(velocity.y, -WALL_SLIDE_SPEED)
 
 func _handle_primary_hand_input(pressure: float) -> void:
 	# Use whichever hand is marked as primary
