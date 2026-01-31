@@ -376,20 +376,21 @@ func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: V
 		return -forward_dir
 	
 	var wall_norm: Vector3 = hit1.normal
+	var enter_pos: Vector3 = hit1.position
 	
 	# Second ray: from wall hit, look for ledge/floor
-	var from2: Vector3 = hit1.position + dir.normalized() * epsilon
-	query.from = from2 + dir - (hit1.position - origin)
-	query.to = from2
+	#var from2: Vector3 = hit1.position + dir.normalized() * epsilon
+	#query.from = from2 + dir - (hit1.position - origin)
+	#query.to = from2
 	
-	var hit2: Dictionary = space_state.intersect_ray(query)
-	if hit2.is_empty():
+	#var hit2: Dictionary = space_state.intersect_ray(query)
+	#if hit2.is_empty():
 		# No floor found, use wall normal
-		var result = wall_norm
-		result.y = 0
-		return result.normalized()
+	#	var result = wall_norm
+	#	result.y = 0
+	#	return result.normalized()
 	
-	var exit_pos: Vector3 = hit2.position
+	#var exit_pos: Vector3 = hit2.position
 	
 	# Calculate perpendicular directions along cliff edge
 	var left_perp: Vector3 = wall_norm.cross(up).normalized()
@@ -397,8 +398,8 @@ func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: V
 	
 	# Check both sides to find edge positions
 	var hand_distance: float = 0.5
-	var left_data: Array = _check_cliff_side_ledge_style(ai_body, exit_pos, left_perp, forward_dir, hand_distance)
-	var right_data: Array = _check_cliff_side_ledge_style(ai_body, exit_pos, right_perp, forward_dir, hand_distance)
+	var left_data: Array = _check_cliff_side_ledge_style(ai_body, enter_pos, left_perp, forward_dir, hand_distance)
+	var right_data: Array = _check_cliff_side_ledge_style(ai_body, enter_pos, right_perp, forward_dir, hand_distance)
 	
 	var left_pos: Vector3 = left_data[0]
 	var right_pos: Vector3 = right_data[0]
