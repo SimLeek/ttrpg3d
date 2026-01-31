@@ -23,6 +23,7 @@ class_name BlobAICharacter
 @onready var hardy: CollisionShape3D = $CollisionShape3D
 @onready var squeezer_node: Node3D = $SqueezerRays
 @onready var health_node: Node3D = $Health
+@onready var vision_cone: MeshInstance3D = $VisionCone  # Child MeshInstance3D
 
 #var can_be_seen: bool = true  # For enemy AI detection
 var players
@@ -42,9 +43,20 @@ func _ready() -> void:
 	if not blob_ai: blob_ai = BlobAIResource.new()
 	blob_ai.set_spawn_position(global_position)  # for restricting wandering
 	blob_ai.setup_detection_systems(self)
+	#blob_ai.update_vision_cone_display(vision_cone)
 	
+
 	players = get_tree().get_nodes_in_group("player")
-	
+	if players.size()<=0:
+		return
+	blob_ai.update_vision_cone_display(
+		vision_cone, 
+		self, 
+		players[0],
+		3.0,   # Width in meters/units
+		3.0   # Height in meters/units
+	)
+		
 	# saving this as commented for hp above head maybe
 	#if health_node:
 	#	health_node.health_changed.connect(hud_node.update_health_ui)
@@ -66,7 +78,7 @@ func _physics_process(delta: float) -> void:
 	var move_look = blob_ai.ai_think(delta, self, players[0])
 	var move_dir = move_look[0]
 	var look_dir = move_look[1]
-	
+		
 	if look_dir.length() > 0.02:
 		# Smooth look-at style
 		#var target_pos = global_position + look_dir
@@ -125,8 +137,19 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 	
+	# honestly these should probably both be in the _process function, which is for displaying
+	# since these are display functions
 	if debug_ai:
 		blob_ai.debug_visualize(self, players[0] if players and not players.is_empty() else null)
+		
+	blob_ai.update_vision_cone_display(
+		vision_cone, 
+		self, 
+		players[0],
+		3.0,   # Width in meters/units
+		3.0   # Height in meters/units
+	)
+
 
 func die() -> void:
 	print("Enemy died. Deleting...")

@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3 uid="uid://c2yxw3bjwoygf"]
+[gd_scene load_steps=15 format=3 uid="uid://c2yxw3bjwoygf"]
 
 [ext_resource type="Script" uid="uid://b7rrdh30m48fj" path="res://NPCs/evil_blob_ai.gd" id="1_vgo36"]
 [ext_resource type="Script" uid="uid://bh1urcjxjwix4" path="res://scripts/movement_resource.gd" id="2_ef4g5"]
@@ -29,6 +29,25 @@ rings = 6
 [sub_resource type="CylinderShape3D" id="CylinderShape3D_htvlb"]
 height = 0.01
 radius = 0.25
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vgo36"]
+transparency = 1
+cull_mode = 2
+depth_draw_mode = 1
+albedo_color = Color(1, 0.8235294, 0.47058824, 0.5411765)
+metallic_specular = 0.81
+emission_enabled = true
+emission = Color(1, 0.91833335, 0.65, 1)
+emission_energy_multiplier = 0.25
+rim_enabled = true
+rim = 0.06
+anisotropy = -0.7
+ao_light_affect = 0.42
+backlight = Color(0.73, 0.73, 0.73, 1)
+disable_receive_shadows = true
+
+[sub_resource type="BoxMesh" id="BoxMesh_kpwx5"]
+material = SubResource("StandardMaterial3D_vgo36")
 
 [node name="CharacterBody3D" type="CharacterBody3D"]
 collision_layer = 3
@@ -85,3 +104,6 @@ script = ExtResource("12_ye3uh")
 
 [node name="Health" type="Node3D" parent="."]
 script = ExtResource("16_hok37")
+
+[node name="VisionCone" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_kpwx5")

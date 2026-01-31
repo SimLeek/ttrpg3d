@@ -2,9 +2,9 @@ extends Resource
 class_name BlobAIResource
 
 @export_group("Detection")
-@export var horiz_degree_view: float = 180.0
-@export var vert_degree_view: float = 120.0
-@export var detection_range: float = 60.0
+@export var horiz_degree_view: float = 90.0
+@export var vert_degree_view: float = 60.0
+@export var detection_range: float = 120.0
 
 @export_group("Wandering")
 @export var wander_radius: float = 10.0
@@ -576,6 +576,270 @@ func debug_visualize(ai_body: CharacterBody3D, player: Node3D = null) -> void:
 
 		# Sphere at last seen
 		DebugDraw3D.draw_sphere(player_last_seen_at, 0.5, Color.PURPLE, 0.0)
+
+
+## Update vision cone mesh to match current detection parameters
+## Pass in a MeshInstance3D (typically a child of ai_body) that will be reshaped to show the detection cone
+## This allows you to set material overrides and other properties on the MeshInstance3D in the editor
+'''func update_vision_cone_display(vision_mesh_instance: MeshInstance3D) -> void:
+	if not vision_mesh_instance:
+		return
+	
+	var vision_cone_mesh
+	var original_material
+	if vision_mesh_instance.mesh:
+		original_material = vision_mesh_instance.get_active_material(0)
+		if vision_mesh_instance.mesh is ArrayMesh:
+			vision_cone_mesh = vision_mesh_instance.mesh
+		else:
+			vision_mesh_instance.mesh = ArrayMesh.new()
+			vision_cone_mesh = vision_mesh_instance.mesh
+	else:
+		push_error("you need to create a mesh for it to be updated")
+	
+	# Convert angles to radians
+	var safe_horiz = clampf(horiz_degree_view, 0.1, 170.0)
+	var safe_vert = clampf(vert_degree_view, 0.1, 170.0)
+	var horiz_rad = deg_to_rad(safe_horiz / 2.0)
+	var vert_rad = deg_to_rad(safe_vert / 2.0)
+	
+	# The view frustum is a section of a sphere
+	# At the far end, we want the center point to be exactly at detection_range
+	# But the corners need to extend beyond that to avoid unhappy surprises
+	
+	# Calculate the depth needed so the center of the far plane is at detection_range
+	# Using spherical geometry: depth = range * cos(half_angle)
+	# But we'll use detection_range directly as our sphere radius
+	var sphere_radius = detection_range
+	
+	# The far plane center should be at detection_range from origin
+	# In a cone frustum, the far plane is perpendicular to the forward direction
+	# For a spherical section, we need the far plane to bulge outward
+	
+	# Calculate half-widths at the far plane using tangent from the sphere center
+	var half_width = sphere_radius * tan(horiz_rad)
+	var half_height = sphere_radius * tan(vert_rad)
+	
+	# The distance along the view axis to the far plane center
+	# This ensures the center point is exactly at sphere_radius distance
+	var far_depth = sphere_radius
+	
+	# Now, the corners of the far plane are further from origin than the center
+	# Distance from origin to corner = sqrt(far_depth^2 + half_width^2 + half_height^2)
+	# This is > sphere_radius, which is what we want (no unhappy surprises!)
+	
+	# Add a safety margin to make it even more generous (5% extra)
+	var safety_margin = 1.05
+	far_depth *= safety_margin
+	half_width *= safety_margin
+	half_height *= safety_margin
+	
+	# Check if mesh has any surfaces
+	if vision_cone_mesh.get_surface_count() == 0:
+		# Create initial mesh with 8 vertices
+		var vertices = PackedVector3Array()
+		
+		# Near plane vertices (all at origin or very close)
+		var near_offset = 0.1  # Small offset so it's visible
+		vertices.append(Vector3(0, 0, near_offset))  # 0: near center (repeated 4 times for proper faces)
+		vertices.append(Vector3(0, 0, near_offset))  # 1
+		vertices.append(Vector3(0, 0, near_offset))  # 2
+		vertices.append(Vector3(0, 0, near_offset))  # 3
+		
+		# Far plane vertices (arranged in a rectangle)
+		# Order: top-left, top-right, bottom-right, bottom-left
+		vertices.append(Vector3(-half_width, half_height, far_depth))   # 4: top-left
+		vertices.append(Vector3(half_width, half_height, far_depth))    # 5: top-right
+		vertices.append(Vector3(half_width, -half_height, far_depth))   # 6: bottom-right
+		vertices.append(Vector3(-half_width, -half_height, far_depth))  # 7: bottom-left
+		
+		# Create triangle indices for the frustum
+		# We need: 4 side faces + 1 far face = 5 faces total
+		var indices = PackedInt32Array()
+		
+		# Far face (2 triangles)
+		indices.append_array([4, 5, 6])  # top-left, top-right, bottom-right
+		indices.append_array([4, 6, 7])  # top-left, bottom-right, bottom-left
+		
+		# Side faces (each is 2 triangles from origin to far edge)
+		# Top face
+		indices.append_array([0, 5, 4])
+		# Right face
+		indices.append_array([1, 6, 5])
+		# Bottom face
+		indices.append_array([2, 7, 6])
+		# Left face
+		indices.append_array([3, 4, 7])
+		
+		# Create the mesh arrays
+		var arrays = []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = vertices
+		arrays[Mesh.ARRAY_INDEX] = indices
+		
+		# Add the surface
+		vision_cone_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		#vision_mesh_instance.mesh = array_mesh
+		vision_mesh_instance.set_surface_override_material(0, original_material)
+	else:
+		# Use MeshDataTool to modify existing vertices
+		var mdt = MeshDataTool.new()
+		mdt.create_from_surface(vision_cone_mesh, 0)
+		
+		# We expect exactly 8 vertices (4 near, 4 far)
+		if mdt.get_vertex_count() != 8:
+			push_warning("Vision cone mesh has unexpected vertex count: %d (expected 8)" % mdt.get_vertex_count())
+			return
+		
+		var near_offset = 0.1
+		
+		# Update near plane vertices (indices 0-3, all at origin)
+		for i in range(4):
+			mdt.set_vertex(i, Vector3(0, 0, near_offset))
+		
+		# Update far plane vertices (indices 4-7)
+		# Order: top-left, top-right, bottom-right, bottom-left
+		mdt.set_vertex(4, Vector3(-half_width, half_height, far_depth))   # top-left
+		mdt.set_vertex(5, Vector3(half_width, half_height, far_depth))    # top-right
+		mdt.set_vertex(6, Vector3(half_width, -half_height, far_depth))   # bottom-right
+		mdt.set_vertex(7, Vector3(-half_width, -half_height, far_depth))  # bottom-left
+		
+		# Commit changes back to mesh
+		vision_cone_mesh.clear_surfaces()
+		mdt.commit_to_surface(vision_cone_mesh)'''
+		
+## Update visualization with a sliding window of FIXED size (units, not degrees)
+func update_vision_cone_display(
+	vision_mesh_instance: MeshInstance3D, 
+	ai_body: CharacterBody3D, 
+	player: Node3D,
+	window_width: float = 4.0,   # Width in meters/units
+	window_height: float = 4.0   # Height in meters/units
+) -> void:
+	if not vision_mesh_instance or not ai_body:
+		return
+	
+	# 1. Capture Material and Setup Mesh
+	# We grab the material first so we can re-apply it after rebuilding the surface
+	var original_material = vision_mesh_instance.get_active_material(0)
+	
+	var vision_cone_mesh: ArrayMesh
+	if vision_mesh_instance.mesh is ArrayMesh:
+		vision_cone_mesh = vision_mesh_instance.mesh
+	else:
+		vision_cone_mesh = ArrayMesh.new()
+		vision_mesh_instance.mesh = vision_cone_mesh
+
+	# 2. Calculate Environmental Depth (Wall Hit)
+	var forward_global = ai_body.global_transform.basis.z.normalized()
+	var origin_global = ai_body.global_position + Vector3(0, 0.5, 0)
+	var target_global = origin_global + forward_global * detection_range
+	
+	var env_depth = detection_range
+	var query = PhysicsRayQueryParameters3D.create(origin_global, target_global)
+	query.exclude = exclude
+	var hit = space_state.intersect_ray(query)
+	if not hit.is_empty():
+		env_depth = origin_global.distance_to(hit.position)
+	
+	# 3. Calculate Final Depth (Player vs Wall)
+	var actual_depth = env_depth
+	var local_p = Vector3.ZERO
+	
+	var player_pos
+	if player:
+		if current_state in [AIState.CHASE, AIState.ATTACK]:
+			original_material.albedo_color = Color(1.0, 0.0, 0.0, 0.25)
+			player_pos = player_last_seen_at
+		else:
+			original_material.albedo_color = Color(1.0, 210.0/255.0, 120.0/255.0, 138.0/255)
+			player_pos = player.global_position
+		#local_p = ai_body.to_local(player.global_position)
+		local_p = ai_body.to_local(player_pos)
+		# Per your code logic, +Z is forward. 
+		var player_depth = local_p.z 
+		
+		# If player is in front and closer than the wall/max range, 
+		# we shrink the frustum to end exactly at the player's depth.
+		if player_depth > 0.1 and player_depth < env_depth:
+			actual_depth = player_depth
+	
+	# Safety floor to prevent division by zero or inverted geometry
+	actual_depth = maxf(actual_depth, 0.5)
+
+	# 4. Calculate Maximum FOV boundaries at this specific depth
+	var half_fov_h = deg_to_rad(horiz_degree_view / 2.0)
+	var half_fov_v = deg_to_rad(vert_degree_view / 2.0)
+	
+	var max_half_w = tan(half_fov_h) * actual_depth
+	var max_half_h = tan(half_fov_v) * actual_depth
+
+	# 5. Project Player onto the Far Plane
+	var center_x = 0.0
+	var center_y = 0.0
+	
+	if player:
+		# Project the player's position onto the plane at Z = actual_depth
+		# If actual_depth == player_depth, this just results in local_p.x
+		var p_z = maxf(local_p.z, 0.1) # Avoid division by zero
+		center_x = (local_p.x / p_z) * actual_depth
+		center_y = (local_p.y / p_z) * actual_depth
+
+	# 6. Slide and Clamp the Window
+	var half_win_w = window_width / 2.0
+	var half_win_h = window_height / 2.0
+	
+	# Clamp window size if it exceeds FOV at this distance
+	half_win_w = minf(half_win_w, max_half_w)
+	half_win_h = minf(half_win_h, max_half_h)
+	
+	# Keep the window center within the FOV bounds
+	center_x = clampf(center_x, -max_half_w + half_win_w, max_half_w - half_win_w)
+	center_y = clampf(center_y, -max_half_h + half_win_h, max_half_h - half_win_h)
+	
+	var x_left = center_x - half_win_w
+	var x_right = center_x + half_win_w
+	var y_top = center_y + half_win_h
+	var y_bottom = center_y - half_win_h
+
+	# 7. Build the Mesh
+	var vertices = PackedVector3Array()
+	var indices = PackedInt32Array()
+	var near_offset = 0.2
+	var n_scale = near_offset / actual_depth
+	
+	# Near Plane (Indices 0-3)
+	vertices.push_back(Vector3(x_left * n_scale,  y_top * n_scale,    near_offset)) 
+	vertices.push_back(Vector3(x_right * n_scale, y_top * n_scale,    near_offset)) 
+	vertices.push_back(Vector3(x_right * n_scale, y_bottom * n_scale, near_offset)) 
+	vertices.push_back(Vector3(x_left * n_scale,  y_bottom * n_scale, near_offset)) 
+	
+	# Far Plane (Indices 4-7)
+	vertices.push_back(Vector3(x_left,  y_top,    actual_depth)) 
+	vertices.push_back(Vector3(x_right, y_top,    actual_depth)) 
+	vertices.push_back(Vector3(x_right, y_bottom, actual_depth)) 
+	vertices.push_back(Vector3(x_left,  y_bottom, actual_depth)) 
+	
+	# Build Triangles
+	indices.append_array([0, 5, 4, 0, 1, 5]) # Top
+	indices.append_array([1, 6, 5, 1, 2, 6]) # Right
+	indices.append_array([2, 7, 6, 2, 3, 7]) # Bottom
+	indices.append_array([3, 4, 7, 3, 0, 4]) # Left
+	indices.append_array([4, 5, 6, 4, 6, 7]) # Far Cap
+	
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
+	# Clear and Update
+	vision_cone_mesh.clear_surfaces()
+	vision_cone_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	
+	# Re-apply the material to the new surface index
+	if original_material:
+		vision_mesh_instance.set_surface_override_material(0, original_material)
+		
 
 func reset() -> void:
 	wander_timer = 0.0
