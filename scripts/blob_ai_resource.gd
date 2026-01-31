@@ -363,7 +363,7 @@ func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: V
 	var ray_angle_rad: float = deg_to_rad(45.0)
 	var ray_vec_2d: Vector2 = Vector2(cos(ray_angle_rad), sin(ray_angle_rad))
 	var ray_length: float = check_in_front_dist * 1.5
-	var dir: Vector3 = (forward_dir * ray_vec_2d.x + up * ray_vec_2d.y).normalized() * ray_length
+	var dir: Vector3 = (forward_dir * ray_vec_2d.x + -up * ray_vec_2d.y).normalized() * ray_length
 	
 	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir)
 	query.exclude = exclude

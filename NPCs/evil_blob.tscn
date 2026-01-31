@@ -36,7 +36,6 @@ collision_mask = 3
 floor_snap_length = 0.0
 script = ExtResource("1_vgo36")
 mover = SubResource("Resource_vgo36")
-debug_ai = true
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_f14xy")
