@@ -12,7 +12,7 @@ class_name BlobAICharacter
 
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
-@export var rotation_smooth_speed: float = 10.0  # rad/s, tune for turn sharpness vs smoothness
+@export var rotation_smooth_speed: float = 4.0  # rad/s, tune for turn sharpness vs smoothness
 
 @export var debug_ai: bool = false
 
@@ -24,6 +24,7 @@ class_name BlobAICharacter
 @onready var squeezer_node: Node3D = $SqueezerRays
 @onready var health_node: Node3D = $Health
 @onready var vision_cone: MeshInstance3D = $VisionCone  # Child MeshInstance3D
+@onready var near_vision_cone: MeshInstance3D = $NearVisionCone  # Child MeshInstance3D
 
 #var can_be_seen: bool = true  # For enemy AI detection
 var players
@@ -55,6 +56,12 @@ func _ready() -> void:
 		players[0],
 		3.0,   # Width in meters/units
 		3.0   # Height in meters/units
+	)
+	
+	blob_ai.set_static_vision_cone_display(
+		near_vision_cone, 
+		self, 
+		2.0
 	)
 		
 	# saving this as commented for hp above head maybe

@@ -5,6 +5,7 @@ class_name BlobAIResource
 @export var horiz_degree_view: float = 90.0
 @export var vert_degree_view: float = 60.0
 @export var detection_range: float = 120.0
+@export var chase_timer: float = 10
 
 @export_group("Wandering")
 @export var wander_radius: float = 10.0
@@ -24,11 +25,18 @@ class_name BlobAIResource
 @export_group("Bounce Back")
 @export var bounce_back_time: float = 2.0  # how long to bounce back after hitting obstacle
 
+@export_group("Stop and Turn Behavior")
+@export var brake_timer: float = 1.0 # time to be stopped for
+@export var turn_wiggle_angle: float = 30.0 # Degrees to look left/right
+@export var turn_wiggle_duration: float = 0.3 # How long to look in each direction
+
 const epsilon = 0.01
 
-enum AIState { WANDER, CHASE, ATTACK, BOUNCING }
+enum AIState { WANDER, CHASE, ATTACK, BOUNCING, STOP_AND_TURN }
+enum TurnStage { BRAKING, LOOK_LEFT, LOOK_RIGHT }
 
 # State
+var brake_timer_elapsed:float = 0.0
 var current_state : AIState = AIState.WANDER
 var player_last_seen_at: Vector3
 var previous_state : AIState = AIState.WANDER  # store state before bouncing
@@ -39,6 +47,14 @@ var wander_timer: float = 0.0
 var attack_timer: float = 0.0
 var bounce_timer: float = 0.0
 var bounce_direction: Vector3 = Vector3.ZERO
+var chase_timer_elapsed:float = 0.0
+
+# Stop and Turn State Vars
+var turn_stage: TurnStage = TurnStage.BRAKING
+var turn_timer: float = 0.0
+var turn_intended_next_state: AIState
+var turn_intended_direction: Vector3
+var turn_stored_look_dir: Vector3 # Where we were looking before stopping
 
 # detectors
 var cliff_detector: RayCast3D
@@ -118,7 +134,7 @@ func can_see_player(
 		first_run = false
 		
 	if not player:
-		print("no player to detect")
+		#print("no player to detect")
 		return false
 	
 	if player.has_method("get") and player.get("can_be_seen") != null:
@@ -169,37 +185,134 @@ func can_see_player(
 				return false				
 	return true
 
+## SUB-ROUTINE: Called by Wander and Bouncing to handle the stop-wiggle-turn behavior
+func initiate_turn_sequence(ai_body: CharacterBody3D, next_state: AIState, next_dir: Vector3) -> void:
+	current_state = AIState.STOP_AND_TURN
+	brake_timer_elapsed = 0.0
+	turn_intended_next_state = next_state
+	turn_intended_direction = next_dir
+	turn_stage = TurnStage.BRAKING
+	
+	# Store current forward look direction so we keep looking that way while stopping
+	var current_forward = ai_body.global_transform.basis.z
+	turn_stored_look_dir = Vector3(current_forward.x, 0, current_forward.z).normalized()
+	if turn_stored_look_dir.length_squared() < 0.01:
+		turn_stored_look_dir = Vector3.FORWARD
+
 func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 	# Update timers
 	attack_timer -= delta
 	
-	# Handle bounce state
+	var move_dir := Vector3.ZERO
+	var look_dir := Vector3.ZERO
+	var can_see
+
+	# ------------------------------------------------------------------
+	# Handle STOP AND TURN Sub-routine State
+	# ------------------------------------------------------------------
+	
+	if current_state == AIState.STOP_AND_TURN:
+		match turn_intended_next_state:
+				AIState.CHASE:
+					can_see = can_see_player(ai_body, player)
+					if not can_see and (player_last_seen_at - player.global_position).length()>2.0:
+						chase_timer_elapsed += delta
+						#print(chase_timer_elapsed)
+		match turn_stage:
+			TurnStage.BRAKING:
+				# Keep looking forward
+				look_dir = turn_stored_look_dir
+				brake_timer_elapsed += delta
+				# manual braking doesn't work, so just set to zero and pray
+				move_dir = Vector3.ZERO
+				
+				if brake_timer_elapsed > brake_timer:
+					# Stopped, move to wiggle
+					turn_stage = TurnStage.LOOK_LEFT
+					turn_timer = turn_wiggle_duration
+			
+			TurnStage.LOOK_LEFT:
+				move_dir = Vector3.ZERO
+				turn_timer -= delta
+				# Rotate look dir left
+				look_dir = turn_stored_look_dir.rotated(Vector3.UP, deg_to_rad(turn_wiggle_angle))
+				
+				if turn_timer <= 0:
+					turn_stage = TurnStage.LOOK_RIGHT
+					turn_timer = turn_wiggle_duration
+			
+			TurnStage.LOOK_RIGHT:
+				move_dir = Vector3.ZERO
+				turn_timer -= delta
+				# Rotate look dir right
+				look_dir = turn_stored_look_dir.rotated(Vector3.UP, deg_to_rad(-turn_wiggle_angle))
+				
+				if turn_timer <= 0:
+					# Sequence complete, switch to intended state
+					current_state = turn_intended_next_state
+					
+					# Initialize timers for the new states
+					if current_state == AIState.BOUNCING:
+						bounce_timer = bounce_back_time
+						bounce_direction = turn_intended_direction # Ensure bounce dir is set
+						move_dir = bounce_direction
+						look_dir = bounce_direction
+					elif current_state == AIState.WANDER:
+						# Wander target was already set before sequence started
+						move_dir = turn_intended_direction
+						look_dir = turn_intended_direction
+
+		debug_move_dir = move_dir
+		debug_look_dir = look_dir
+		return [move_dir, look_dir]
+
+	# ------------------------------------------------------------------
+	# Handle BOUNCING State
+	# ------------------------------------------------------------------
 	if current_state == AIState.BOUNCING:
+		match previous_state:
+				AIState.CHASE:
+					if not can_see and (player_last_seen_at - player.global_position).length()>2.0:
+						chase_timer_elapsed += delta
+						#print(chase_timer_elapsed)
 		bounce_timer -= delta
 		if bounce_timer <= 0:
 			current_state = previous_state
+			move_dir = Vector3.ZERO # Momentary pause before resuming previous state
 		else:
 			# Just move in bounce direction
 			debug_move_dir = bounce_direction
 			debug_look_dir = bounce_direction
-			bounce_direction = _check_for_obstacles(ai_body, player, bounce_direction)
+			# Note: We do NOT check obstacles while bouncing, or we might infinite loop
 			return [bounce_direction, bounce_direction]
-	
-	var move_dir := Vector3.ZERO
-	var look_dir := Vector3.ZERO
 
+	# ------------------------------------------------------------------
+	# Standard Logic (Wander, Chase, Attack)
+	# ------------------------------------------------------------------
+	
 	# Early out if player doesn't exist
 	if not player:
 		if current_state != AIState.WANDER:
 			current_state = AIState.WANDER
-		move_dir = get_wander_direction(ai_body.global_position, delta)
+		
+		# Separate Wander logic here to handle the stop sequence
+		move_dir = get_wander_direction_no_timer(ai_body.global_position)
+		wander_timer -= delta
+		
+		# If timer up, trigger sequence
+		if wander_timer <= 0.0 or ai_body.global_position.distance_to(wander_target) < 1.0:
+			_generate_new_wander_target()
+			var new_dir = get_wander_direction_no_timer(ai_body.global_position)
+			initiate_turn_sequence(ai_body, AIState.WANDER, new_dir)
+			return [Vector3.ZERO, turn_stored_look_dir]
+			
 		move_dir = _check_for_obstacles(ai_body, player, move_dir)
 		debug_move_dir = move_dir
 		debug_look_dir = move_dir
 		return [move_dir, move_dir]
 
 	# Core visibility + distance checks
-	var can_see = can_see_player(ai_body, player)
+	can_see = can_see_player(ai_body, player)
 	var distance = ai_body.global_position.distance_to(player.global_position)
 
 	if can_see:
@@ -218,7 +331,10 @@ func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 				current_state = AIState.ATTACK
 			if not can_see and (ai_body.global_position-player_last_seen_at).length()<1.0 and (player_last_seen_at - player.global_position).length()>2.0:
 				current_state = AIState.WANDER
-
+			if not can_see and (chase_timer_elapsed > chase_timer) and (player_last_seen_at - player.global_position).length()>2.0:
+				current_state = AIState.WANDER
+				chase_timer_elapsed = 0.0
+				#print("chase done. wandering.")
 		AIState.WANDER:
 			if can_see:
 				current_state = AIState.CHASE
@@ -226,14 +342,28 @@ func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 	# Execute behavior for current state
 	match current_state:
 		AIState.WANDER:
-			move_dir = get_wander_direction(ai_body.global_position, delta)
+			wander_timer -= delta
+			
+			# Check if we need to pick a new target
+			if wander_timer <= 0.0 or ai_body.global_position.distance_to(wander_target) < 1.0:
+				_generate_new_wander_target()
+				var new_dir = get_wander_direction_no_timer(ai_body.global_position)
+				# Call the subroutine!
+				initiate_turn_sequence(ai_body, AIState.WANDER, new_dir)
+				# Return zero for this frame to prevent jitter
+				return [Vector3.ZERO, turn_stored_look_dir]
+			
+			move_dir = get_wander_direction_no_timer(ai_body.global_position)
 			move_dir = _check_for_obstacles(ai_body, player, move_dir)
+			
 			if move_dir.length() > 0.01:
 				look_dir = move_dir
 
 		AIState.CHASE:
 			move_dir = get_chase_direction(ai_body.global_position, player_last_seen_at)
 			move_dir = _check_for_obstacles(ai_body, player, move_dir)
+			if not can_see and (player_last_seen_at - player.global_position).length()>2.0:
+				chase_timer_elapsed += delta
 				
 		AIState.ATTACK:
 			if player:
@@ -242,19 +372,16 @@ func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 				if attack_timer <= 0:
 					ai_body.attack(look_dir)
 					attack_timer = attack_cooldown
-			move_dir = Vector3.ZERO
+			move_dir = Vector3.ZERO						
+
+		
 
 	debug_move_dir = move_dir
 	debug_look_dir = look_dir
 	return [move_dir, look_dir]
 
-## Get wander direction
-func get_wander_direction(ai_pos: Vector3, delta: float) -> Vector3:
-	wander_timer -= delta
-	
-	if wander_timer <= 0.0 or ai_pos.distance_to(wander_target) < 1.0:
-		_generate_new_wander_target()
-	
+## Helper to get direction without modifying timer
+func get_wander_direction_no_timer(ai_pos: Vector3) -> Vector3:
 	var to_target = wander_target - ai_pos
 	var to_spawn = spawn_position - ai_pos
 	
@@ -263,6 +390,13 @@ func get_wander_direction(ai_pos: Vector3, delta: float) -> Vector3:
 	
 	var combined = to_target.normalized() + to_spawn.normalized() * pull_factor
 	return Vector3(combined.x, 0, combined.z).normalized()
+
+## DEPRECATED: Old function kept for reference, logic moved to ai_think to handle timer better
+func get_wander_direction(ai_pos: Vector3, delta: float) -> Vector3:
+	wander_timer -= delta
+	if wander_timer <= 0.0 or ai_pos.distance_to(wander_target) < 1.0:
+		_generate_new_wander_target()
+	return get_wander_direction_no_timer(ai_pos)
 
 ## Get chase direction
 func get_chase_direction(ai_pos: Vector3, player_pos: Vector3) -> Vector3:
@@ -332,7 +466,8 @@ func _check_for_obstacles(
 	
 	if has_wall:
 		# Get wall normal directly from collision
-		bounce_normal = wall_detector.get_collision_normal()
+		# for some reason minus stops it from rushing directly into walls
+		bounce_normal = -wall_detector.get_collision_normal()
 		bounce_normal.y = 0  # Keep it horizontal
 		bounce_normal = bounce_normal.normalized()
 		# Store for debug visualization
@@ -351,8 +486,13 @@ func _check_for_obstacles(
 		debug_bounce_origin = ai_body.global_position
 		debug_bounce_normal = bounce_normal
 	
-	_start_bounce_back(ai_body, bounce_normal)
-	return bounce_direction
+	# TRIGGER BOUNCE via TURN SEQUENCE
+	previous_state = current_state # Store old state (likely wander)
+	# Start the stop/turn sequence, ending in the BOUNCING state with the calculated direction
+	initiate_turn_sequence(ai_body, AIState.BOUNCING, bounce_normal)
+	
+	# Return zero for now to let braking happen
+	return Vector3.ZERO
 
 # Ledge-grabber style cliff detection
 func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: Vector3) -> Vector3:
@@ -377,20 +517,6 @@ func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: V
 	
 	var wall_norm: Vector3 = hit1.normal
 	var enter_pos: Vector3 = hit1.position
-	
-	# Second ray: from wall hit, look for ledge/floor
-	#var from2: Vector3 = hit1.position + dir.normalized() * epsilon
-	#query.from = from2 + dir - (hit1.position - origin)
-	#query.to = from2
-	
-	#var hit2: Dictionary = space_state.intersect_ray(query)
-	#if hit2.is_empty():
-		# No floor found, use wall normal
-	#	var result = wall_norm
-	#	result.y = 0
-	#	return result.normalized()
-	
-	#var exit_pos: Vector3 = hit2.position
 	
 	# Calculate perpendicular directions along cliff edge
 	var left_perp: Vector3 = wall_norm.cross(up).normalized()
@@ -498,6 +624,9 @@ func _generate_new_wander_target() -> void:
 func debug_visualize(ai_body: CharacterBody3D, player: Node3D = null) -> void:
 	# State label floating above head
 	var state_name = AIState.keys()[current_state]
+	if current_state == AIState.STOP_AND_TURN:
+		state_name += "\n" + TurnStage.keys()[turn_stage]
+		
 	DebugDraw3D.draw_text(ai_body.global_position + Vector3(0, 3.0, 0), state_name, 32, Color.WHITE)
 
 	# Move direction: blue arrow from feet
@@ -577,137 +706,6 @@ func debug_visualize(ai_body: CharacterBody3D, player: Node3D = null) -> void:
 		# Sphere at last seen
 		DebugDraw3D.draw_sphere(player_last_seen_at, 0.5, Color.PURPLE, 0.0)
 
-
-## Update vision cone mesh to match current detection parameters
-## Pass in a MeshInstance3D (typically a child of ai_body) that will be reshaped to show the detection cone
-## This allows you to set material overrides and other properties on the MeshInstance3D in the editor
-'''func update_vision_cone_display(vision_mesh_instance: MeshInstance3D) -> void:
-	if not vision_mesh_instance:
-		return
-	
-	var vision_cone_mesh
-	var original_material
-	if vision_mesh_instance.mesh:
-		original_material = vision_mesh_instance.get_active_material(0)
-		if vision_mesh_instance.mesh is ArrayMesh:
-			vision_cone_mesh = vision_mesh_instance.mesh
-		else:
-			vision_mesh_instance.mesh = ArrayMesh.new()
-			vision_cone_mesh = vision_mesh_instance.mesh
-	else:
-		push_error("you need to create a mesh for it to be updated")
-	
-	# Convert angles to radians
-	var safe_horiz = clampf(horiz_degree_view, 0.1, 170.0)
-	var safe_vert = clampf(vert_degree_view, 0.1, 170.0)
-	var horiz_rad = deg_to_rad(safe_horiz / 2.0)
-	var vert_rad = deg_to_rad(safe_vert / 2.0)
-	
-	# The view frustum is a section of a sphere
-	# At the far end, we want the center point to be exactly at detection_range
-	# But the corners need to extend beyond that to avoid unhappy surprises
-	
-	# Calculate the depth needed so the center of the far plane is at detection_range
-	# Using spherical geometry: depth = range * cos(half_angle)
-	# But we'll use detection_range directly as our sphere radius
-	var sphere_radius = detection_range
-	
-	# The far plane center should be at detection_range from origin
-	# In a cone frustum, the far plane is perpendicular to the forward direction
-	# For a spherical section, we need the far plane to bulge outward
-	
-	# Calculate half-widths at the far plane using tangent from the sphere center
-	var half_width = sphere_radius * tan(horiz_rad)
-	var half_height = sphere_radius * tan(vert_rad)
-	
-	# The distance along the view axis to the far plane center
-	# This ensures the center point is exactly at sphere_radius distance
-	var far_depth = sphere_radius
-	
-	# Now, the corners of the far plane are further from origin than the center
-	# Distance from origin to corner = sqrt(far_depth^2 + half_width^2 + half_height^2)
-	# This is > sphere_radius, which is what we want (no unhappy surprises!)
-	
-	# Add a safety margin to make it even more generous (5% extra)
-	var safety_margin = 1.05
-	far_depth *= safety_margin
-	half_width *= safety_margin
-	half_height *= safety_margin
-	
-	# Check if mesh has any surfaces
-	if vision_cone_mesh.get_surface_count() == 0:
-		# Create initial mesh with 8 vertices
-		var vertices = PackedVector3Array()
-		
-		# Near plane vertices (all at origin or very close)
-		var near_offset = 0.1  # Small offset so it's visible
-		vertices.append(Vector3(0, 0, near_offset))  # 0: near center (repeated 4 times for proper faces)
-		vertices.append(Vector3(0, 0, near_offset))  # 1
-		vertices.append(Vector3(0, 0, near_offset))  # 2
-		vertices.append(Vector3(0, 0, near_offset))  # 3
-		
-		# Far plane vertices (arranged in a rectangle)
-		# Order: top-left, top-right, bottom-right, bottom-left
-		vertices.append(Vector3(-half_width, half_height, far_depth))   # 4: top-left
-		vertices.append(Vector3(half_width, half_height, far_depth))    # 5: top-right
-		vertices.append(Vector3(half_width, -half_height, far_depth))   # 6: bottom-right
-		vertices.append(Vector3(-half_width, -half_height, far_depth))  # 7: bottom-left
-		
-		# Create triangle indices for the frustum
-		# We need: 4 side faces + 1 far face = 5 faces total
-		var indices = PackedInt32Array()
-		
-		# Far face (2 triangles)
-		indices.append_array([4, 5, 6])  # top-left, top-right, bottom-right
-		indices.append_array([4, 6, 7])  # top-left, bottom-right, bottom-left
-		
-		# Side faces (each is 2 triangles from origin to far edge)
-		# Top face
-		indices.append_array([0, 5, 4])
-		# Right face
-		indices.append_array([1, 6, 5])
-		# Bottom face
-		indices.append_array([2, 7, 6])
-		# Left face
-		indices.append_array([3, 4, 7])
-		
-		# Create the mesh arrays
-		var arrays = []
-		arrays.resize(Mesh.ARRAY_MAX)
-		arrays[Mesh.ARRAY_VERTEX] = vertices
-		arrays[Mesh.ARRAY_INDEX] = indices
-		
-		# Add the surface
-		vision_cone_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-		#vision_mesh_instance.mesh = array_mesh
-		vision_mesh_instance.set_surface_override_material(0, original_material)
-	else:
-		# Use MeshDataTool to modify existing vertices
-		var mdt = MeshDataTool.new()
-		mdt.create_from_surface(vision_cone_mesh, 0)
-		
-		# We expect exactly 8 vertices (4 near, 4 far)
-		if mdt.get_vertex_count() != 8:
-			push_warning("Vision cone mesh has unexpected vertex count: %d (expected 8)" % mdt.get_vertex_count())
-			return
-		
-		var near_offset = 0.1
-		
-		# Update near plane vertices (indices 0-3, all at origin)
-		for i in range(4):
-			mdt.set_vertex(i, Vector3(0, 0, near_offset))
-		
-		# Update far plane vertices (indices 4-7)
-		# Order: top-left, top-right, bottom-right, bottom-left
-		mdt.set_vertex(4, Vector3(-half_width, half_height, far_depth))   # top-left
-		mdt.set_vertex(5, Vector3(half_width, half_height, far_depth))    # top-right
-		mdt.set_vertex(6, Vector3(half_width, -half_height, far_depth))   # bottom-right
-		mdt.set_vertex(7, Vector3(-half_width, -half_height, far_depth))  # bottom-left
-		
-		# Commit changes back to mesh
-		vision_cone_mesh.clear_surfaces()
-		mdt.commit_to_surface(vision_cone_mesh)'''
-		
 ## Update visualization with a sliding window of FIXED size (units, not degrees)
 func update_vision_cone_display(
 	vision_mesh_instance: MeshInstance3D, 
@@ -715,7 +713,7 @@ func update_vision_cone_display(
 	player: Node3D,
 	window_width: float = 4.0,   # Width in meters/units
 	window_height: float = 4.0   # Height in meters/units
-) -> void:
+	) -> void:
 	if not vision_mesh_instance or not ai_body:
 		return
 	
@@ -749,11 +747,15 @@ func update_vision_cone_display(
 	var player_pos
 	if player:
 		if current_state in [AIState.CHASE, AIState.ATTACK]:
-			original_material.albedo_color = Color(1.0, 0.0, 0.0, 0.25)
+			if (player.global_position-player_last_seen_at).length()<1:
+				original_material.albedo_color = Color(1.0, 0.0, 0.0, 0.25)
+			else:
+				original_material.albedo_color = Color(1.0, 0.464, 0.007, 0.25)
 			player_pos = player_last_seen_at
 		else:
 			original_material.albedo_color = Color(1.0, 210.0/255.0, 120.0/255.0, 138.0/255)
 			player_pos = player.global_position
+			
 		#local_p = ai_body.to_local(player.global_position)
 		local_p = ai_body.to_local(player_pos)
 		# Per your code logic, +Z is forward. 
@@ -763,6 +765,15 @@ func update_vision_cone_display(
 		# we shrink the frustum to end exactly at the player's depth.
 		if player_depth > 0.1 and player_depth < env_depth:
 			actual_depth = player_depth
+		
+		# in case player is hiding behind a wall, restrict the frustum
+		query = PhysicsRayQueryParameters3D.create(origin_global, player_pos)
+		query.exclude = exclude
+		hit = space_state.intersect_ray(query)
+		if not hit.is_empty():
+			player_depth = origin_global.distance_to(hit.position)
+			if player_depth > 0.1 and player_depth < env_depth:
+				actual_depth = player_depth
 	
 	# Safety floor to prevent division by zero or inverted geometry
 	actual_depth = maxf(actual_depth, 0.5)
@@ -840,6 +851,74 @@ func update_vision_cone_display(
 	if original_material:
 		vision_mesh_instance.set_surface_override_material(0, original_material)
 		
+## Renders a simple vision frustum. 
+## If 'override_depth' is greater than 0, it uses that instead of 'detection_range'.
+func set_static_vision_cone_display(
+	vision_mesh_instance: MeshInstance3D, 
+	ai_body: CharacterBody3D, 
+	override_depth: float = -1.0
+	) -> void:
+	
+	if not vision_mesh_instance or not ai_body:
+		return
+
+	# 1. Capture Material BEFORE clearing the mesh
+	var original_material = vision_mesh_instance.get_active_material(0)
+
+	# 2. Determine Depth
+	var actual_depth = override_depth if override_depth > 0 else detection_range
+	actual_depth = maxf(actual_depth, 0.1)
+
+	# 3. Setup Mesh
+	var vision_cone_mesh: ArrayMesh
+	if vision_mesh_instance.mesh is ArrayMesh:
+		vision_cone_mesh = vision_mesh_instance.mesh
+	else:
+		vision_cone_mesh = ArrayMesh.new()
+		vision_mesh_instance.mesh = vision_cone_mesh
+
+	# 4. Calculate FOV Bounds
+	var half_fov_h = deg_to_rad(horiz_degree_view / 2.0)
+	var half_fov_v = deg_to_rad(vert_degree_view / 2.0)
+	var x_bound = tan(half_fov_h) * actual_depth
+	var y_bound = tan(half_fov_v) * actual_depth
+
+	# 5. Build Geometry
+	var vertices = PackedVector3Array()
+	var indices = PackedInt32Array()
+	var near_offset = 0.1
+	var n_scale = near_offset / actual_depth
+	
+	# Near Plane
+	vertices.push_back(Vector3(-x_bound * n_scale,  y_bound * n_scale,  near_offset)) 
+	vertices.push_back(Vector3( x_bound * n_scale,  y_bound * n_scale,  near_offset)) 
+	vertices.push_back(Vector3( x_bound * n_scale, -y_bound * n_scale,  near_offset)) 
+	vertices.push_back(Vector3(-x_bound * n_scale, -y_bound * n_scale,  near_offset)) 
+	
+	# Far Plane
+	vertices.push_back(Vector3(-x_bound,  y_bound,  actual_depth)) 
+	vertices.push_back(Vector3( x_bound,  y_bound,  actual_depth)) 
+	vertices.push_back(Vector3( x_bound, -y_bound,  actual_depth)) 
+	vertices.push_back(Vector3(-x_bound, -y_bound,  actual_depth)) 
+	
+	indices.append_array([0, 5, 4, 0, 1, 5]) # Top
+	indices.append_array([1, 6, 5, 1, 2, 6]) # Right
+	indices.append_array([2, 7, 6, 2, 3, 7]) # Bottom
+	indices.append_array([3, 4, 7, 3, 0, 4]) # Left
+	indices.append_array([4, 5, 6, 4, 6, 7]) # Far Cap
+	
+	# 6. Commit Mesh and Re-apply Material
+	var arrays = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_INDEX] = indices
+	
+	vision_cone_mesh.clear_surfaces()
+	vision_cone_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	# Re-apply the material so it actually shows up
+	if original_material:
+		vision_mesh_instance.set_surface_override_material(0, original_material)
 
 func reset() -> void:
 	wander_timer = 0.0

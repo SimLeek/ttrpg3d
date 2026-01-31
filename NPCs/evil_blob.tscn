@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://c2yxw3bjwoygf"]
+[gd_scene load_steps=17 format=3 uid="uid://c2yxw3bjwoygf"]
 
 [ext_resource type="Script" uid="uid://b7rrdh30m48fj" path="res://NPCs/evil_blob_ai.gd" id="1_vgo36"]
 [ext_resource type="Script" uid="uid://bh1urcjxjwix4" path="res://scripts/movement_resource.gd" id="2_ef4g5"]
@@ -6,6 +6,8 @@
 [ext_resource type="Material" uid="uid://cw1qq67igdks2" path="res://3dAssets/Purple_blob_tex.tres" id="6_xmbdc"]
 [ext_resource type="Script" uid="uid://b2d4h5lawqfjw" path="res://scripts/limited_blob_body.gd" id="7_r33o2"]
 [ext_resource type="Script" uid="uid://vulk4qg1iarx" path="res://playable/left_hand_gripper.gd" id="8_s4cst"]
+[ext_resource type="Material" uid="uid://dr8eore6m3aj4" path="res://3dAssets/search_light.tres" id="9_vgo36"]
+[ext_resource type="Material" uid="uid://dulk64fqpieuo" path="res://3dAssets/near_search.tres" id="10_kpwx5"]
 [ext_resource type="Script" uid="uid://bt6eb1wa0gx03" path="res://playable/squeezer_rays.gd" id="12_ye3uh"]
 [ext_resource type="Script" uid="uid://ro600jkcqukj" path="res://playable/health.gd" id="16_hok37"]
 
@@ -30,24 +32,11 @@ rings = 6
 height = 0.01
 radius = 0.25
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_vgo36"]
-transparency = 1
-cull_mode = 2
-depth_draw_mode = 1
-albedo_color = Color(1, 0.8235294, 0.47058824, 0.5411765)
-metallic_specular = 0.81
-emission_enabled = true
-emission = Color(1, 0.91833335, 0.65, 1)
-emission_energy_multiplier = 0.25
-rim_enabled = true
-rim = 0.06
-anisotropy = -0.7
-ao_light_affect = 0.42
-backlight = Color(0.73, 0.73, 0.73, 1)
-disable_receive_shadows = true
-
 [sub_resource type="BoxMesh" id="BoxMesh_kpwx5"]
-material = SubResource("StandardMaterial3D_vgo36")
+material = ExtResource("9_vgo36")
+
+[sub_resource type="BoxMesh" id="BoxMesh_tos6d"]
+material = ExtResource("10_kpwx5")
 
 [node name="CharacterBody3D" type="CharacterBody3D"]
 collision_layer = 3
@@ -55,6 +44,7 @@ collision_mask = 3
 floor_snap_length = 0.0
 script = ExtResource("1_vgo36")
 mover = SubResource("Resource_vgo36")
+debug_ai = true
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("CapsuleShape3D_f14xy")
@@ -107,3 +97,6 @@ script = ExtResource("16_hok37")
 
 [node name="VisionCone" type="MeshInstance3D" parent="."]
 mesh = SubResource("BoxMesh_kpwx5")
+
+[node name="NearVisionCone" type="MeshInstance3D" parent="."]
+mesh = SubResource("BoxMesh_tos6d")
