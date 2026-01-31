@@ -12,6 +12,7 @@ class_name BlobAICharacter
 
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
+@export var rotation_smooth_speed: float = 10.0  # rad/s, tune for turn sharpness vs smoothness
 
 @export var debug_ai: bool = false
 
@@ -60,20 +61,25 @@ func attack(look_dir:Vector3):
 	two_handed.handle_non_primary_hand_input(1.0)
 
 func _physics_process(delta: float) -> void:
+	if players.size()<=0:
+		return
 	var move_look = blob_ai.ai_think(delta, self, players[0])
 	var move_dir = move_look[0]
 	var look_dir = move_look[1]
 	
 	if look_dir.length() > 0.02:
 		# Smooth look-at style
-		var target_pos = global_position + look_dir
-		look_at(target_pos, Vector3.UP, true)  #use model front is true
+		#var target_pos = global_position + look_dir
+		#look_at(target_pos, Vector3.UP, true)  #use model front is true
+		var target_basis = Basis.looking_at(-look_dir.normalized(), Vector3.UP)
+		global_transform.basis = global_transform.basis.slerp(target_basis, delta * rotation_smooth_speed)
 	
 	var sv_xyz = velocity  # immediate set velocity vector
 	var gv_xyz = Vector3.ZERO  # goal velocity vector
 	
-	var input_dir: Vector2 = Vector2(move_dir.x, move_dir.z)
-	var is_slow: bool = blob_ai.current_state in [blob_ai.AIState.CHASE_COOLDOWN,blob_ai.AIState.WANDER, blob_ai.AIState.WANDER_WALL_FOLLOW]
+	var local_move_dir = global_transform.basis.inverse() * -move_dir
+	var input_dir: Vector2 = Vector2(local_move_dir.x, local_move_dir.z)
+	var is_slow: bool = blob_ai.current_state in [blob_ai.AIState.WANDER]
 	var is_sprint: bool = blob_ai.current_state == blob_ai.AIState.CHASE
 	gv_xyz = mover.handle_physics_process_input(input_dir, is_slow,is_sprint, gv_xyz, delta, transform)
 
