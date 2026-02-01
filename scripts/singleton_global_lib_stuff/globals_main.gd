@@ -1,7 +1,7 @@
 extends RefCounted
 class_name GlobalLib
 
-static func special_ray_check(ray, body:CharacterBody3D, player, exclude=null, hit_from_inside=false, check_for_player=false, avoid_player=true):
+static func special_ray_check(ray, body:CharacterBody3D, player, exclude=null, hit_from_inside=false):
 	if ray:
 		var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(ray.global_position, ray.global_position+ray.target_position)
 		if exclude:
@@ -13,10 +13,11 @@ static func special_ray_check(ray, body:CharacterBody3D, player, exclude=null, h
 		var space_state = body.get_world_3d().direct_space_state
 		var hit1: Dictionary = space_state.intersect_ray(query)
 		if hit1.is_empty():
-			return false
+			return null
 		else:
 			var hit = hit1["collider"]
 			if player.is_ancestor_of(hit) or hit == player:
-				return check_for_player
+				hit1["player"] = true
 			else:
-				return avoid_player
+				hit1["player"] = false
+			return hit1

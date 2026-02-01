@@ -67,7 +67,7 @@ max_distance_hard = 0.6
 vertex_mass_multiplier = 0.25
 velocity_match_multiplier = 0.25
 follow_node = NodePath("..")
-offset_yaw = 90.0
+offset_yaw = -90.0
 
 [node name="LeftHandMesh" type="MeshInstance3D" parent="."]
 mesh = SubResource("SphereMesh_htvlb")

@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://bypxbfb6bco14"]
+[gd_scene load_steps=16 format=3 uid="uid://bypxbfb6bco14"]
 
 [ext_resource type="Texture2D" uid="uid://dg57tlvhjq05m" path="res://3dAssets/skybox/eso0932a.jpg" id="1_06gaq"]
 [ext_resource type="PackedScene" uid="uid://dpvhf7r5xwv5f" path="res://playable/Blob.tscn" id="2_gmfh6"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" uid="uid://clyjoxm4lvgg2" path="res://levels/area_3d.gd" id="5_yu0ye"]
 [ext_resource type="ArrayMesh" uid="uid://dmlm0uua12ogf" path="res://3dAssets/test/warehouse.obj" id="6_iluh8"]
 [ext_resource type="Material" uid="uid://brnctogxnqgdq" path="res://3dAssets/shader_wall.tres" id="8_0m1x5"]
+[ext_resource type="PackedScene" uid="uid://c2yxw3bjwoygf" path="res://NPCs/evil_blob.tscn" id="8_s5uo1"]
 
 [sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_5ag8f"]
 panorama = ExtResource("1_06gaq")
@@ -51,9 +52,6 @@ shadow_enabled = true
 
 [node name="CharacterBody3D" parent="." instance=ExtResource("2_gmfh6")]
 transform = Transform3D(-4.569558e-08, 0, 1, 0, 1, 0, -1, 0, -4.569558e-08, 1.0000004, 1, 9.000002)
-
-[node name="LedgeGrabber" parent="CharacterBody3D" index="1"]
-debug_draw = true
 
 [node name="SpringArm3D" parent="CharacterBody3D" index="2"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.3, 0)
@@ -105,6 +103,9 @@ surface_material_override/64 = ExtResource("8_0m1x5")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="StaticBody3D"]
 visible = false
 shape = SubResource("ConcavePolygonShape3D_iluh8")
+
+[node name="CharacterBody3D3" parent="." instance=ExtResource("8_s5uo1")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 9, 1, -5)
 
 [connection signal="body_entered" from="Area3D" to="Area3D" method="_on_body_entered"]
 

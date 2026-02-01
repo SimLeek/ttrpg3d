@@ -107,9 +107,6 @@ dialogs = Array[ExtResource("4_bb7w5")]([SubResource("Resource_beouf")])
 billboard_height = 0.5
 box_size = Vector2(600, 180)
 
-[node name="CharacterBody3D" parent="CharacterBody3D8" instance=ExtResource("6_tqqsv")]
-transform = Transform3D(-1, 0, 8.742278e-08, 0, 1, 0, -8.742278e-08, 0, -1, 11.999999, 0, 13.999999)
-
 [node name="CharacterBody3D3" parent="." instance=ExtResource("3_hd7o8")]
 transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, -14, 18, 1.000001)
 
@@ -190,6 +187,9 @@ surface_material_override/0 = ExtResource("7_74hhg")
 [node name="CollisionShape3D3" type="CollisionShape3D" parent="StaticBody3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 21, 1, 2)
 shape = SubResource("ConcavePolygonShape3D_tqqsv")
+
+[node name="CharacterBody3D9" parent="." instance=ExtResource("6_tqqsv")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 1, -12)
 
 [connection signal="body_entered" from="Area3D" to="Area3D" method="_on_body_entered"]
 

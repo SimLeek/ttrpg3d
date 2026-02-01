@@ -116,7 +116,7 @@ func can_see_player(
 		return false
 	
 	# Horizontal FOV
-	var forward = ai_body.global_transform.basis.z.normalized()
+	var forward = -ai_body.global_transform.basis.z.normalized()
 	var to_player_flat = Vector3(to_player.x, 0, to_player.z).normalized()
 	var forward_flat = Vector3(forward.x, 0, forward.z).normalized()
 	var horiz_angle = rad_to_deg(forward_flat.angle_to(to_player_flat))
@@ -161,7 +161,7 @@ func initiate_turn_sequence(ai_body: CharacterBody3D, next_state: AIState, next_
 	turn_stage = TurnStage.BRAKING
 	
 	# Store current forward look direction so we keep looking that way while stopping
-	var current_forward = ai_body.global_transform.basis.z
+	var current_forward = -ai_body.global_transform.basis.z
 	turn_stored_look_dir = Vector3(current_forward.x, 0, current_forward.z).normalized()
 	if turn_stored_look_dir.length_squared() < 0.01:
 		turn_stored_look_dir = Vector3.FORWARD
@@ -251,7 +251,20 @@ func ai_think(delta: float, ai_body: CharacterBody3D, player: Node3D) -> Array:
 			debug_move_dir = bounce_direction
 			debug_look_dir = bounce_direction
 			# Note: We do NOT check obstacles while bouncing, or we might infinite loop
-			return [bounce_direction, bounce_direction]
+			# Note: Fuck you, you retarded LLM, we DO check obstacles or the AI walks off a cliff immediately, dumbass.
+			# Todo: we do need to execude a full turn though, otherwise it detects the same face. That should be a sub-state.
+			# for now, it is a magic number portion of the timer instead, to allow for look left, look right, and full turn
+			if bounce_timer <= bounce_back_time-1.0:
+				var obstacle_check = terrain_detection.check_for_obstacles(ai_body, player, move_dir)
+				move_dir = obstacle_check.move_dir
+				if obstacle_check.bounced:
+					previous_state = current_state # Store old state (likely wander)
+					# Start the stop/turn sequence, ending in the BOUNCING state with the calculated direction
+					initiate_turn_sequence(ai_body, AIState.BOUNCING, obstacle_check.bounce_normal)
+				
+				return [move_dir, move_dir]
+			else:
+				return [bounce_direction, bounce_direction]
 
 	# ------------------------------------------------------------------
 	# Standard Logic (Wander, Chase, Attack)
@@ -465,7 +478,7 @@ func update_vision_cone_display(
 		vision_mesh_instance.mesh = vision_cone_mesh
 
 	# 2. Calculate Environmental Depth (Wall Hit)
-	var forward_global = ai_body.global_transform.basis.z.normalized()
+	var forward_global = -ai_body.global_transform.basis.z.normalized()
 	var origin_global = ai_body.global_position + Vector3(0, 0.5, 0)
 	var target_global = origin_global + forward_global * detection_range
 	
@@ -556,16 +569,16 @@ func update_vision_cone_display(
 	var n_scale = near_offset / actual_depth
 	
 	# Near Plane (Indices 0-3)
-	vertices.push_back(Vector3(x_left * n_scale,  y_top * n_scale,    near_offset)) 
-	vertices.push_back(Vector3(x_right * n_scale, y_top * n_scale,    near_offset)) 
-	vertices.push_back(Vector3(x_right * n_scale, y_bottom * n_scale, near_offset)) 
-	vertices.push_back(Vector3(x_left * n_scale,  y_bottom * n_scale, near_offset)) 
+	vertices.push_back(Vector3(x_left * n_scale,  y_top * n_scale,    -near_offset)) 
+	vertices.push_back(Vector3(x_right * n_scale, y_top * n_scale,    -near_offset)) 
+	vertices.push_back(Vector3(x_right * n_scale, y_bottom * n_scale, -near_offset)) 
+	vertices.push_back(Vector3(x_left * n_scale,  y_bottom * n_scale, -near_offset)) 
 	
 	# Far Plane (Indices 4-7)
-	vertices.push_back(Vector3(x_left,  y_top,    actual_depth)) 
-	vertices.push_back(Vector3(x_right, y_top,    actual_depth)) 
-	vertices.push_back(Vector3(x_right, y_bottom, actual_depth)) 
-	vertices.push_back(Vector3(x_left,  y_bottom, actual_depth)) 
+	vertices.push_back(Vector3(x_left,  y_top,    -actual_depth)) 
+	vertices.push_back(Vector3(x_right, y_top,    -actual_depth)) 
+	vertices.push_back(Vector3(x_right, y_bottom, -actual_depth)) 
+	vertices.push_back(Vector3(x_left,  y_bottom, -actual_depth)) 
 	
 	# Build Triangles
 	indices.append_array([0, 5, 4, 0, 1, 5]) # Top
@@ -626,16 +639,16 @@ func set_static_vision_cone_display(
 	var n_scale = near_offset / actual_depth
 	
 	# Near Plane
-	vertices.push_back(Vector3(-x_bound * n_scale,  y_bound * n_scale,  near_offset)) 
-	vertices.push_back(Vector3( x_bound * n_scale,  y_bound * n_scale,  near_offset)) 
-	vertices.push_back(Vector3( x_bound * n_scale, -y_bound * n_scale,  near_offset)) 
-	vertices.push_back(Vector3(-x_bound * n_scale, -y_bound * n_scale,  near_offset)) 
+	vertices.push_back(Vector3(-x_bound * n_scale,  y_bound * n_scale,  -near_offset)) 
+	vertices.push_back(Vector3( x_bound * n_scale,  y_bound * n_scale,  -near_offset)) 
+	vertices.push_back(Vector3( x_bound * n_scale, -y_bound * n_scale,  -near_offset)) 
+	vertices.push_back(Vector3(-x_bound * n_scale, -y_bound * n_scale,  -near_offset)) 
 	
 	# Far Plane
-	vertices.push_back(Vector3(-x_bound,  y_bound,  actual_depth)) 
-	vertices.push_back(Vector3( x_bound,  y_bound,  actual_depth)) 
-	vertices.push_back(Vector3( x_bound, -y_bound,  actual_depth)) 
-	vertices.push_back(Vector3(-x_bound, -y_bound,  actual_depth)) 
+	vertices.push_back(Vector3(-x_bound,  y_bound,  -actual_depth)) 
+	vertices.push_back(Vector3( x_bound,  y_bound,  -actual_depth)) 
+	vertices.push_back(Vector3( x_bound, -y_bound,  -actual_depth)) 
+	vertices.push_back(Vector3(-x_bound, -y_bound,  -actual_depth)) 
 	
 	indices.append_array([0, 5, 4, 0, 1, 5]) # Top
 	indices.append_array([1, 6, 5, 1, 2, 6]) # Right

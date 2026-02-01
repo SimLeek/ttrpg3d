@@ -3,7 +3,7 @@ class_name TerrainDetectionSystem
 ## Terrain Detection system for AIs
 ##
 ## Use this instead of NavMeshes or volumes for AIs that should try to go everywhere on the ground. [br]
-## Use NavMeshes or volumes if you have many, many AIs and low processing power. [br]
+## Use NavMeshes or volumes if you have many, many AIs and low processing power, or want to keep AIs in a strict area. [br]
 ## [br]
 ## Uses rays to detect walls, cliffs, and jumps. [br]
 ## If something can be jumped over, it does so. [br]
@@ -97,14 +97,15 @@ func check_for_obstacles(
 	if intended_dir.length_squared() < 0.01:
 		return ObstacleCheck.new(Vector3.ZERO, false, Vector3.ZERO)
 	
-	jump_detector.position = intended_dir*check_in_front_dist + Vector3(0, max_jump_height, 0)
+	# positions have minus because -z is forward
+	jump_detector.position = intended_dir*-check_in_front_dist + Vector3(0, max_jump_height, 0)
 	jump_detector.target_position = Vector3(0, -max_jump_height, 0) + Vector3(0, 0.1, 0)
 
-	cliff_detector.position = intended_dir*check_in_front_dist + Vector3(0, 0.1, 0)
+	cliff_detector.position = intended_dir*-check_in_front_dist + Vector3(0, 0.1, 0)
 	cliff_detector.target_position = Vector3(0, -1, 0) * max_safe_drop
 	
-	wall_detector.position = Vector3(0, 0.1, -check_in_front_dist*.1) # a bit behind us in case we're phasing into the wall
-	wall_detector.target_position = intended_dir*check_in_front_dist*1.1
+	wall_detector.position = Vector3(0, 0.1, check_in_front_dist*.1) # a bit behind us in case we're phasing into the wall
+	wall_detector.target_position = intended_dir*-check_in_front_dist*1.1
 	
 	cliff_detector.force_raycast_update()
 	jump_detector.force_raycast_update()
@@ -112,7 +113,9 @@ func check_for_obstacles(
 
 	var can_jump_over = jump_detector.is_colliding()
 	var has_cliff = not cliff_detector.is_colliding()
-	var has_wall = GlobalLib.special_ray_check(wall_detector, ai_body, player, exclude) and not can_jump_over
+	
+	var wall_collision = GlobalLib.special_ray_check(wall_detector, ai_body, player, exclude) 
+	var has_wall = wall_collision != null and not wall_collision["player"] and not can_jump_over
 
 	if can_jump_over:
 		ai_body.jump()
@@ -124,16 +127,21 @@ func check_for_obstacles(
 	var bounce_normal = Vector3.ZERO
 	
 	if has_wall:
-		# for some reason minus stops it from rushing directly into walls
-		bounce_normal = -wall_detector.get_collision_normal()
+		print("wall bounce")
+		# this seems to be the surface normal
+		# to get the reflected ray, do R=I-2(I*N)N
+		# to get a wall follow direction, take the cross product with Vector3.UP
+		bounce_normal = wall_collision["normal"] 
+
 		bounce_normal.y = 0
 		bounce_normal = bounce_normal.normalized()
 
-		debug_bounce_origin = wall_detector.get_collision_point()
+		debug_bounce_origin = wall_detector["position"]
 		debug_bounce_normal = bounce_normal
 	elif has_cliff:
 		print("cliff bounce")
-
+		# this seems to be the incident ray direction
+		# todo: get cliff normal needs updating to actually get 'surface' normal
 		bounce_normal = _get_cliff_edge_normal_ledge_style(ai_body, intended_dir)
 		debug_bounce_origin = ai_body.global_position + intended_dir * check_in_front_dist
 		debug_bounce_normal = bounce_normal
@@ -188,7 +196,7 @@ func draw_debug(ai_body: CharacterBody3D) -> void:
 		if jump_detector.is_colliding():
 			DebugDraw3D.draw_sphere(jump_detector.get_collision_point(), 0.15, Color.GREEN_YELLOW, 0.0)
 	
-	if debug_bounce_normal.length() > 0.01:
+	if debug_bounce_normal and debug_bounce_normal.length() > 0.01:
 		DebugDraw3D.draw_arrow(
 			debug_bounce_origin,
 			debug_bounce_origin + debug_bounce_normal.normalized() * 2.0,
