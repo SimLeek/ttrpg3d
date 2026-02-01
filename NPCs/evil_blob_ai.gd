@@ -43,11 +43,11 @@ func _ready() -> void:
 	stair_stepper.step_cast.add_exception_rid(softy.get_physics_rid())
 	if not blob_ai: blob_ai = BlobAIResource.new()
 	blob_ai.set_spawn_position(global_position)  # for restricting wandering
-	blob_ai.setup_detection_systems(self)
 	#blob_ai.update_vision_cone_display(vision_cone)
 	
 
 	players = get_tree().get_nodes_in_group("player")
+	blob_ai.setup(self, players)
 	if players.size()<=0:
 		return
 	blob_ai.update_vision_cone_display(
