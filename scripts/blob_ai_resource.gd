@@ -61,8 +61,6 @@ var space_state: PhysicsDirectSpaceState3D
 # Debug viz only
 var debug_move_dir: Vector3 = Vector3.ZERO
 var debug_look_dir: Vector3 = Vector3.ZERO
-var debug_bounce_normal: Vector3 = Vector3.ZERO
-var debug_bounce_origin: Vector3 = Vector3.ZERO
 
 func setup(body:CharacterBody3D, players: Array[Node]) -> void:
 	if not terrain_detection: terrain_detection = TerrainDetectionSystem.new()
@@ -431,15 +429,6 @@ func debug_visualize(ai_body: CharacterBody3D, player: Node3D = null) -> void:
 			ai_body.global_position + Vector3(0, 0.5, 0),
 			ai_body.global_position + Vector3(0, 0.5, 0) + debug_look_dir.normalized() * 3.0,
 			Color.CYAN,
-			0.0
-		)
-
-	# Bounce normal: magenta arrow from collision point
-	if debug_bounce_normal.length() > 0.01:
-		DebugDraw3D.draw_arrow(
-			debug_bounce_origin,
-			debug_bounce_origin + debug_bounce_normal.normalized() * 2.0,
-			Color.MAGENTA,
 			0.0
 		)
 
