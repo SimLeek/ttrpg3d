@@ -14,6 +14,10 @@ extends CharacterBody3D
 @onready var default_floor_angle: float = floor_max_angle
 
 # the player has a ...
+
+# VoxelLODTerrain is faster, but is has collision glitches and voxel tool glitches
+# Under the same testing, standard VoxelTerrain was much more reliable
+@export var voxel_terrain: VoxelTerrain  
 @onready var ledge_grabber_node: Node = $LedgeGrabber
 @onready var softy: SoftBody3D = $SoftBody3D
 @onready var hardy: CollisionShape3D = $CollisionShape3D
@@ -25,6 +29,12 @@ extends CharacterBody3D
 @onready var pause_menu_node: Node = $PauseMenu
 
 var can_be_seen: bool = true  # For enemy AI detection
+var vt: VoxelToolTerrain
+#var stuck_timer: float = 0.0
+var last_safe_pos: Vector3
+
+const check_time:float = 1.0
+var check_timer:float = 0.0
 
 func _ready() -> void:
 	# Initialize resources if not assigned
@@ -42,6 +52,13 @@ func _ready() -> void:
 	
 	if health_node and hud_node:
 		health_node.health_changed.connect(hud_node.update_health_ui)
+		
+	if voxel_terrain:
+		vt = voxel_terrain.get_voxel_tool()
+		vt.channel = VoxelBuffer.CHANNEL_TYPE
+	if voxel_terrain:
+		var true_position = global_position-voxel_terrain.global_position
+		last_safe_pos = true_position
 
 func _input(event: InputEvent) -> void:
 	mover.handle_immediate_input(event)
@@ -82,9 +99,9 @@ func _physics_process(delta: float) -> void:
 	
 	# Apply squeeze slowdown (only when there's meaningful forward movement)
 	if direction.length() > 0.05:
+		
 		gv_xyz[0] *= squeeze_factor
 		gv_xyz[2] *= squeeze_factor
-		
 	# ITEM USE SECTION
 	two_handed.handle_physics_process_input()
 	
@@ -105,8 +122,43 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, friction)
 		velocity.z = move_toward(velocity.z, 0.0, friction)
+		
+	if hud_node:
+		hud_node.update_stamina_ui(mover.sprint_time_limit-mover.sprint_elapsed, mover.sprint_time_limit)
 
 	move_and_slide()
+	
+	var is_stuck = false
+	check_timer += delta
+	# the voxels are threaded, so do this rarely
+	if vt and check_timer>= check_time:
+		var true_position = global_position-voxel_terrain.global_position
+		#var check_pos = global_position
+		#var check_pos = global_transform.origin
+		var vox_num = vt.get_voxel(Vector3i(true_position.round()))
+		var vox_num2 = vt.get_voxel(Vector3i(true_position.round()+Vector3.UP))
+		var vox_num3 = vt.get_voxel(Vector3i(true_position.round()+Vector3.RIGHT))
+		var vox_num4 = vt.get_voxel(Vector3i(true_position.round()-Vector3.RIGHT))
+
+		#var hit = vt.raycast(check_pos, Vector3.UP, 10)
+		#print(hit)
+		if vox_num>=1 and vox_num2>=1 and vox_num3>=1 and vox_num4>=1: # list of solid block types here
+			print(Vector3i(true_position.round()))
+			print("under voxel")
+			#print(hit.position)
+			#print(vt.get_voxel(hit.position))
+			print(vt.get_voxel(Vector3i(true_position.round())))
+			print(vt.get_voxel(true_position))
+			is_stuck = true
+		
+		check_timer = 0.0
+			
+	if is_stuck:
+		print("oh no I'm stuck")
+		global_position = last_safe_pos+voxel_terrain.global_position
+		velocity = Vector3.ZERO
+	elif is_on_floor():
+		last_safe_pos = global_position-voxel_terrain.global_position
 
 func die() -> void:
 	print("Player died. Reloading...")

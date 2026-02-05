@@ -127,7 +127,7 @@ func can_see_player(
 	# Vertical FOV
 	if distance > 0.01:
 		var vert_angle = rad_to_deg(asin(to_player.y / distance))
-		if abs(vert_angle) > vert_degree_view / 2.0:
+		if vert_angle > vert_degree_view / 2.0:
 			return false
 	
 	# Line of sight
@@ -507,8 +507,7 @@ func update_vision_cone_display(
 			
 		#local_p = ai_body.to_local(player.global_position)
 		local_p = ai_body.to_local(player_pos)
-		# Per your code logic, +Z is forward. 
-		var player_depth = local_p.z 
+		var player_depth = -local_p.z 
 		
 		# If player is in front and closer than the wall/max range, 
 		# we shrink the frustum to end exactly at the player's depth.
@@ -516,13 +515,26 @@ func update_vision_cone_display(
 			actual_depth = player_depth
 		
 		# in case player is hiding behind a wall, restrict the frustum
-		query = PhysicsRayQueryParameters3D.create(origin_global, player_pos)
-		query.exclude = exclude
-		hit = space_state.intersect_ray(query)
-		if not hit.is_empty():
-			player_depth = origin_global.distance_to(hit.position)
-			if player_depth > 0.1 and player_depth < env_depth:
-				actual_depth = player_depth
+		var forward_flat = Vector3(forward_global.x, 0, forward_global.z).normalized()
+		var to_player = player_pos - origin_global
+		var to_player_flat = Vector3(to_player.x, 0, to_player.z).normalized()
+		var horiz_angle = rad_to_deg(forward_flat.angle_to(to_player_flat))
+	
+		if abs(horiz_angle) <= horiz_degree_view / 2.0:		
+			var vert_angle = rad_to_deg(asin(to_player.y / to_player.length()))
+			if abs(vert_angle) <= vert_degree_view / 2.0:
+				query = PhysicsRayQueryParameters3D.create(origin_global, player_pos)
+				query.exclude = exclude
+				query.collide_with_areas = false
+				query.collide_with_bodies = true
+				query.hit_from_inside = true
+				query.hit_back_faces = true
+				hit = space_state.intersect_ray(query)
+				if not hit.is_empty():
+					print("player block hit")
+					player_depth = origin_global.distance_to(hit.position)
+					if player_depth > 0.1 and player_depth < env_depth:
+						actual_depth = player_depth
 	
 	# Safety floor to prevent division by zero or inverted geometry
 	actual_depth = maxf(actual_depth, 0.5)
@@ -541,7 +553,7 @@ func update_vision_cone_display(
 	if player:
 		# Project the player's position onto the plane at Z = actual_depth
 		# If actual_depth == player_depth, this just results in local_p.x
-		var p_z = maxf(local_p.z, 0.1) # Avoid division by zero
+		var p_z = maxf(-local_p.z, 0.1) # Avoid division by zero
 		center_x = (local_p.x / p_z) * actual_depth
 		center_y = (local_p.y / p_z) * actual_depth
 

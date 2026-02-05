@@ -21,7 +21,8 @@
 radius = 0.25
 height = 0.51
 
-[sub_resource type="SeparationRayShape3D" id="SeparationRayShape3D_yq3el"]
+[sub_resource type="SphereShape3D" id="SphereShape3D_jo7wf"]
+radius = 0.125
 
 [sub_resource type="SphereMesh" id="SphereMesh_htvlb"]
 radius = 0.15
@@ -34,8 +35,6 @@ height = 0.01
 radius = 0.25
 
 [node name="CharacterBody3D" type="CharacterBody3D" groups=["player"]]
-collision_layer = 3
-collision_mask = 3
 floor_snap_length = 0.0
 script = ExtResource("1_s7uw5")
 
@@ -49,30 +48,25 @@ rest_length = 0.5
 ledge_grab_key = "grab"
 debug_draw = true
 
-[node name="SpringArm3D" type="SpringArm3D" parent="."]
-shape = SubResource("SeparationRayShape3D_yq3el")
+[node name="SpringArm3D" type="SpringArm3D" parent="." node_paths=PackedStringArray("cam")]
+shape = SubResource("SphereShape3D_jo7wf")
 spring_length = 5.0
 script = ExtResource("2_cnvq6")
-
-[node name="Camera3D" type="Camera3D" parent="SpringArm3D" node_paths=PackedStringArray("player_node")]
-transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.9659258, 0, 0, 0)
-script = ExtResource("4_htvlb")
-player_node = NodePath("../..")
-update_interval = 0.0
+cam = NodePath("../Camera3D")
 
 [node name="SoftBody3D" type="SoftBody3D" parent="." node_paths=PackedStringArray("follow_node")]
 transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0, 0, 0)
 mesh = ExtResource("3_5fh1f")
 surface_material_override/0 = ExtResource("4_s7uw5")
-collision_layer = 3
-collision_mask = 3
+collision_layer = 2
+collision_mask = 2
 parent_collision_ignore = NodePath("..")
 total_mass = 60.01
 linear_stiffness = 1.0
 pressure_coefficient = 1000.0
 script = ExtResource("5_yxels")
 stiffness = 22.5
-max_force = 25.0
+max_force = 50.0
 max_distance = 0.3
 max_distance_hard = 0.6
 vertex_mass_multiplier = 0.25
@@ -100,7 +94,6 @@ character_path = NodePath("..")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 0)
 shape = SubResource("CylinderShape3D_htvlb")
 target_position = Vector3(0, -0.25, 0)
-collision_mask = 3
 
 [node name="PauseMenu" type="CanvasLayer" parent="." node_paths=PackedStringArray("hud")]
 process_mode = 3
@@ -161,10 +154,11 @@ text = "Exit Game"
 [node name="SqueezerRays" type="Node3D" parent="."]
 script = ExtResource("12_dk5x5")
 
-[node name="HUD" type="CanvasLayer" parent="." node_paths=PackedStringArray("health_bar")]
+[node name="HUD" type="CanvasLayer" parent="." node_paths=PackedStringArray("health_bar", "stamina_bar")]
 process_mode = 3
 script = ExtResource("13_832iv")
-health_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/TextureProgressBar")
+health_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/hp_bar")
+stamina_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/stamina_bar")
 
 [node name="Control" type="Control" parent="HUD"]
 layout_mode = 3
@@ -183,16 +177,35 @@ layout_mode = 2
 
 [node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer/GridContainer"]
 layout_mode = 2
-columns = 2
 
-[node name="TextureProgressBar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer"]
+[node name="hp_bar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer"]
 layout_mode = 2
 value = 100.0
 texture_under = ExtResource("14_jo7wf")
 texture_progress = ExtResource("15_ekptx")
+tint_under = Color(1, 0, 0, 1)
+tint_over = Color(1, 0, 0, 1)
+tint_progress = Color(1, 0, 0, 1)
+
+[node name="stamina_bar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer"]
+layout_mode = 2
+value = 100.0
+texture_under = ExtResource("14_jo7wf")
+texture_progress = ExtResource("15_ekptx")
+tint_under = Color(0.5833334, 1, 0, 1)
+tint_over = Color(0.5833334, 1, 0, 1)
+tint_progress = Color(0.58431375, 1, 0, 1)
 
 [node name="Health" type="Node3D" parent="."]
 script = ExtResource("16_jo7wf")
+
+[node name="VoxelViewer" type="VoxelViewer" parent="."]
+
+[node name="Camera3D" type="Camera3D" parent="." node_paths=PackedStringArray("player_node")]
+transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.9659258, 0, 0, 0)
+script = ExtResource("4_htvlb")
+player_node = NodePath("..")
+update_interval = 0.0
 
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/continue" to="PauseMenu" method="_on_continue_pressed"]
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/config" to="PauseMenu" method="_on_config_pressed"]

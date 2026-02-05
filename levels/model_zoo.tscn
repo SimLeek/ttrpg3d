@@ -1,0 +1,27 @@
+[gd_scene load_steps=5 format=3 uid="uid://cftxy2w10nfyp"]
+
+[ext_resource type="ArrayMesh" uid="uid://bk1421v7hxgso" path="res://3dAssets/test/tunnel gym 2.obj" id="1_yfpyg"]
+[ext_resource type="ArrayMesh" uid="uid://ba5hbxsw2q321" path="res://3dAssets/test/wall gym.obj" id="2_denxk"]
+[ext_resource type="ArrayMesh" uid="uid://dmlm0uua12ogf" path="res://3dAssets/test/warehouse.obj" id="3_hlrhx"]
+[ext_resource type="Script" uid="uid://ka2511c5flji" path="res://scripts/attribution.gd" id="4_1u7q1"]
+
+[node name="Zoo" type="Node3D"]
+
+[node name="TunnelGym2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 11, 0, -6)
+mesh = ExtResource("1_yfpyg")
+
+[node name="WallGym" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 66, 10, -16)
+mesh = ExtResource("2_denxk")
+
+[node name="Warehouse" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 112, 59, 136)
+mesh = ExtResource("3_hlrhx")
+
+[node name="Attribution" type="Node" parent="Warehouse"]
+script = ExtResource("4_1u7q1")
+asset_name = "Warehouse"
+creator_name = "Simleek"
+license = "All Rights Reserved"
+metadata/_custom_type_script = "uid://ka2511c5flji"

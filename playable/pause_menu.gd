@@ -32,7 +32,7 @@ func _on_config_pressed() -> void:
 
 
 func _on_respawn_pressed() -> void:
-	pass # Nothing for now
+	get_parent().die()  # kill and respawn player
 
 
 func _on_main_menu_pressed() -> void:

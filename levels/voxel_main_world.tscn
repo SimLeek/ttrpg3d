@@ -1,0 +1,66 @@
+[gd_scene load_steps=12 format=3 uid="uid://cinm4r5hujgnx"]
+
+[ext_resource type="Texture2D" uid="uid://cwjqjhi801dva" path="res://3dAssets/skybox/colle-della-lombarada (1).jpg" id="1_5qsys"]
+[ext_resource type="Script" uid="uid://bon82patxq1vl" path="res://levels/center_of_universe.gd" id="1_o623y"]
+[ext_resource type="PackedScene" uid="uid://dpvhf7r5xwv5f" path="res://playable/Blob.tscn" id="2_opdde"]
+[ext_resource type="VoxelMesherBlocky" uid="uid://d0dkjpgy5unfu" path="res://levels/voxel_main_world_mesher.tres" id="4_j2x63"]
+[ext_resource type="Script" uid="uid://clyjoxm4lvgg2" path="res://levels/area_3d.gd" id="6_oqc3r"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_u7ygc"]
+size = Vector3(1000, 1000, 1000)
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_o623y"]
+noise_type = 4
+frequency = 0.005
+
+[sub_resource type="VoxelGeneratorNoise" id="VoxelGeneratorNoise_7evmb"]
+channel = 0
+noise = SubResource("FastNoiseLite_o623y")
+
+[sub_resource type="PanoramaSkyMaterial" id="PanoramaSkyMaterial_5ag8f"]
+panorama = ExtResource("1_5qsys")
+
+[sub_resource type="Sky" id="Sky_284mm"]
+sky_material = SubResource("PanoramaSkyMaterial_5ag8f")
+
+[sub_resource type="Environment" id="Environment_lra5m"]
+background_mode = 2
+background_color = Color(0.6627451, 1, 1, 1)
+sky = SubResource("Sky_284mm")
+ambient_light_sky_contribution = 0.05
+
+[node name="JumpTestLvl" type="Node3D" node_paths=PackedStringArray("soft_bodies")]
+script = ExtResource("1_o623y")
+soft_bodies = [NodePath("CharacterBody3D/SoftBody3D")]
+
+[node name="CharacterBody3D" parent="." node_paths=PackedStringArray("voxel_terrain") instance=ExtResource("2_opdde")]
+transform = Transform3D(-4.569558e-08, 0, 1, 0, 1, 0, -1, 0, -4.569558e-08, -32, 3, 8.000005)
+voxel_terrain = NodePath("../World/VoxelTerrain")
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="World"]
+transform = Transform3D(0.9659259, 0.06698731, 0.25000003, -0.25881907, 0.24999997, 0.9330127, 1.837843e-08, -0.9659259, 0.25881904, 9.499999, 45.827305, 9.835123)
+shadow_enabled = true
+
+[node name="Area3D" type="Area3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -704, 0)
+script = ExtResource("6_oqc3r")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="World/Area3D"]
+shape = SubResource("BoxShape3D_u7ygc")
+
+[node name="VoxelTerrain" type="VoxelTerrain" parent="World"]
+collision_layer = 3
+collision_mask = 3
+generator = SubResource("VoxelGeneratorNoise_7evmb")
+mesher = ExtResource("4_j2x63")
+gi_mode = 1
+cast_shadow = 2
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_lra5m")
+
+[connection signal="body_entered" from="World/Area3D" to="World/Area3D" method="_on_body_entered"]
+
+[editable path="CharacterBody3D"]

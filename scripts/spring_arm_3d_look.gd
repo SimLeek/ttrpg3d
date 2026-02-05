@@ -3,6 +3,8 @@ extends SpringArm3D
 @export var mouse_sensitivity := 0.1
 @export var controller_sensitivity := 3.0
 @export var player_body: CharacterBody3D  # Link your player node here in the Inspector
+@export var min_length_percent = .25
+@export var cam: Camera3D
 
 @export_group("Zoom Settings")
 @export var zoom_speed := 0.5
@@ -11,6 +13,8 @@ extends SpringArm3D
 @export var zoom_smoothness := 10.0 # Higher = faster snap
 
 var target_zoom: float = 5.0
+var push_dist: float = 0.0
+var final_dist: float = 0.0
 
 func _ready():
 	# If not manually linked, try to find the parent CharacterBody3D
@@ -26,6 +30,7 @@ func _ready():
 	add_excluded_object(player_body.get_rid())
 	# Initialize target zoom to the starting spring length
 	target_zoom = spring_length
+	final_dist = target_zoom
 
 func _unhandled_input(event):
 	if event.is_action_pressed("ui_cancel"): # Usually mapped to Escape
@@ -76,3 +81,14 @@ func _process(delta):
 	# 3. SMOOTH THE ZOOM
 	# lerp ensures the camera doesn't "snap" instantly when scrolling
 	spring_length = lerp(spring_length, target_zoom, delta * zoom_smoothness)
+	
+	var min_allowed_distance = min_length_percent * target_zoom
+	var current_collision_dist = get_hit_length()
+	if current_collision_dist < min_allowed_distance:
+		push_dist = lerp(push_dist, min_allowed_distance, delta * zoom_smoothness)
+	else:
+		# Reset offset when not colliding or when collision is far enough away
+		push_dist = lerp(push_dist, 0.0, delta * zoom_smoothness)
+	final_dist = lerp(final_dist, current_collision_dist + push_dist, delta * zoom_smoothness)
+	cam.global_transform = global_transform
+	cam.position += cam.transform.basis.z * final_dist

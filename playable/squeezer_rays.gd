@@ -89,6 +89,7 @@ func calculate_squeeze_factor(intended_direction: Vector3) -> float:
 
 		var query := PhysicsRayQueryParameters3D.create(origin, origin + d * ray_length)
 		query.exclude = exclude
+		query.collision_mask = 1  # avoid soft body
 		query.collide_with_areas = false
 		query.collide_with_bodies = true
 		

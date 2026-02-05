@@ -8,8 +8,9 @@ class_name StairStepperResource
 var step_cast: ShapeCast3D
 
 func handle_step_up(delta: float, body:CharacterBody3D, sv_xyz:Vector3) -> Vector3:
-	step_cast.global_position.x = body.global_position.x + sv_xyz.x * delta
-	step_cast.global_position.z = body.global_position.z + sv_xyz.z * delta
+	# need to use position, not global position, to handle world repositioning systems
+	step_cast.position.x = body.position.x + sv_xyz.x * delta
+	step_cast.position.z = body.position.z + sv_xyz.z * delta
 
 	step_cast.force_shapecast_update()
 

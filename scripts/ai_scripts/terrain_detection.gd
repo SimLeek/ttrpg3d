@@ -40,6 +40,8 @@ var debug_bounce_normal
 ## the last bounce origin that was detected, for debugging purposes
 var debug_bounce_origin
 
+var enable_cliff_debug: bool = false  # Toggle for visual debugging
+
 ## Obstacle Check result returned by check_for_obstacles [br]
 ## [br]
 ## [param move_dir] direction we should move. Zero if we hit something. [br]
@@ -140,9 +142,9 @@ func check_for_obstacles(
 		debug_bounce_normal = bounce_normal
 	elif has_cliff:
 		print("cliff bounce")
-		# this seems to be the incident ray direction
-		# todo: get cliff normal needs updating to actually get 'surface' normal
-		bounce_normal = _get_cliff_edge_normal_ledge_style(ai_body, intended_dir)
+		# this also now gets the cliff edge "surface normal"
+		var bounce_norm_and_pos = _get_cliff_edge_normal_ledge_style(ai_body, intended_dir)
+		bounce_normal = bounce_norm_and_pos[0]
 		debug_bounce_origin = ai_body.global_position + intended_dir * check_in_front_dist
 		debug_bounce_normal = bounce_normal
 	
@@ -153,6 +155,7 @@ func check_for_obstacles(
 	
 	# Returning zero for now to let other functions take over with other behaviors
 	print("bounced")
+	#return ObstacleCheck.new(Vector3.ZERO, false, Vector3.ZERO)  # stop so I see debug stuff
 	return ObstacleCheck.new(Vector3.ZERO, true, bounce_normal)
 
 ## Visualizes the internal raycasts and bounce normals for debugging purposes. [br]
@@ -203,114 +206,148 @@ func draw_debug(ai_body: CharacterBody3D) -> void:
 			Color.MAGENTA,
 			0.0
 		)
-	
-func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: Vector3) -> Vector3:
+
+func _get_cliff_edge_normal_ledge_style(ai_body: CharacterBody3D, forward_dir: Vector3) -> Array:
 	var up: Vector3 = Vector3.UP
 	var origin: Vector3 = ai_body.global_position
 	
-	# First ray: angled down-forward to find wall
-	var ray_angle_rad: float = deg_to_rad(45.0)
-	var ray_vec_2d: Vector2 = Vector2(cos(ray_angle_rad), sin(ray_angle_rad))
-	var ray_length: float = check_in_front_dist * 1.5
-	var dir: Vector3 = (forward_dir * ray_vec_2d.x + -up * ray_vec_2d.y).normalized() * ray_length
+	# Get the radius to scan at (distance from player to cliff detector)
+	var scan_radius: float = Vector2(cliff_detector.position.x, cliff_detector.position.z).length()
 	
-	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + dir)
-	query.exclude = exclude
-	query.collide_with_areas = false
-	query.collide_with_bodies = true
+	# Binary search to find left and right cliff edges
+	var left_angle: float = _find_cliff_edge_angle(ai_body, origin, forward_dir, scan_radius, true)
+	var right_angle: float = _find_cliff_edge_angle(ai_body, origin, forward_dir, scan_radius, false)
 	
-	var space_state = ai_body.get_world_3d().direct_space_state
-	var hit1: Dictionary = space_state.intersect_ray(query)
-	if hit1.is_empty():
-		# No wall found, just reverse
-		return -forward_dir
+	# Convert angles to world positions
+	var left_pos: Vector3 = origin + _angle_to_direction(forward_dir, left_angle) * scan_radius
+	var right_pos: Vector3 = origin + _angle_to_direction(forward_dir, right_angle) * scan_radius
 	
-	var wall_norm: Vector3 = hit1.normal
-	var enter_pos: Vector3 = hit1.position
+	# cliff left and right are always "found". If they're max (180), then we're standing on a sharp edge, 
+	# and the left and right really are nearly 180 from us, or we're on a point
+	# and if we're on a point, we're kinga screwed anyway
 	
-	# Calculate perpendicular directions along cliff edge
-	var left_perp: Vector3 = wall_norm.cross(up).normalized()
-	var right_perp: Vector3 = -left_perp
-	
-	# Check both sides to find edge positions
-	var hand_distance: float = 0.5
-	var left_data: Array = _check_cliff_side_ledge_style(ai_body, enter_pos, left_perp, forward_dir, hand_distance)
-	var right_data: Array = _check_cliff_side_ledge_style(ai_body, enter_pos, right_perp, forward_dir, hand_distance)
-	
-	var left_pos: Vector3 = left_data[0]
-	var right_pos: Vector3 = right_data[0]
-	var left_found: bool = left_data[1]
-	var right_found: bool = right_data[1]
+	_debug_draw_side_checks(left_pos, right_pos)
 	
 	# Calculate cliff edge normal from the two side points
-	if left_found and right_found:
-		var edge_vector: Vector3 = right_pos - left_pos
-		edge_vector.y = 0
-		# Normal perpendicular to edge
-		var normal: Vector3 = Vector3(edge_vector.z, 0, -edge_vector.x).normalized()
-		
-		# Make sure it points away from movement direction
-		if normal.dot(forward_dir) > 0:
-			normal = -normal
-		
-		return normal
-	elif left_found:
-		return -left_perp
-	elif right_found:
-		return -right_perp
-	else:
-		# Fallback to wall normal
-		var result = wall_norm
-		result.y = 0
-		return result.normalized()
+	#if left_found and right_found:
+	print("full cliff normal")
+	var edge_vector: Vector3 = right_pos - left_pos
+	edge_vector.y = 0
+	# Normal perpendicular to edge (cross with up to get perpendicular)
+	var normal: Vector3 = edge_vector.cross(up).normalized()
+	var position: Vector3 = (right_pos + left_pos)/2
+	
+	# Make sure it points away from movement direction
+	if normal.dot(forward_dir) > 0:
+		normal = -normal
+	
+	_debug_draw_final_normal(origin, normal, "FULL_EDGE")
+	return [normal, position]
 
-func _check_cliff_side_ledge_style(ai_body: CharacterBody3D, exit_pos: Vector3, side_dir: Vector3, forward_dir: Vector3, hand_distance: float) -> Array:
-	var up: Vector3 = Vector3.UP
-	var slope_tan: float = tan(deg_to_rad(ai_body.floor_max_angle))
+func _find_cliff_edge_angle(ai_body: CharacterBody3D, origin: Vector3, forward_dir: Vector3, radius: float, is_left: bool) -> float:
+	# Binary search parameters
+	var max_angle: float = 90.0
+	var current_angle: float = 90
+	var step: float = max_angle /2
 	
-	var offset_pos: Vector3 = exit_pos + side_dir * hand_distance
-	var up_offset: float = slope_tan * hand_distance + epsilon
-	var ray_start: Vector3 = offset_pos + up * up_offset
-	var ray_end_y: float = exit_pos.y - slope_tan * hand_distance - epsilon
-	var ray_end: Vector3 = Vector3(ray_start.x, ray_end_y, ray_start.z)
+	var iterations: int = 0
+	var max_iterations: int = 8  # 170, 85, 42.5, 21.25, 10.625, 5.3125, 2.65625, 1.328125
 	
-	# Check for wall blocking above
-	var wall_query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(
-		ray_start,
-		ray_start + forward_dir * 0.2
-	)
-	wall_query.exclude = exclude
 	var space_state = ai_body.get_world_3d().direct_space_state
+	
+	while iterations < max_iterations:
+		var test_dir: Vector3 = _angle_to_direction(forward_dir, current_angle if is_left else -current_angle)
+		var scan_pos: Vector3 = origin + test_dir * radius
+		scan_pos.y = origin.y  # Keep at player height
+		
+		var ray_end: Vector3 = scan_pos + Vector3.DOWN * abs(cliff_detector.target_position.y)
+		
+		# Cast ray downward to check for floor
+		var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(scan_pos, ray_end)
+		query.exclude = exclude
+		query.collide_with_areas = false
+		query.collide_with_bodies = true
+		
+		var hit: Dictionary = space_state.intersect_ray(query)
+		
+		# Debug each test ray
+		_debug_draw_search_ray(scan_pos, ray_end, hit.is_empty(), iterations)
+		
+		if hit.is_empty():
+			# No floor = we're over the cliff, angle is too wide
+			current_angle += step
+		else:
+			# Floor found = we're not over cliff yet, angle is too narrow
+			current_angle -= step
+		
+		step /= 2.0
+		iterations += 1
+	
+	# putting the minus sign here to reduce confusion
+	if is_left:
+		return current_angle
+	else:
+		return -current_angle
 
-	var wall_hit: Dictionary = space_state.intersect_ray(wall_query)
-	if not wall_hit.is_empty():
-		# Blocked
-		return [Vector3.ZERO, false]
+
+func _angle_to_direction(forward_dir: Vector3, angle_degrees: float) -> Vector3:
+	# Rotate forward_dir by angle_degrees around the Y axis
+	print(angle_degrees)
+	var angle_rad: float = deg_to_rad(angle_degrees)
+	print(angle_rad)
+	var forward_2d: Vector2 = Vector2(forward_dir.x, forward_dir.z)
+	var rotated: Vector2 = forward_2d.rotated(angle_rad)
+	return Vector3(rotated.x, 0, rotated.y).normalized()
+
+
+func _debug_draw_search_ray(start: Vector3, end: Vector3, is_empty: bool, iteration: int) -> void:
+	if not enable_cliff_debug:
+		return
 	
-	# Check for floor below
-	var down_query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(ray_start, ray_end)
-	down_query.exclude = exclude
-	var down_hit: Dictionary = space_state.intersect_ray(down_query)
-	if down_hit.is_empty():
-		# No floor
-		return [Vector3.ZERO, false]
+	# Color code by iteration depth for visualization
+	var colors = [Color.RED, Color.ORANGE, Color.YELLOW, Color.GREEN, 
+				  Color.CYAN, Color.BLUE, Color.PURPLE, Color.MAGENTA]
+	var color = colors[iteration % colors.size()]
+	color.a = 0.5  # Semi-transparent
 	
-	# Check slope
-	var dx_dir: Vector3 = side_dir * 0.01
-	var dx_start: Vector3 = down_hit.position + dx_dir
-	var dx_end: Vector3 = Vector3(dx_start.x, ray_end_y, dx_start.z)
-	var dx_query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(dx_start, dx_end)
-	dx_query.exclude = exclude
-	var dx_hit: Dictionary = space_state.intersect_ray(dx_query)
+	if is_empty:
+		color = color.darkened(0.3)  # Darker if no hit
 	
-	if not dx_hit.is_empty():
-		var dy: float = dx_hit.position.y - down_hit.position.y
-		var slope: float = dy / 0.01
-		if abs(slope) > slope_tan:
-			# Too steep
-			return [Vector3.ZERO, false]
+	DebugDraw3D.draw_line(start, end, color, 0.0)
+	if not is_empty:
+		DebugDraw3D.draw_sphere(end, 0.08, color, 0.0)
+
+
+func _debug_draw_side_checks(left_pos: Vector3, right_pos: Vector3) -> void:
+	if not enable_cliff_debug:
+		return
 	
-	return [down_hit.position, true]
+	DebugDraw3D.draw_line(left_pos, right_pos, Color.WHITE, 0.0)
+
+
+func _debug_draw_final_normal(origin: Vector3, normal: Vector3, label: String) -> void:
+	if not enable_cliff_debug:
+		return
+	
+	var color: Color
+	match label:
+		"FULL_EDGE":
+			color = Color.GREEN
+		"LEFT_ONLY":
+			color = Color.LIGHT_BLUE
+		"RIGHT_ONLY":
+			color = Color.LIGHT_CORAL
+		"FALLBACK":
+			color = Color.GRAY
+		_:
+			color = Color.WHITE
+	
+	DebugDraw3D.draw_arrow(
+		origin,
+		origin + normal * 2.5,
+		color,
+		0.0
+	)
 
 func _create_cliff_detector(body: CharacterBody3D, forward: Vector3) -> RayCast3D:
 	var detector = RayCast3D.new()
@@ -341,3 +378,29 @@ func _create_jump_detector(body: CharacterBody3D, forward: Vector3) -> RayCast3D
 	detector.exclude_parent = true
 	body.add_child(detector)
 	return detector
+
+
+# Debug visualization functions
+func _debug_draw_initial_ray(origin: Vector3, dir: Vector3, hit: Dictionary) -> void:
+	if not enable_cliff_debug:
+		return
+	
+	var end = origin + dir
+	var color = Color.CYAN if not hit.is_empty() else Color.DARK_CYAN
+	DebugDraw3D.draw_line(origin, end, color, 0.0)
+	
+	if not hit.is_empty():
+		DebugDraw3D.draw_sphere(hit.position, 0.2, Color.CYAN, 0.0)
+
+
+func _debug_draw_wall_hit(hit_pos: Vector3, wall_normal: Vector3) -> void:
+	if not enable_cliff_debug:
+		return
+	
+	DebugDraw3D.draw_sphere(hit_pos, 0.15, Color.YELLOW, 0.0)
+	DebugDraw3D.draw_arrow(
+		hit_pos,
+		hit_pos + wall_normal * 1.5,
+		Color.YELLOW,
+		0.0
+	)

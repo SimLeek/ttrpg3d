@@ -84,7 +84,8 @@ func _update_sprint(delta: float) -> void:
 				sprint_elapsed = sprint_time_limit
 				sprint_exhausted = true
 	
-	if sprint_exhausted:
+	#if sprint_exhausted:
+	if not sprinting:
 		var recovery_rate: float = sprint_time_limit / sprint_recovery_time
 		sprint_elapsed -= recovery_rate * delta
 		if sprint_elapsed <= 0.0:
