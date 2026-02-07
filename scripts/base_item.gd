@@ -9,6 +9,7 @@ signal item_used(pressure: float)
 @export var item_name: String = "Base Item"
 @export var can_use: bool = true
 
+var character: CharacterBody3D = null
 ## Reference to any HUD elements this item should show/hide
 var item_hud: Control = null
 
@@ -28,6 +29,10 @@ func use_item(pressure: float) -> void:
 	# Override this in child classes
 	print("%s used with pressure: %.2f" % [item_name, pressure])
 	item_used.emit(pressure)
+
+## Set the character reference (called by HandController)
+func set_character(chara: CharacterBody3D) -> void:
+	character = chara
 
 ## Called when pause menu opens/closes
 ## visible_state: true = show item, false = hide item

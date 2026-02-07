@@ -1,60 +1,72 @@
 extends Node3D
 
-@export var threshold: float = 30  # soft bodies tend to die beyond this distance for some reason
+@export var threshold: float = 512 # detected soft body numerical instability past here
 @export var soft_bodies: Array[SoftBody3D] = []
 
 var _soft_body_templates: Array[SoftBody3D] = []
 var _soft_body_parents: Dictionary = {}
-var _soft_body_local_transforms: Dictionary = {} # idk if this even helps. the transforms are all zero.
+var _soft_body_local_transforms: Dictionary = {} 
 var camera: Camera3D
 
 func _ready() -> void:
 	for body in soft_bodies:
 		if body:
 			_soft_body_parents[body] = body.get_parent()
-			# Store the EXACT local transform from the editor
 			_soft_body_local_transforms[body] = body.transform
-			
-			# Create the clean template
 			var template = body.duplicate()
 			_soft_body_templates.append(template)
 
 func shift_origin() -> void:
 	var shift_vector = $CharacterBody3D.global_position
+	
+	# This stops the physics server from trying to simulate them during the shift
+	#for body in soft_bodies:
+	#	if body.get_parent():
+	#		body.get_parent().remove_child(body)
+
 	$World.global_position -= shift_vector
 	$CharacterBody3D.global_position = Vector3.ZERO
 
-	# 4. Replace Soft Bodies
-	for i in range(soft_bodies.size()):
-		var old_body = soft_bodies[i]
-		var template = _soft_body_templates[i]
-		var parent = _soft_body_parents[old_body]
-		var original_local_trans = _soft_body_local_transforms[old_body]
+	# Soft bodies just don't really work with transforms well
+	# the best way to shift them turned out to be setting every single vertex manually.
+	# Transforming the soft body kept them transformed relative to the character/parent
+	# whether it was a global or local transform, which is not how transforms usually work.
+	#  https://github.com/godotengine/godot-proposals/issues/12698
+	#  https://github.com/godotengine/godot/issues/108090
+	for body in soft_bodies:
+		var m = body.mesh
 		
-		# Remove old body references
-		_soft_body_parents.erase(old_body)
-		_soft_body_local_transforms.erase(old_body)
-		old_body.queue_free()
+		var mdt = MeshDataTool.new()
+		var array_mesh = ArrayMesh.new()
 		
-		# Spawn fresh from template
-		var new_instance = template.duplicate()
-		parent.add_child(new_instance)
-		
-		# Snap to the exact local position it had in the editor
-		#new_instance.transform = original_local_trans
-		
-		
-		# Update tracking for the NEXT shift
-		soft_bodies[i] = new_instance
-		_soft_body_parents[new_instance] = parent
-		_soft_body_local_transforms[new_instance] = original_local_trans
+		if m is ArrayMesh:
+			array_mesh = m
+		else:
+			var st = SurfaceTool.new()
+			st.create_from(m, 0)
+			array_mesh = st.commit()
 
-	print("Origin shifted to Player. SoftBodies reset to editor local positions.")
+		mdt.create_from_surface(array_mesh, 0)
+		
+		for i in range(mdt.get_vertex_count()):
+			var v = mdt.get_vertex(i)
+			mdt.set_vertex(i, v - shift_vector)
+		
+		var new_mesh = ArrayMesh.new()
+		mdt.commit_to_surface(new_mesh)
+		
+		body.mesh = new_mesh
+		
+		# as far I can tell, this wasn't needed, because get_point_transform is local
+		# however, the max force limit on the limited_blob_body script and the single frame nature
+		# of this made it hard to tell. So I'm leaving the code in just indssssssssssss
+		#if body.has_method("reconcile_after_origin_shift"):
+		#	body.reconcile_after_origin_shift(-shift_vector)
+
+	print("Origin shifted. SoftBodies hard-reset via Mesh-Reassignment.")
 
 func _physics_process(_delta: float) -> void:
 	camera = get_viewport().get_camera_3d() 
 	
-	# Use the CharacterBody's distance for the threshold check for better stability
 	if camera and $CharacterBody3D.global_position.length() > threshold: 
-		print($CharacterBody3D.global_position)
 		shift_origin()

@@ -27,7 +27,14 @@ sky_material = SubResource("PanoramaSkyMaterial_5ag8f")
 background_mode = 2
 background_color = Color(0.6627451, 1, 1, 1)
 sky = SubResource("Sky_284mm")
-ambient_light_sky_contribution = 0.05
+ambient_light_source = 2
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_sky_contribution = 0.1
+ambient_light_energy = 0.75
+sdfgi_min_cell_size = 0.25
+fog_light_color = Color(0.426, 0.6721333, 0.71, 1)
+volumetric_fog_albedo = Color(0.42000002, 0.855, 1, 1)
+volumetric_fog_emission = Color(0.64, 0.64, 0.64, 1)
 
 [node name="JumpTestLvl" type="Node3D" node_paths=PackedStringArray("soft_bodies")]
 script = ExtResource("1_o623y")
@@ -36,6 +43,16 @@ soft_bodies = [NodePath("CharacterBody3D/SoftBody3D")]
 [node name="CharacterBody3D" parent="." node_paths=PackedStringArray("voxel_terrain") instance=ExtResource("2_opdde")]
 transform = Transform3D(-4.569558e-08, 0, 1, 0, 1, 0, -1, 0, -4.569558e-08, -32, 3, 8.000005)
 voxel_terrain = NodePath("../World/VoxelTerrain")
+
+[node name="LeftHandMesh" parent="CharacterBody3D" index="4" node_paths=PackedStringArray("held_item")]
+held_item = NodePath("delvoxitem")
+
+[node name="sunsetter" parent="CharacterBody3D" index="13" node_paths=PackedStringArray("sun", "world_env")]
+sun = NodePath("../../World/DirectionalLight3D")
+world_env = NodePath("../../WorldEnvironment")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="CharacterBody3D"]
+shadow_enabled = true
 
 [node name="World" type="Node3D" parent="."]
 
@@ -55,7 +72,6 @@ collision_layer = 3
 collision_mask = 3
 generator = SubResource("VoxelGeneratorNoise_7evmb")
 mesher = ExtResource("4_j2x63")
-gi_mode = 1
 cast_shadow = 2
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]

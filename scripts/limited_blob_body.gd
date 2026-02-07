@@ -56,9 +56,22 @@ func _ready() -> void:
 		deg_to_rad(offset_roll)
 	))
 
+# as far I can tell, this wasn't needed, because get_point_transform is local
+func reconcile_after_origin_shift(shift_vector: Vector3):
+	# Shift the history so velocity calculations don't explode
+	last_parent_pos -= shift_vector
+	for i in range(vertex_count):
+		last_positions[i] -= shift_vector
+	
+	# "Poke" the simulation to reset the internal 'simulation_started' flag
+	# This helps mitigate the 1-frame graphical glitch mentioned in the bug report
+	var old_precision = simulation_precision
+	simulation_precision = old_precision
+
 func _physics_process(delta: float) -> void:
 	if not follow_node or vertex_count == 0 or delta == 0:
 		return
+		
 
 	# Calculate Parent Velocity
 	var current_parent_pos = follow_node.global_position

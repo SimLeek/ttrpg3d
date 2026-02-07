@@ -150,11 +150,6 @@ secondary_item_trigger={
 3d/physics_engine="Jolt Physics"
 3d/default_gravity=30.0
 
-[rendering]
-
-renderer/rendering_method="gl_compatibility"
-renderer/rendering_method.mobile="gl_compatibility"
-
 [shader_globals]
 
 player_position={

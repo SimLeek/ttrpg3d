@@ -9,6 +9,7 @@ enum HandSide { LEFT, RIGHT }
 @export var ledge_grabber_path: NodePath
 @export var character_path: NodePath
 @export var lerp_speed: float = 20.0  # Higher = faster movement
+@export var held_item: BaseItem = null
 
 @export_group("Combat")
 @export var punch_damage: float = 1.01
@@ -17,7 +18,6 @@ enum HandSide { LEFT, RIGHT }
 @export var punch_radius: float = 0.3
 @export var hand_side_distance: float = .3
 
-var held_item: BaseItem = null
 var is_punching: bool = false
 var punch_timer: float = 0.0
 var punch_collider: Area3D = null
@@ -27,6 +27,7 @@ var character: CharacterBody3D
 var ledge_grabbed: bool = false
 var target_position: Vector3
 var is_lerping: bool = false
+var first_run_item_fix:bool =false
 
 func _ready() -> void:
 	ledge_grabber = get_node(ledge_grabber_path) as LedgeGrabber
@@ -37,6 +38,10 @@ func _ready() -> void:
 	visible = false
 	
 	_setup_punch_collider()
+	
+	if held_item:
+		first_run_item_fix = true
+	#	_setup_held_item()
 
 func _setup_punch_collider() -> void:
 	punch_collider = Area3D.new()
@@ -50,12 +55,18 @@ func _setup_punch_collider() -> void:
 	punch_collider.monitoring = false  # Off by default
 	punch_collider.monitorable = false
 
+func _setup_held_item() -> void:
+	if held_item and character:
+		held_item.set_character(character)
+		held_item.on_equipped()
+
 func equip_item(item: BaseItem) -> void:
 	if held_item:
 		unequip_item()
 	
 	held_item = item
 	if held_item:
+		_setup_held_item()
 		add_child(held_item)
 		held_item.on_equipped()
 
@@ -140,6 +151,10 @@ func _on_hand_positions_updated(left_pos: Vector3, right_pos: Vector3, center_po
 		#is_lerping = false
 
 func _process(delta: float) -> void:
+	if first_run_item_fix:
+		_setup_held_item()
+		first_run_item_fix = false
+	
 	if is_punching:
 		punch_timer -= delta
 		_check_punch_collision()

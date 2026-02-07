@@ -8,7 +8,6 @@ resource_name = "air"
 
 [sub_resource type="VoxelBlockyModelMesh" id="VoxelBlockyModelMesh_7h3nj"]
 mesh = ExtResource("2_bxrbp")
-color = Color(0.26864997, 0.45, 0.17099999, 1)
 collision_aabbs = Array[AABB]([AABB(0, 0, 0, 1, 1, 1)])
 material_override_0 = ExtResource("1_sybm1")
 collision_enabled_0 = true

@@ -1,6 +1,7 @@
-[gd_resource type="ShaderMaterial" load_steps=2 format=3 uid="uid://brnctogxnqgdq"]
+[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://brnctogxnqgdq"]
 
 [ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_full.gdshader" id="1_myddq"]
+[ext_resource type="Texture2D" uid="uid://cgmok5n72kity" path="res://3dAssets/blocks/16xdirt.png" id="2_w0gv5"]
 
 [resource]
 render_priority = 0
@@ -14,7 +15,8 @@ shader_parameter/floor_fade_start = 0.0
 shader_parameter/floor_fade_length = 0.25
 shader_parameter/alpha_min = 0.2
 shader_parameter/camera_min_dist = 0.5
-shader_parameter/albedo_color = Color(0.54362, 0.77, 0.44660002, 1)
+shader_parameter/albedo_texture = ExtResource("2_w0gv5")
+shader_parameter/albedo_color = Color(1, 1, 1, 1)
 shader_parameter/normal_scale = 1.0
 shader_parameter/roughness = 1.0
 shader_parameter/metallic = 0.0

@@ -3,19 +3,20 @@ extends SpringArm3D
 @export var mouse_sensitivity := 0.1
 @export var controller_sensitivity := 3.0
 @export var player_body: CharacterBody3D  # Link your player node here in the Inspector
-@export var min_length_percent = .25
+@export var min_length_percent = .1
 @export var cam: Camera3D
 
 @export_group("Zoom Settings")
 @export var zoom_speed := 0.5
 @export var min_zoom := 0.0
 @export var max_zoom := 8.0
+@export var first_person_zoom := 1.0
 @export var zoom_smoothness := 10.0 # Higher = faster snap
 
 var target_zoom: float = 5.0
 var push_dist: float = 0.0
 var final_dist: float = 0.0
-
+var is_first_person:bool=false
 func _ready():
 	# If not manually linked, try to find the parent CharacterBody3D
 	if not player_body:
@@ -54,7 +55,7 @@ func _unhandled_input(event):
 		rotation.x -= deg_to_rad(event.relative.y * mouse_sensitivity)
 
 		# 3. Clamp vertical rotation so you don't flip upside down
-		rotation.x = clamp(rotation.x, deg_to_rad(-70), deg_to_rad(30))
+		rotation.x = clamp(rotation.x, deg_to_rad(-89.9), deg_to_rad(89.9))
 	# 2. MOUSE SCROLL ZOOM
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
@@ -77,7 +78,7 @@ func _process(delta):
 	if input_dir.length() > 0:
 		player_body.rotate_y(deg_to_rad(-input_dir.x * controller_sensitivity))
 		rotation.x -= deg_to_rad(input_dir.y * controller_sensitivity)
-		rotation.x = clamp(rotation.x, deg_to_rad(-70), deg_to_rad(30))
+		rotation.x = clamp(rotation.x, deg_to_rad(-89.9), deg_to_rad(89.9))
 	# 3. SMOOTH THE ZOOM
 	# lerp ensures the camera doesn't "snap" instantly when scrolling
 	spring_length = lerp(spring_length, target_zoom, delta * zoom_smoothness)
@@ -92,3 +93,10 @@ func _process(delta):
 	final_dist = lerp(final_dist, current_collision_dist + push_dist, delta * zoom_smoothness)
 	cam.global_transform = global_transform
 	cam.position += cam.transform.basis.z * final_dist
+	if final_dist>first_person_zoom:
+		cam.look_at(player_body.global_position, Vector3.UP)
+		player_body.softy.visible = true
+		is_first_person = false
+	else:
+		player_body.softy.visible = false
+		is_first_person = true

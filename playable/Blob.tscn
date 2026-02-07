@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3 uid="uid://dpvhf7r5xwv5f"]
+[gd_scene load_steps=24 format=3 uid="uid://dpvhf7r5xwv5f"]
 
 [ext_resource type="Script" uid="uid://cj0edidy8wr2s" path="res://scripts/player_blob_ctrl.gd" id="1_s7uw5"]
 [ext_resource type="Script" uid="uid://bv2ykx5uveb27" path="res://playable/ledge_grabber.gd" id="2_5fh1f"]
@@ -8,6 +8,8 @@
 [ext_resource type="Material" uid="uid://cw1qq67igdks2" path="res://3dAssets/Purple_blob_tex.tres" id="4_s7uw5"]
 [ext_resource type="Script" uid="uid://b2d4h5lawqfjw" path="res://scripts/limited_blob_body.gd" id="5_yxels"]
 [ext_resource type="Script" uid="uid://vulk4qg1iarx" path="res://playable/left_hand_gripper.gd" id="7_5fh1f"]
+[ext_resource type="Script" uid="uid://3v27spw2neyt" path="res://scripts/items/del_vox_item.gd" id="8_ahmjc"]
+[ext_resource type="Script" uid="uid://b6j0rwkxnu2ol" path="res://scripts/items/voxelitem.gd" id="8_ekptx"]
 [ext_resource type="Theme" uid="uid://bebbfwk8f8b7r" path="res://menus/title_theme.tres" id="9_rrhcx"]
 [ext_resource type="Script" uid="uid://bq3mqhl51b0kk" path="res://playable/pause_menu.gd" id="9_yri3r"]
 [ext_resource type="Theme" uid="uid://ipsk780unxrm" path="res://menus/menu_button_theme.tres" id="10_yri3r"]
@@ -16,6 +18,7 @@
 [ext_resource type="Texture2D" uid="uid://bo016e0asqtb3" path="res://2dassets/hp_empty.png" id="14_jo7wf"]
 [ext_resource type="Texture2D" uid="uid://bui8sh57vg0j" path="res://2dassets/hp_full.png" id="15_ekptx"]
 [ext_resource type="Script" uid="uid://ro600jkcqukj" path="res://playable/health.gd" id="16_jo7wf"]
+[ext_resource type="Script" uid="uid://dc6qooqw53rnx" path="res://scripts/sunsetter.gd" id="19_07cqu"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -49,6 +52,8 @@ ledge_grab_key = "grab"
 debug_draw = true
 
 [node name="SpringArm3D" type="SpringArm3D" parent="." node_paths=PackedStringArray("cam")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.39999998, 0)
+collision_mask = 128
 shape = SubResource("SphereShape3D_jo7wf")
 spring_length = 5.0
 script = ExtResource("2_cnvq6")
@@ -81,7 +86,10 @@ script = ExtResource("7_5fh1f")
 ledge_grabber_path = NodePath("../LedgeGrabber")
 character_path = NodePath("..")
 
-[node name="RightHandMesh" type="MeshInstance3D" parent="."]
+[node name="delvoxitem" type="Node3D" parent="LeftHandMesh"]
+script = ExtResource("8_ahmjc")
+
+[node name="RightHandMesh" type="MeshInstance3D" parent="." node_paths=PackedStringArray("held_item")]
 mesh = SubResource("SphereMesh_htvlb")
 surface_material_override/0 = ExtResource("4_s7uw5")
 script = ExtResource("7_5fh1f")
@@ -89,6 +97,10 @@ hand_side = 1
 primary = true
 ledge_grabber_path = NodePath("../LedgeGrabber")
 character_path = NodePath("..")
+held_item = NodePath("voxitem")
+
+[node name="voxitem" type="Node3D" parent="RightHandMesh"]
+script = ExtResource("8_ekptx")
 
 [node name="StepCast" type="ShapeCast3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 0)
@@ -206,6 +218,9 @@ transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.965
 script = ExtResource("4_htvlb")
 player_node = NodePath("..")
 update_interval = 0.0
+
+[node name="sunsetter" type="Node3D" parent="."]
+script = ExtResource("19_07cqu")
 
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/continue" to="PauseMenu" method="_on_continue_pressed"]
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/config" to="PauseMenu" method="_on_config_pressed"]

@@ -14,23 +14,23 @@ uniform float floor_fade_length : hint_range(0.1, 5.0, 0.1) = 0.25;
 uniform float alpha_min : hint_range(0.1, 1.0, 0.1) = 0.2;
 uniform float camera_min_dist : hint_range(0.1, 10.0, 0.1) = 0.5;
 
-uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
+uniform sampler2D albedo_texture : source_color, filter_nearest_mipmap, repeat_enable;
 uniform vec4 albedo_color : source_color = vec4(1.0);
 
-uniform sampler2D normal_texture : hint_normal, filter_linear_mipmap, repeat_enable;
+uniform sampler2D normal_texture : hint_normal, filter_nearest_mipmap, repeat_enable;
 uniform float normal_scale : hint_range(-16, 16) = 1.0;
 
-uniform sampler2D roughness_texture : hint_roughness_g, filter_linear_mipmap, repeat_enable;
+uniform sampler2D roughness_texture : hint_roughness_g, filter_nearest_mipmap, repeat_enable;
 uniform float roughness : hint_range(0, 1) = 1.0;
 
-uniform sampler2D metallic_texture : hint_default_black, filter_linear_mipmap, repeat_enable;
+uniform sampler2D metallic_texture : hint_default_black, filter_nearest_mipmap, repeat_enable;
 uniform float metallic : hint_range(0, 1) = 0.0;
 
-uniform sampler2D rim_texture : hint_default_white, filter_linear_mipmap, repeat_enable;
+uniform sampler2D rim_texture : hint_default_white, filter_nearest_mipmap, repeat_enable;
 uniform float rim : hint_range(0, 1) = 0.0;
 uniform float rim_tint : hint_range(0, 1) = 0.5;
 
-uniform sampler2D emission_texture : hint_default_black, filter_linear_mipmap, repeat_enable;
+uniform sampler2D emission_texture : hint_default_black, filter_nearest_mipmap, repeat_enable;
 uniform vec3 emission : source_color = vec3(0.0);
 uniform float emission_energy_multiplier : hint_range(0.0, 16.0) = 1.0;
 

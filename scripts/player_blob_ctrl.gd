@@ -24,6 +24,8 @@ extends CharacterBody3D
 @onready var squeezer_node: Node3D = $SqueezerRays
 @onready var health_node: Node3D = $Health
 @onready var hud_node: CanvasLayer = $HUD
+@onready var spring_arm: SpringArm3D = $SpringArm3D
+
 #@onready var left_hand: HandController = $LeftHandMesh
 #@onready var right_hand: HandController = $RightHandMesh
 @onready var pause_menu_node: Node = $PauseMenu
@@ -135,14 +137,14 @@ func _physics_process(delta: float) -> void:
 		var true_position = global_position-voxel_terrain.global_position
 		#var check_pos = global_position
 		#var check_pos = global_transform.origin
-		var vox_num = vt.get_voxel(Vector3i(true_position.round()))
-		var vox_num2 = vt.get_voxel(Vector3i(true_position.round()+Vector3.UP))
-		var vox_num3 = vt.get_voxel(Vector3i(true_position.round()+Vector3.RIGHT))
-		var vox_num4 = vt.get_voxel(Vector3i(true_position.round()-Vector3.RIGHT))
+		var vox_num = vt.get_voxel(Vector3i(true_position.floor()))
+		#var vox_num2 = vt.get_voxel(Vector3i(true_position.round()+Vector3.UP))
+		#var vox_num3 = vt.get_voxel(Vector3i(true_position.round()+Vector3.RIGHT))
+		#var vox_num4 = vt.get_voxel(Vector3i(true_position.round()-Vector3.RIGHT))
 
 		#var hit = vt.raycast(check_pos, Vector3.UP, 10)
 		#print(hit)
-		if vox_num>=1 and vox_num2>=1 and vox_num3>=1 and vox_num4>=1: # list of solid block types here
+		if vox_num>=1: # list of solid block types here
 			print(Vector3i(true_position.round()))
 			print("under voxel")
 			#print(hit.position)
