@@ -9,9 +9,14 @@ signal item_used(pressure: float)
 @export var item_name: String = "Base Item"
 @export var can_use: bool = true
 
-## Shown via the ItemTooltip billboard (scripts/ui/item_tooltip.gd) when this
-## item is equipped, if non-empty. Subclasses with non-obvious controls (e.g.
-## structure save/place's P/G/R keys) should set this in set_character().
+## Control hint (e.g. structure save/place's P/G/R keys), set by
+## ItemCatalog.instantiate_item() from the catalog entry's "hint". Shown as
+## a 2D hover tooltip in the inventory menu (scripts/ui/player_inventory.gd)
+## -- not auto-shown on equip, since the item may be equipped while the
+## inventory itself is open, and a 3D world-space billboard (ItemTooltip,
+## scripts/ui/item_tooltip.gd) would render behind that 2D menu. ItemTooltip
+## is still around for a future "aim at a thing in the world" use case, just
+## not wired to equip.
 var tooltip_text: String = ""
 var tooltip_icon: Texture2D = null
 
@@ -52,10 +57,6 @@ func on_equipped() -> void:
 	visible = true
 	if item_hud:
 		item_hud.visible = true
-	if tooltip_text != "" and character:
-		var tooltip = character.get_tree().get_first_node_in_group("item_tooltip")
-		if tooltip:
-			tooltip.show_message(tooltip_text, tooltip_icon)
 
 ## Optional: Override for custom unequip behavior
 func on_unequipped() -> void:

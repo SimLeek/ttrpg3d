@@ -207,16 +207,26 @@ func _rebuild_hotbar_icons() -> void:
 		slot.add_theme_stylebox_override("panel", _slot_style(i == _selected_slot))
 		var icon: TextureRect = slot.get_node("Icon")
 		icon.texture = null
+		slot.tooltip_text = ""
 		if i < _hotbar_item_ids.size():
 			var entry = _find_item_entry(_hotbar_item_ids[i])
 			if entry:
 				icon.texture = entry.icon
+				slot.tooltip_text = _tooltip_text_for(entry)
 
 func _find_item_entry(id: String):
 	for entry in _items:
 		if entry.id == id:
 			return entry
 	return null
+
+## Native Control tooltip (built-in engine popup, positioned near the mouse
+## automatically on hover) -- name plus the item's control hint, if any.
+## Used for both hotbar slots and the full inventory grid so players can
+## see what a tool does / how to use it without equipping it first.
+func _tooltip_text_for(entry: Dictionary) -> String:
+	var hint: String = entry.get("hint", "")
+	return "%s\n%s" % [entry.name, hint] if hint != "" else entry.name
 
 func _show_selected_name() -> void:
 	var entry = _find_item_entry(_current_item_id())
@@ -283,7 +293,7 @@ func _rebuild_inventory_grid() -> void:
 	for entry in _items:
 		var slot := _make_slot_panel()
 		slot.mouse_filter = Control.MOUSE_FILTER_STOP
-		slot.tooltip_text = entry.name
+		slot.tooltip_text = _tooltip_text_for(entry)
 		slot.gui_input.connect(_on_inventory_slot_input.bind(entry.id))
 		var icon: TextureRect = slot.get_node("Icon")
 		icon.texture = entry.icon

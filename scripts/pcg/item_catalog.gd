@@ -9,6 +9,11 @@ class_name ItemCatalog
 ## Each entry's item_script is instantiated fresh and set on a plain Node3D
 ## when equipped -- matching how items are already defined in Blob.tscn
 ## (bare Node3D + script, no dedicated mesh).
+##
+## Each entry's optional "hint" is the single source of truth for that
+## item's control hint -- shown both in the 2D inventory hover tooltip
+## (scripts/ui/player_inventory.gd) and, on equip, via the in-world
+## ItemTooltip billboard (BaseItem.tooltip_text, set by instantiate_item()).
 
 const BLOCK_PLACER_SCRIPT := preload("res://scripts/items/voxelitem.gd")
 const STRUCTURE_SAVER_SCRIPT := preload("res://scripts/items/structure_saver_item.gd")
@@ -24,6 +29,7 @@ static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary
 			"name": block.name,
 			"icon": block.icon,
 			"item_script": BLOCK_PLACER_SCRIPT,
+			"hint": "Click to place",
 		})
 	# Tools are appended after blocks so existing default hotbar slots keep
 	# their familiar block ordering; the tools just land in the slots after.
@@ -41,6 +47,7 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Structure Saver",
 			"icon": _solid_icon(Color(0.2, 0.8, 0.8)),
 			"item_script": STRUCTURE_SAVER_SCRIPT,
+			"hint": "Click: set corner A, then B\nP: set pivot  |  G: save",
 		},
 		{
 			"kind": "tool",
@@ -48,6 +55,7 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Structure Placer",
 			"icon": _solid_icon(Color(0.7, 0.3, 0.9)),
 			"item_script": STRUCTURE_PLACER_SCRIPT,
+			"hint": "Click: place structure\nR: cycle structures",
 		},
 	]
 
@@ -64,4 +72,5 @@ static func instantiate_item(entry: Dictionary) -> Node3D:
 	instance.set_script(entry.item_script)
 	if entry.kind == "block":
 		instance.voxel_id = entry.voxel_id
+	instance.tooltip_text = entry.get("hint", "")
 	return instance

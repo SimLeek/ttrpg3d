@@ -22,7 +22,6 @@ var _structures: Array[SavedVoxelStructure] = []
 var _selected_index: int = 0
 
 func set_character(chara: CharacterBody3D) -> void:
-	tooltip_text = "[b]Structure Placer[/b]\nClick: place structure  |  R: cycle structures"
 	super.set_character(chara)
 	if not voxel_interactor: voxel_interactor = VoxelInteractor.new()
 	voxel_interactor.setup(chara)

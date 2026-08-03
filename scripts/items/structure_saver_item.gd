@@ -29,7 +29,6 @@ var _pivot: Vector3i = Vector3i.ZERO
 var _has_pivot: bool = false
 
 func set_character(chara: CharacterBody3D) -> void:
-	tooltip_text = "[b]Structure Saver[/b]\nClick: set corner A, then B  |  P: set pivot  |  G: save"
 	super.set_character(chara)
 	if not voxel_interactor: voxel_interactor = VoxelInteractor.new()
 	voxel_interactor.setup(chara)
