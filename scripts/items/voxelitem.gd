@@ -8,8 +8,12 @@ class_name VoxelPlacerItem
 
 @export var voxel_interactor: VoxelInteractor
 
-## The active block type comes from the VoxelHotbar UI (scripts/ui/voxel_hotbar.gd),
-## found via the "voxel_hotbar" group -- see that script for selection/cycling input.
+## Which block type this placer instance places. One VoxelPlacerItem is
+## instantiated per block inventory item (see scripts/pcg/item_catalog.gd),
+## configured with this right after instantiate() -- it isn't queried
+## from a shared selector, so several placers with different ids could
+## exist (or be equipped) independently.
+@export var voxel_id: int = VoxelTypes.DIRT
 
 func set_character(chara: CharacterBody3D) -> void:
 	super.set_character(chara)
@@ -34,8 +38,6 @@ func use_item(pressure: float) -> void:
 	if placement_pos == null:
 		return
 
-	var hotbar = get_tree().get_first_node_in_group("voxel_hotbar")
-	var voxel_id: int = hotbar.get_selected_voxel_id() if hotbar else VoxelTypes.DIRT
 	voxel_interactor._terrain_tool.set_voxel(placement_pos, voxel_id)
 
 

@@ -74,6 +74,7 @@ func unequip_item() -> void:
 	if held_item:
 		held_item.on_unequipped()
 		remove_child(held_item)
+		held_item.queue_free()
 		held_item = null
 
 func use_hand(pressure: float) -> void:
