@@ -4,22 +4,18 @@ class_name ItemCatalog
 ## Everything that can occupy an inventory/hotbar slot -- items, not just
 ## blocks. A block is one *kind* of item (kind == "block"): picking it up
 ## equips a generic VoxelPlacerItem configured to place that voxel id.
-## Non-block tools (deleting, structure save/place, eventually weapons)
-## are kind == "tool": equipping just instantiates their item_script as-is.
+## Non-block tools (structure save/place, eventually weapons) are
+## kind == "tool": equipping just instantiates their item_script as-is.
 ## Each entry's item_script is instantiated fresh and set on a plain Node3D
 ## when equipped -- matching how items are already defined in Blob.tscn
 ## (bare Node3D + script, no dedicated mesh).
 
 const BLOCK_PLACER_SCRIPT := preload("res://scripts/items/voxelitem.gd")
-
-## Fixed non-block tools available from the inventory, beyond whatever
-## blocks the voxel library currently defines. Add new tools here as they
-## are built (e.g. a structure saver/placer).
-const TOOL_ITEMS: Array[Dictionary] = []
+const STRUCTURE_SAVER_SCRIPT := preload("res://scripts/items/structure_saver_item.gd")
+const STRUCTURE_PLACER_SCRIPT := preload("res://scripts/items/structure_placer_item.gd")
 
 static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary]:
 	var items: Array[Dictionary] = []
-	items.append_array(TOOL_ITEMS)
 	for block in VoxelCatalog.get_placeable_voxels(library):
 		items.append({
 			"kind": "block",
@@ -29,7 +25,37 @@ static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary
 			"icon": block.icon,
 			"item_script": BLOCK_PLACER_SCRIPT,
 		})
+	# Tools are appended after blocks so existing default hotbar slots keep
+	# their familiar block ordering; the tools just land in the slots after.
+	items.append_array(_tool_items())
 	return items
+
+## Fixed non-block tools available from the inventory, beyond whatever
+## blocks the voxel library currently defines. Add new tools here as
+## they're built.
+static func _tool_items() -> Array[Dictionary]:
+	return [
+		{
+			"kind": "tool",
+			"id": "tool_structure_saver",
+			"name": "Structure Saver",
+			"icon": _solid_icon(Color(0.2, 0.8, 0.8)),
+			"item_script": STRUCTURE_SAVER_SCRIPT,
+		},
+		{
+			"kind": "tool",
+			"id": "tool_structure_placer",
+			"name": "Structure Placer",
+			"icon": _solid_icon(Color(0.7, 0.3, 0.9)),
+			"item_script": STRUCTURE_PLACER_SCRIPT,
+		},
+	]
+
+## Flat-color placeholder icon for tools that don't have real art yet.
+static func _solid_icon(color: Color) -> ImageTexture:
+	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	img.fill(color)
+	return ImageTexture.create_from_image(img)
 
 ## Instantiates a fresh item node for the given catalog entry, ready to
 ## hand to HandController.equip_item().
