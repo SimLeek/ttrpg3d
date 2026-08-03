@@ -21,6 +21,7 @@
 [ext_resource type="Texture2D" uid="uid://bui8sh57vg0j" path="res://2dassets/hp_full.png" id="15_ekptx"]
 [ext_resource type="Script" uid="uid://ro600jkcqukj" path="res://playable/health.gd" id="16_jo7wf"]
 [ext_resource type="Script" uid="uid://dc6qooqw53rnx" path="res://scripts/sunsetter.gd" id="19_07cqu"]
+[ext_resource type="Script" path="res://scripts/ui/voxel_hotbar.gd" id="20_hotbar"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -183,12 +184,11 @@ text = "Exit Game"
 [node name="SqueezerRays" type="Node3D" parent="." unique_id=1391777936]
 script = ExtResource("12_dk5x5")
 
-[node name="HUD" type="CanvasLayer" parent="." unique_id=1279686888 node_paths=PackedStringArray("health_bar", "stamina_bar", "selected_voxel_label")]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1279686888 node_paths=PackedStringArray("health_bar", "stamina_bar")]
 process_mode = 3
 script = ExtResource("13_832iv")
 health_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/hp_bar")
 stamina_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/stamina_bar")
-selected_voxel_label = NodePath("Control/MarginContainer/GridContainer/SelectedVoxelLabel")
 
 [node name="Control" type="Control" parent="HUD" unique_id=276612319]
 layout_mode = 3
@@ -226,9 +226,14 @@ tint_under = Color(0.5833334, 1, 0, 1)
 tint_over = Color(0.5833334, 1, 0, 1)
 tint_progress = Color(0.58431375, 1, 0, 1)
 
-[node name="SelectedVoxelLabel" type="Label" parent="HUD/Control/MarginContainer/GridContainer" unique_id=2088711642]
-layout_mode = 2
-text = "Block: Dirt"
+[node name="VoxelHotbar" type="Control" parent="HUD/Control" unique_id=2088711642]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("20_hotbar")
 
 [node name="Health" type="Node3D" parent="." unique_id=1745098184]
 script = ExtResource("16_jo7wf")

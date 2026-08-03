@@ -2,7 +2,6 @@ extends CanvasLayer
 
 @export var health_bar: TextureProgressBar
 @export var stamina_bar: TextureProgressBar
-@export var selected_voxel_label: Label
 
 func _ready() -> void:
 	visible = true  # don't start paused while being able to move
@@ -14,7 +13,3 @@ func update_health_ui(current: float, max_hp: float) -> void:
 func update_stamina_ui(current: float, max_hp: float) -> void:
 	# This converts the 0.0-1.0 range to a 0-100 percentage
 	stamina_bar.value = (current / max_hp) * 100.0
-
-func update_selected_voxel_ui(vox_name: String) -> void:
-	if selected_voxel_label:
-		selected_voxel_label.text = "Block: %s" % vox_name

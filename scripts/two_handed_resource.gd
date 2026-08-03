@@ -9,7 +9,12 @@ var right_hand: HandController
 func handle_immediate_input(event):
 	if not left_hand or not right_hand:
 		push_error("Assign the hands in the _ready function of the script that uses this.")
-	
+
+	# Mouse is only released for UI (pause menu, voxel inventory); while it's
+	# visible, clicks are for that UI, not for using the held item.
+	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
+		return
+
 	if event.is_action_pressed("primary_item_click"):
 		print("prim")
 		handle_primary_hand_input(1.0)
@@ -20,6 +25,8 @@ func handle_immediate_input(event):
 func handle_physics_process_input():
 	if not left_hand or not right_hand:
 		push_error("Assign the hands in the _ready function of the script that uses this.")
+	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
+		return
 	var right_trigger = Input.get_action_strength("primary_item_trigger")  # Primary hand
 	var left_trigger = Input.get_action_strength("secondary_item_trigger")    # Non-primary hand
 	
