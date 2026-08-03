@@ -9,6 +9,12 @@ signal item_used(pressure: float)
 @export var item_name: String = "Base Item"
 @export var can_use: bool = true
 
+## Shown via the ItemTooltip billboard (scripts/ui/item_tooltip.gd) when this
+## item is equipped, if non-empty. Subclasses with non-obvious controls (e.g.
+## structure save/place's P/G/R keys) should set this in set_character().
+var tooltip_text: String = ""
+var tooltip_icon: Texture2D = null
+
 var character: CharacterBody3D = null
 ## Reference to any HUD elements this item should show/hide
 var item_hud: Control = null
@@ -46,6 +52,10 @@ func on_equipped() -> void:
 	visible = true
 	if item_hud:
 		item_hud.visible = true
+	if tooltip_text != "" and character:
+		var tooltip = character.get_tree().get_first_node_in_group("item_tooltip")
+		if tooltip:
+			tooltip.show_message(tooltip_text, tooltip_icon)
 
 ## Optional: Override for custom unequip behavior
 func on_unequipped() -> void:
