@@ -1,0 +1,6 @@
+[gd_resource type="VoxelGeneratorScript" load_steps=2 format=3 uid="uid://bxs0q1ng6xo38"]
+
+[ext_resource type="Script" uid="uid://blvkw6o0ml6ae" path="res://scripts/pcg/generator_main.gd" id="1_vieso"]
+
+[resource]
+script = ExtResource("1_vieso")

@@ -1,5 +1,9 @@
 shader_type spatial;
 render_mode blend_mix, depth_prepass_alpha, cull_disabled;
+//render_mode depth_draw_always, cull_disabled;
+//render_mode blend_mix, depth_draw_always, cull_disabled;
+//render_mode alpha_to_coverage, depth_prepass_alpha, cull_disabled;
+//render_mode depth_draw_always, cull_disabled, alpha_to_coverage;
 
 global uniform vec3 player_position;
 global uniform vec3 camera_position;
@@ -11,7 +15,7 @@ uniform float forward_pow : hint_range(0.01, 100.0, 0.05) = 0.05;
 uniform float cone_extra : hint_range(0.01, 100.0, 0.05) = 1;
 uniform float floor_fade_start : hint_range(-2.0, 2.0, 0.01) = 0.0;
 uniform float floor_fade_length : hint_range(0.1, 5.0, 0.1) = 0.25;
-uniform float alpha_min : hint_range(0.1, 1.0, 0.1) = 0.2;
+uniform float alpha_min : hint_range(0.1, 1.0, 0.1) = 0.0;
 uniform float camera_min_dist : hint_range(0.1, 10.0, 0.1) = 0.5;
 
 uniform sampler2D albedo_texture : source_color, filter_nearest_mipmap, repeat_enable;
@@ -35,9 +39,11 @@ uniform vec3 emission : source_color = vec3(0.0);
 uniform float emission_energy_multiplier : hint_range(0.0, 16.0) = 1.0;
 
 varying vec3 frag_world_pos;
+varying float instance_id_f;
 
 void vertex() {
     frag_world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+    instance_id_f = float(INSTANCE_ID);
 }
 
 void fragment() {
@@ -68,6 +74,7 @@ void fragment() {
     float t = dot(frag_world_pos - player_position, dir);
 
     ALPHA = albedo_tex.a * albedo_color.a;
+	float alpha_original = ALPHA;
     vec3 closest = player_position + t * dir;
     float perp_dist = length(frag_world_pos - closest);
 	float del_extra = 0.0;
@@ -90,6 +97,27 @@ void fragment() {
 	}
 	ALPHA += vertical_mask;
 
-	ALPHA = min(max(ALPHA, alpha_min), 1.0);
+	ALPHA = min(max(ALPHA, alpha_min), alpha_original);
 	}
+	if (ALPHA<alpha_original){//&& ALPHA> alpha_min){
+		ALPHA = 0.0;
+	}
+
+	/*if (ALPHA> (alpha_min+alpha_original)/2.0){
+		ALPHA = 1.0;
+	}else{
+		ALPHA = 0.0;
+	}*/
+
+	// 1. Transform world position back to clip space
+    /*vec4 clip_pos = PROJECTION_MATRIX * VIEW_MATRIX * vec4(frag_world_pos, 1.0);
+    float base_depth = clip_pos.z / clip_pos.w;
+
+    // 2. Apply the Bias
+    // Subtracting pulls the pixel closer to the camera.
+    // We use 't' so the depth bias follows your cutout gradient.
+    // We use 'INSTANCE_ID' to ensure Instance A and Instance B NEVER have the same depth.
+    float bias = (t * 1e-7) + (float(instance_id_f) * 1e-8);
+
+    DEPTH = base_depth - bias;*/
 }

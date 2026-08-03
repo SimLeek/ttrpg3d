@@ -10,11 +10,19 @@ class_name WallJumperResource
 @export var wall_slide_speed: float = 4.0
 @export var wall_slide_angle_tolerance: float = 45.0
 
+## 0.0 is pure side, 1.0 is pure forward/back. 
+## 0.7 allows for roughly 45 degrees of "sideways-ness".
+@export var side_jump_threshold: float = 0.7
+
 var jump_requested:bool = false
 
 func apply_jump(vel_xyz:Vector3, body: CharacterBody3D, is_grounded: bool) -> Vector3:
 	if jump_requested and body.is_on_wall() and not is_grounded:
 		var wall_normal = body.get_wall_normal()
+		var forward = -body.global_transform.basis.z
+		var alignment = abs(forward.dot(wall_normal))
+		if alignment > side_jump_threshold:
+			return vel_xyz
 		var kick_strength = abs(wall_jump_velocity) * wall_kick_strength_multiplier
 		print("wall vel xyz modding")
 		print(vel_xyz)

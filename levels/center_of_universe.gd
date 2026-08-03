@@ -1,6 +1,6 @@
 extends Node3D
 
-@export var threshold: float = 512 # detected soft body numerical instability past here
+@export var threshold: float = 128 # detected soft body numerical instability past here
 @export var soft_bodies: Array[SoftBody3D] = []
 
 var _soft_body_templates: Array[SoftBody3D] = []
@@ -67,6 +67,8 @@ func shift_origin() -> void:
 
 func _physics_process(_delta: float) -> void:
 	camera = get_viewport().get_camera_3d() 
-	
 	if camera and $CharacterBody3D.global_position.length() > threshold: 
+		#$WorldEnvironment.environment.sdfgi_enabled = false
 		shift_origin()
+		#await get_tree().process_frame
+		#$WorldEnvironment.environment.sdfgi_enabled = true

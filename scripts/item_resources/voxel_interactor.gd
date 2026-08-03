@@ -112,6 +112,10 @@ func update_target(character: CharacterBody3D) -> void:
 		_has_valid_target = true
 		_hit_voxel_id = _terrain_tool.get_voxel(hit.position)
 		_hit_metadata = _terrain_tool.get_voxel_metadata(hit.position)
+		# this test was because things weren't getting hit
+		# The solution was that you need to set collision AABBs on voxel items, NOT normal collisions.
+		# keep this note here to save hours of work for anyone else looking here
+		#print("hit %d" % _hit_voxel_id)
 		var diff: Vector3 = hit.position - hit.previous_position
 		_hit_normal = _calculate_hit_normal(diff)
 		_hit_snapped_position = _snap_to_grid(hit.position)

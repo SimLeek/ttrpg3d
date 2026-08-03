@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3 uid="uid://dpvhf7r5xwv5f"]
+[gd_scene format=3 uid="uid://dpvhf7r5xwv5f"]
 
 [ext_resource type="Script" uid="uid://cj0edidy8wr2s" path="res://scripts/player_blob_ctrl.gd" id="1_s7uw5"]
 [ext_resource type="Script" uid="uid://bv2ykx5uveb27" path="res://playable/ledge_grabber.gd" id="2_5fh1f"]
@@ -6,7 +6,9 @@
 [ext_resource type="ArrayMesh" uid="uid://cyp3nk03i7m0v" path="res://3dAssets/slime_ico.obj" id="3_5fh1f"]
 [ext_resource type="Script" uid="uid://bj5wq45bq3he1" path="res://playable/player_camera_with_cutout.gd" id="4_htvlb"]
 [ext_resource type="Material" uid="uid://cw1qq67igdks2" path="res://3dAssets/Purple_blob_tex.tres" id="4_s7uw5"]
+[ext_resource type="Shader" uid="uid://btuwlkronc0nd" path="res://3dAssets/shaders/panini_full.gdshader" id="5_rhn68"]
 [ext_resource type="Script" uid="uid://b2d4h5lawqfjw" path="res://scripts/limited_blob_body.gd" id="5_yxels"]
+[ext_resource type="Texture2D" uid="uid://bsbrddvma5q7e" path="res://3dAssets/Razel_purps.png" id="6_3wje3"]
 [ext_resource type="Script" uid="uid://vulk4qg1iarx" path="res://playable/left_hand_gripper.gd" id="7_5fh1f"]
 [ext_resource type="Script" uid="uid://3v27spw2neyt" path="res://scripts/items/del_vox_item.gd" id="8_ahmjc"]
 [ext_resource type="Script" uid="uid://b6j0rwkxnu2ol" path="res://scripts/items/voxelitem.gd" id="8_ekptx"]
@@ -27,6 +29,21 @@ height = 0.51
 [sub_resource type="SphereShape3D" id="SphereShape3D_jo7wf"]
 radius = 0.125
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_jjan2"]
+render_priority = 0
+shader = ExtResource("5_rhn68")
+shader_parameter/panini_d = 0.5
+shader_parameter/panini_s = 0.0
+shader_parameter/albedo_color = Color(1, 0.32156864, 0.80784315, 0.9137255)
+shader_parameter/albedo_texture = ExtResource("6_3wje3")
+shader_parameter/normal_scale = 1.0
+shader_parameter/roughness = 0.750000035625
+shader_parameter/metallic = 0.0
+shader_parameter/rim = 0.50000002375
+shader_parameter/rim_tint = 0.450000021375
+shader_parameter/emission = Color(0, 0, 0, 1)
+shader_parameter/emission_energy_multiplier = 1.0
+
 [sub_resource type="SphereMesh" id="SphereMesh_htvlb"]
 radius = 0.15
 height = 0.3
@@ -37,21 +54,21 @@ rings = 6
 height = 0.01
 radius = 0.25
 
-[node name="CharacterBody3D" type="CharacterBody3D" groups=["player"]]
+[node name="CharacterBody3D" type="CharacterBody3D" unique_id=1546376916 groups=["player"]]
 floor_snap_length = 0.0
 script = ExtResource("1_s7uw5")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1760892086]
 shape = SubResource("CapsuleShape3D_f14xy")
 
-[node name="LedgeGrabber" type="Node3D" parent="."]
+[node name="LedgeGrabber" type="Node3D" parent="." unique_id=741153770]
 script = ExtResource("2_5fh1f")
 ray_length = 1.0
 rest_length = 0.5
 ledge_grab_key = "grab"
 debug_draw = true
 
-[node name="SpringArm3D" type="SpringArm3D" parent="." node_paths=PackedStringArray("cam")]
+[node name="SpringArm3D" type="SpringArm3D" parent="." unique_id=1123349586 node_paths=PackedStringArray("cam")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.39999998, 0)
 collision_mask = 128
 shape = SubResource("SphereShape3D_jo7wf")
@@ -59,10 +76,10 @@ spring_length = 5.0
 script = ExtResource("2_cnvq6")
 cam = NodePath("../Camera3D")
 
-[node name="SoftBody3D" type="SoftBody3D" parent="." node_paths=PackedStringArray("follow_node")]
+[node name="SoftBody3D" type="SoftBody3D" parent="." unique_id=845864691 node_paths=PackedStringArray("follow_node")]
 transform = Transform3D(-4.371139e-08, 0, -1, 0, 1, 0, 1, 0, -4.371139e-08, 0, 0, 0)
 mesh = ExtResource("3_5fh1f")
-surface_material_override/0 = ExtResource("4_s7uw5")
+surface_material_override/0 = SubResource("ShaderMaterial_jjan2")
 collision_layer = 2
 collision_mask = 2
 parent_collision_ignore = NodePath("..")
@@ -79,17 +96,17 @@ velocity_match_multiplier = 0.25
 follow_node = NodePath("..")
 offset_yaw = -90.0
 
-[node name="LeftHandMesh" type="MeshInstance3D" parent="."]
+[node name="LeftHandMesh" type="MeshInstance3D" parent="." unique_id=1952010508]
 mesh = SubResource("SphereMesh_htvlb")
 surface_material_override/0 = ExtResource("4_s7uw5")
 script = ExtResource("7_5fh1f")
 ledge_grabber_path = NodePath("../LedgeGrabber")
 character_path = NodePath("..")
 
-[node name="delvoxitem" type="Node3D" parent="LeftHandMesh"]
+[node name="delvoxitem" type="Node3D" parent="LeftHandMesh" unique_id=1147805261]
 script = ExtResource("8_ahmjc")
 
-[node name="RightHandMesh" type="MeshInstance3D" parent="." node_paths=PackedStringArray("held_item")]
+[node name="RightHandMesh" type="MeshInstance3D" parent="." unique_id=1725637282 node_paths=PackedStringArray("held_item")]
 mesh = SubResource("SphereMesh_htvlb")
 surface_material_override/0 = ExtResource("4_s7uw5")
 script = ExtResource("7_5fh1f")
@@ -99,98 +116,99 @@ ledge_grabber_path = NodePath("../LedgeGrabber")
 character_path = NodePath("..")
 held_item = NodePath("voxitem")
 
-[node name="voxitem" type="Node3D" parent="RightHandMesh"]
+[node name="voxitem" type="Node3D" parent="RightHandMesh" unique_id=424896827]
 script = ExtResource("8_ekptx")
 
-[node name="StepCast" type="ShapeCast3D" parent="."]
+[node name="StepCast" type="ShapeCast3D" parent="." unique_id=384673703]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.025, 0)
 shape = SubResource("CylinderShape3D_htvlb")
 target_position = Vector3(0, -0.25, 0)
 
-[node name="PauseMenu" type="CanvasLayer" parent="." node_paths=PackedStringArray("hud")]
+[node name="PauseMenu" type="CanvasLayer" parent="." unique_id=324732181 node_paths=PackedStringArray("hud")]
 process_mode = 3
 script = ExtResource("9_yri3r")
 hud = NodePath("../HUD")
 
-[node name="Control" type="Control" parent="PauseMenu"]
+[node name="Control" type="Control" parent="PauseMenu" unique_id=687523008]
 layout_mode = 3
 anchors_preset = 0
 offset_right = 1150.0
 offset_bottom = 650.0
 
-[node name="MarginContainer" type="MarginContainer" parent="PauseMenu/Control"]
+[node name="MarginContainer" type="MarginContainer" parent="PauseMenu/Control" unique_id=2119203637]
 layout_mode = 0
 offset_right = 1150.0
 offset_bottom = 650.0
 
-[node name="ColorRect" type="ColorRect" parent="PauseMenu/Control/MarginContainer"]
+[node name="ColorRect" type="ColorRect" parent="PauseMenu/Control/MarginContainer" unique_id=92443387]
 layout_mode = 2
 color = Color(0.28485027, 0.28485027, 0.28485027, 0.5019608)
 
-[node name="VBoxContainer" type="VBoxContainer" parent="PauseMenu/Control/MarginContainer"]
+[node name="VBoxContainer" type="VBoxContainer" parent="PauseMenu/Control/MarginContainer" unique_id=308101727]
 layout_mode = 2
 theme_override_constants/separation = 42
 
-[node name="Label" type="Label" parent="PauseMenu/Control/MarginContainer/VBoxContainer"]
+[node name="Label" type="Label" parent="PauseMenu/Control/MarginContainer/VBoxContainer" unique_id=406007862]
 layout_mode = 2
 theme = ExtResource("9_rrhcx")
 text = "Pause"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="continue" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer"]
+[node name="continue" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer" unique_id=1137604579]
 layout_mode = 2
 theme = ExtResource("10_yri3r")
 text = "Continue"
 
-[node name="config" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer"]
+[node name="config" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer" unique_id=1212219706]
 layout_mode = 2
 theme = ExtResource("10_yri3r")
 text = "Config"
 
-[node name="respawn" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer"]
+[node name="respawn" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer" unique_id=20965102]
 layout_mode = 2
 theme = ExtResource("10_yri3r")
 text = "Respawn"
 
-[node name="main menu" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer"]
+[node name="main menu" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer" unique_id=563471114]
 layout_mode = 2
 theme = ExtResource("10_yri3r")
 text = "Main Menu"
 
-[node name="exit" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer"]
+[node name="exit" type="Button" parent="PauseMenu/Control/MarginContainer/VBoxContainer" unique_id=1478033963]
 layout_mode = 2
 theme = ExtResource("10_yri3r")
 text = "Exit Game"
 
-[node name="SqueezerRays" type="Node3D" parent="."]
+[node name="SqueezerRays" type="Node3D" parent="." unique_id=1391777936]
 script = ExtResource("12_dk5x5")
 
-[node name="HUD" type="CanvasLayer" parent="." node_paths=PackedStringArray("health_bar", "stamina_bar")]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1279686888 node_paths=PackedStringArray("health_bar", "stamina_bar", "selected_voxel_label")]
 process_mode = 3
 script = ExtResource("13_832iv")
 health_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/hp_bar")
 stamina_bar = NodePath("Control/MarginContainer/GridContainer/GridContainer/stamina_bar")
+selected_voxel_label = NodePath("Control/MarginContainer/GridContainer/SelectedVoxelLabel")
 
-[node name="Control" type="Control" parent="HUD"]
+[node name="Control" type="Control" parent="HUD" unique_id=276612319]
 layout_mode = 3
 anchors_preset = 0
 offset_right = 1150.0
 offset_bottom = 650.0
 mouse_filter = 2
 
-[node name="MarginContainer" type="MarginContainer" parent="HUD/Control"]
+[node name="MarginContainer" type="MarginContainer" parent="HUD/Control" unique_id=980770552]
 layout_mode = 0
 offset_right = 1150.0
 offset_bottom = 650.0
 
-[node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer"]
+[node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer" unique_id=1663633573]
 layout_mode = 2
 
-[node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer/GridContainer"]
+[node name="GridContainer" type="GridContainer" parent="HUD/Control/MarginContainer/GridContainer" unique_id=713212571]
 layout_mode = 2
 
-[node name="hp_bar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer"]
+[node name="hp_bar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer" unique_id=815941985]
 layout_mode = 2
 value = 100.0
 texture_under = ExtResource("14_jo7wf")
@@ -199,7 +217,7 @@ tint_under = Color(1, 0, 0, 1)
 tint_over = Color(1, 0, 0, 1)
 tint_progress = Color(1, 0, 0, 1)
 
-[node name="stamina_bar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer"]
+[node name="stamina_bar" type="TextureProgressBar" parent="HUD/Control/MarginContainer/GridContainer/GridContainer" unique_id=1411070353]
 layout_mode = 2
 value = 100.0
 texture_under = ExtResource("14_jo7wf")
@@ -208,18 +226,23 @@ tint_under = Color(0.5833334, 1, 0, 1)
 tint_over = Color(0.5833334, 1, 0, 1)
 tint_progress = Color(0.58431375, 1, 0, 1)
 
-[node name="Health" type="Node3D" parent="."]
+[node name="SelectedVoxelLabel" type="Label" parent="HUD/Control/MarginContainer/GridContainer" unique_id=2088711642]
+layout_mode = 2
+text = "Block: Dirt"
+
+[node name="Health" type="Node3D" parent="." unique_id=1745098184]
 script = ExtResource("16_jo7wf")
 
-[node name="VoxelViewer" type="VoxelViewer" parent="."]
+[node name="VoxelViewer" type="VoxelViewer" parent="." unique_id=397434329]
 
-[node name="Camera3D" type="Camera3D" parent="." node_paths=PackedStringArray("player_node")]
+[node name="Camera3D" type="Camera3D" parent="." unique_id=689298130 node_paths=PackedStringArray("player_node")]
 transform = Transform3D(1, 0, 0, 0, 0.9659259, 0.25881907, 0, -0.25881907, 0.9659258, 0, 0, 0)
+fov = 120.0
 script = ExtResource("4_htvlb")
 player_node = NodePath("..")
 update_interval = 0.0
 
-[node name="sunsetter" type="Node3D" parent="."]
+[node name="sunsetter" type="Node3D" parent="." unique_id=964712856]
 script = ExtResource("19_07cqu")
 
 [connection signal="pressed" from="PauseMenu/Control/MarginContainer/VBoxContainer/continue" to="PauseMenu" method="_on_continue_pressed"]

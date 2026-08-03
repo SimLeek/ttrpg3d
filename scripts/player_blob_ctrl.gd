@@ -31,13 +31,14 @@ extends CharacterBody3D
 @onready var pause_menu_node: Node = $PauseMenu
 
 var can_be_seen: bool = true  # For enemy AI detection
-var vt: VoxelToolTerrain
+var vt: VoxelTool
 #var stuck_timer: float = 0.0
 var last_safe_pos: Vector3
 
 const check_time:float = 1.0
 var check_timer:float = 0.0
-
+var stuck_count:int = 0
+var _is_on_voxel_floor: bool = false
 func _ready() -> void:
 	# Initialize resources if not assigned
 	if not mover: mover = MoverResource.new()
@@ -58,6 +59,7 @@ func _ready() -> void:
 	if voxel_terrain:
 		vt = voxel_terrain.get_voxel_tool()
 		vt.channel = VoxelBuffer.CHANNEL_TYPE
+		#voxel_terrain.full_load_mode_enabled = true
 	if voxel_terrain:
 		var true_position = global_position-voxel_terrain.global_position
 		last_safe_pos = true_position
@@ -78,7 +80,7 @@ func _physics_process(delta: float) -> void:
 	gv_xyz = mover.handle_physics_process_input(input_dir, is_slow,is_sprint, gv_xyz, delta, transform)
 
 	var friction: float = SPEED_DECAY_GROUND
-	var should_fall: bool = not is_on_floor() and not (ledge_grabber_node and ledge_grabber_node.is_grabbing_ledge)
+	var should_fall: bool = not (is_on_floor() or _is_on_voxel_floor) and not (ledge_grabber_node and ledge_grabber_node.is_grabbing_ledge)
 	if should_fall:
 		friction = SPEED_DECAY_AIR
 
@@ -128,39 +130,73 @@ func _physics_process(delta: float) -> void:
 	if hud_node:
 		hud_node.update_stamina_ui(mover.sprint_time_limit-mover.sprint_elapsed, mover.sprint_time_limit)
 
-	move_and_slide()
-	
-	var is_stuck = false
-	check_timer += delta
-	# the voxels are threaded, so do this rarely
-	if vt and check_timer>= check_time:
-		var true_position = global_position-voxel_terrain.global_position
-		#var check_pos = global_position
-		#var check_pos = global_transform.origin
-		var vox_num = vt.get_voxel(Vector3i(true_position.floor()))
-		#var vox_num2 = vt.get_voxel(Vector3i(true_position.round()+Vector3.UP))
-		#var vox_num3 = vt.get_voxel(Vector3i(true_position.round()+Vector3.RIGHT))
-		#var vox_num4 = vt.get_voxel(Vector3i(true_position.round()-Vector3.RIGHT))
-
-		#var hit = vt.raycast(check_pos, Vector3.UP, 10)
-		#print(hit)
-		if vox_num>=1: # list of solid block types here
-			print(Vector3i(true_position.round()))
-			print("under voxel")
-			#print(hit.position)
-			#print(vt.get_voxel(hit.position))
-			print(vt.get_voxel(Vector3i(true_position.round())))
-			print(vt.get_voxel(true_position))
-			is_stuck = true
-		
-		check_timer = 0.0
-			
-	if is_stuck:
-		print("oh no I'm stuck")
-		global_position = last_safe_pos+voxel_terrain.global_position
+	_handle_voxel_collisions(delta)
+	var true_position = global_position-voxel_terrain.global_position
+	var current_voxel = Vector3i((global_position).floor())
+	# todo: this code SHOULD be in here, but we may need to override automatic_loading_enabled. Right now it blocks air.
+	#if not vt.is_area_editable(AABB(Vector3(current_voxel), Vector3.ONE)) and stuck_count==0:
+	#	global_position = last_safe_pos + voxel_terrain.global_position
+	#	velocity = Vector3.ZERO
+	#	stuck_count +=1
+	#else:
+	var stuck_hit = vt.raycast(global_position, Vector3.UP, 0.01)
+	if stuck_hit and stuck_count==0:
+		global_position = last_safe_pos + voxel_terrain.global_position
 		velocity = Vector3.ZERO
-	elif is_on_floor():
-		last_safe_pos = global_position-voxel_terrain.global_position
+		stuck_count +=1
+	elif is_on_floor() or _is_on_voxel_floor:
+		last_safe_pos = true_position
+		stuck_count = 0
+
+	move_and_slide()
+
+func _get_unloaded_normal(current_pos: Vector3, target_voxel_pos: Vector3i) -> Vector3:
+	# The AABB of the unloaded voxel in world space
+	var voxel_min = Vector3(target_voxel_pos)
+	var voxel_max = voxel_min + Vector3.ONE
+	var center = voxel_min + Vector3(0.5, 0.5, 0.5)
+	
+	# Vector from voxel center to the player
+	var to_player = current_pos - center
+	
+	# Find which axis the player is most "on top of" relative to the voxel
+	# This gives us the cardinal normal of the face we hit
+	var abs_to_player = to_player.abs()
+	if abs_to_player.x > abs_to_player.y and abs_to_player.x > abs_to_player.z:
+		return Vector3(sign(to_player.x), 0, 0)
+	elif abs_to_player.y > abs_to_player.z:
+		return Vector3(0, sign(to_player.y), 0)
+	else:
+		return Vector3(0, 0, sign(to_player.z))
+
+func _handle_voxel_collisions(delta: float) -> void:
+	if not vt: return
+	
+	_is_on_voxel_floor = false
+	
+	#var ray_dir = velocity.normalized()
+	#var ray_dist = velocity.length() * delta + 0.01 # collision margin
+	var world_dir = global_transform.basis * velocity.normalized()
+	var ray_dist = (velocity.length() * delta) + 0.01 # Predict next frame + margin
+	#var true_position = global_position-voxel_terrain.global_position
+	
+	# todo: this should work, but it doesn't
+	#var target_pos = global_position + (world_dir * ray_dist)
+	#var target_voxel_pos = Vector3i(target_pos.floor())
+	#if not vt.is_area_editable(AABB(Vector3(target_voxel_pos), Vector3.ONE)):
+	#	var boundary_normal = _get_unloaded_normal(true_position, target_voxel_pos)
+	#	velocity = velocity.slide(boundary_normal)
+	#	return
+	var hit = vt.raycast(global_position, world_dir, ray_dist)
+	if hit:
+		if hit.normal.angle_to(Vector3.UP) <= floor_max_angle:
+			_is_on_voxel_floor = true
+		velocity = velocity.slide(hit.normal)
+	if not _is_on_voxel_floor:
+		var down_hit = vt.raycast(global_position, Vector3.DOWN, 0.1) # Short margin
+		if down_hit:
+			if down_hit.normal.angle_to(Vector3.UP) <= floor_max_angle:
+				_is_on_voxel_floor = true
 
 func die() -> void:
 	print("Player died. Reloading...")
