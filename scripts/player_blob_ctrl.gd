@@ -85,6 +85,7 @@ func _input(event: InputEvent) -> void:
 		if now - _last_jump_tap_time <= DOUBLE_TAP_WINDOW_MS:
 			is_flying = not is_flying
 			_last_jump_tap_time = -100000  # don't let a 3rd tap immediately re-toggle
+			if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
 		else:
 			_last_jump_tap_time = now
 
@@ -93,6 +94,7 @@ func _input(event: InputEvent) -> void:
 		if now2 - _last_descend_tap_time <= DOUBLE_TAP_WINDOW_MS:
 			is_intangible = not is_intangible
 			_last_descend_tap_time = -100000
+			if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
 		else:
 			_last_descend_tap_time = now2
 

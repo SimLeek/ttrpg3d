@@ -48,7 +48,7 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Structure Saver",
 			"icon": _solid_icon(Color(0.2, 0.8, 0.8)),
 			"item_script": STRUCTURE_SAVER_SCRIPT,
-			"hint": "Click: set corner  |  R: resize  T: translate\nU/I/O + J/K/L -  X/Y/Z  |  G: save",
+			"hint": "Click: set corner  |  R: resize  T: translate\nU/I/O + J/K/L -  X/Y/Z  |  P: pivot  G: save",
 		},
 		{
 			"kind": "tool",

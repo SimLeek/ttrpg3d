@@ -41,7 +41,11 @@ func use_item(pressure: float) -> void:
 		return
 
 	_points.append(pos)
-	if _points.size() >= 3:
+	if _points.size() == 1:
+		_notify("Corner 1 set (cyan)\nClick 2 more points (not in a line)")
+	elif _points.size() == 2:
+		_notify("Corner 2 set (orange)\nOne more -- the preview quad's far corner\nwill mirror one of your points across it")
+	elif _points.size() >= 3:
 		_commit_three_point(_points[0], _points[1], _points[2])
 		_points.clear()
 

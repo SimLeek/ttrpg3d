@@ -68,10 +68,23 @@ practice.
       or near the player if not aiming at anything) instead of two
       independent corners. `R` enters resize mode, `T` enters translate
       mode; while in a mode, U/I/O grow/translate+ and J/K/L shrink/
-      translate- on X/Y/Z respectively. `G` still saves. No more explicit
-      pivot step -- the anchor is always the min corner. Verified live:
+      translate- on X/Y/Z respectively. `G` still saves. Verified live:
       resize grew a visible white wireframe box from 1x1x1 to 3x3x3, saved
       structure's `voxel_types` on disk matched real terrain content.
+  - [x] Size can go negative per-axis (skips over 0 -- growing from -1
+        jumps to 1, shrinking from 1 jumps to -1), extending the box the
+        other way from the anchor instead of only ever growing positive.
+        Verified live and via the saved `.tres`: 3 J presses took size.x
+        from 1 to -3, and the saved structure correctly came out as
+        `size=(3,1,1)` with `pivot=(2,0,0)` -- i.e. the anchor ended up at
+        the box's *max* X corner, not min, exactly as expected when the
+        box extends backward.
+  - [x] Explicit pivot is back (`structure_set_pivot`/P), defaulting to the
+        anchor if never pressed -- useful for placing a structure by one of
+        its inner corners rather than always its min corner. Drawn as a red
+        box, distinct from the cyan anchor and dim-white full-box outlines
+        (a default pivot overlaps the anchor box exactly until moved
+        elsewhere, which is expected).
 - [x] `StructurePlacerItem`: `T`/`R` for translate/rotate mode (same U/I/O
       J/K/L axes), `M`/`N` grow/shrink the rotation step (default 90 deg,
       partial steps intentionally supported -- "hilarious" per request).
@@ -109,6 +122,37 @@ view while intangible, then toggled both off and landed normally again --
 all with zero script errors across the whole session. Should still get a
 real human playtest for movement *feel* (asked for, not something
 screenshots capture well).
+
+- [x] HUD indicator (`hud.gd`) shows "FLYING (double-Space to stop)" and/or
+      "INTANGIBLE (double-Ctrl to stop)" at the top of the screen whenever
+      either is active -- both exit on a double-tap that's easy to mix up,
+      so it's spelled out rather than left to memory. Verified live, both
+      solo and combined (color shifts to pink/magenta when intangible is
+      on, to match the pivot-vs-anchor "this is the unusual one" language
+      used elsewhere).
+
+## ItemTooltip rework: toggleable, persistent, paginated [done, on feature/3d-build-tools]
+
+- [x] `tooltip_toggle` (/) hides/shows the billboard without clearing its
+      content -- a mode-switch call while hidden still updates what's ready
+      to reappear. Verified live: toggled off (panel disappeared), toggled
+      back on (previous message reappeared unchanged).
+- [x] Persistent by default (`default_duration` changed from a 4s auto-hide
+      to 0 = no auto-hide) -- it's meant to sit there showing current mode +
+      instructions while a tool is actively in use, not flash and vanish.
+      Replaced naturally when a new message comes in.
+- [x] `tooltip_next_page`/`tooltip_prev_page` (`.`/`,`, not `[`/`]` since
+      those already mean hotbar-slot-cycle) page through long messages,
+      split a few lines at a time, with a "(page/total)" footer when there's
+      more than one page. Not independently live-tested this pass (would
+      need a deliberately long message to trigger) -- low risk, same
+      array-slicing logic as everything else here, but worth a real check
+      if a tool ends up with a genuinely long status message.
+- [x] `PlaneSelectorItem` now calls `_notify()` at each point placement,
+      including a note when corner 2 goes down that the preview quad's far
+      corner mirrors one of the 3 points across the opposite edge (not a
+      4th point you click yourself) -- ties into the "adjustable 3-corner
+      plane, 4th point always mirrored" future-refinement note above.
 
 ## Phase 1 -- Draw tools (write into BuildSession's drawing)
 
