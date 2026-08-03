@@ -27,30 +27,88 @@ structure saver/placer, each `preload`ing their own script + a hint string.
 ## Phase 0 -- Plane selection tool [done, on feature/3d-build-tools]
 
 - [x] `PlaneSelectorItem`: click sets point 1, 2, 3 in sequence (reuse the
-      corner-setting pattern from `StructureSaverItem`).
-  - [x] 2 points = axis-aligned plane when they share exactly one
-        coordinate (that shared axis is the normal); ambiguous/non-matching
-        picks fall through to 3-point mode instead of guessing.
-  - [x] 3 non-collinear points = arbitrary plane. Verified live: a
-        near-collinear 3-point pick (small camera-only rotation between
-        clicks) correctly got rejected; moving the player between clicks
-        (guaranteeing real spread) correctly committed and showed
-        "Plane set."
-  - [x] Reject collinear 3-point picks (cross product length < 0.5) with an
+      corner-setting pattern from `StructureSaverItem`). Always 3 points --
+      an earlier version let 2 points commit immediately if they shared an
+      axis, but that shortcut was confusing in practice and got removed.
+  - [x] 3 non-collinear points = the plane. Verified live: a near-collinear
+        3-point pick (small camera-only rotation between clicks) correctly
+        got rejected; moving the player between clicks (guaranteeing real
+        spread) correctly committed and showed "Plane set."
+  - [x] Reject collinear picks (cross product length < 0.5) with an
         ItemTooltip message instead of crashing or silently no-op'ing.
 - [x] If the voxel raycast doesn't hit anything: fall back to a point near
       the player's feet instead of requiring terrain -- these are tool
       picks, not world edits.
 - [x] Visual: DebugDraw3D gizmos -- point 1/2/3 in cyan/orange/magenta, the
       resolved plane drawn as a 4-line quad outline (yellow) sized to the
-      actual selected span, not a fixed preview size.
+      actual selected span.
 - [x] `BuildSession.set_plane(origin, basis_u, basis_v)`.
 
-Not yet verified live: the 2-point axis-aligned path specifically (needs
-genuinely flat terrain between two aim points to trigger the shared-axis
-branch -- the 3-point path it falls back to when terrain isn't flat was
-confirmed instead, and shares the same `_set_plane()`/commit plumbing).
-Worth a real check next time flat ground is handy.
+### Future refinement, once we're back on planes (not started)
+
+- [ ] Planes should have adjustable, bounded size after the fact, like the
+      structure-saver box's resize/translate modal editing (see below) --
+      but for a plane you adjust all 3 corner points individually (not a
+      single anchor+size), with a 4th point always mirrored across the
+      triangle edge it's not connected to (completing a parallelogram).
+- [ ] Draw tools should be able to paint on the plane regardless of
+      distance from it -- unlike normal add/remove-voxel interaction,
+      which is range-limited via the raycast. Needs `DrawPointItem` (Phase
+      1) built first to actually verify this against a real plane.
+
+## Structure saver/placer rework [done, on feature/3d-build-tools]
+
+Not part of the plane/draw pipeline directly, but the same modal-editing
+pattern (R/T mode + U/I/O/J/K/L axis keys) is what Phase 1's draw tools and
+future plane resizing will reuse, so it landed here first as the simplest
+real test case. Two-corner-click selection turned out to be a hassle in
+practice.
+
+- [x] `StructureSaverItem`: click places a single anchor corner (aim target,
+      or near the player if not aiming at anything) instead of two
+      independent corners. `R` enters resize mode, `T` enters translate
+      mode; while in a mode, U/I/O grow/translate+ and J/K/L shrink/
+      translate- on X/Y/Z respectively. `G` still saves. No more explicit
+      pivot step -- the anchor is always the min corner. Verified live:
+      resize grew a visible white wireframe box from 1x1x1 to 3x3x3, saved
+      structure's `voxel_types` on disk matched real terrain content.
+- [x] `StructurePlacerItem`: `T`/`R` for translate/rotate mode (same U/I/O
+      J/K/L axes), `M`/`N` grow/shrink the rotation step (default 90 deg,
+      partial steps intentionally supported -- "hilarious" per request).
+      `C` (was `R`) cycles between saved structures now that `R` means
+      rotate. Rotated placement samples the *nearest* source voxel per
+      destination cell (inverse-rotate + round) rather than forward-mapping
+      the source grid, which would leave gaps.
+- [x] Placement is now a full overwrite (every voxel in the rotated bounds,
+      including air), not `paste_masked` -- fixes trees/dirt poking through
+      placed structures, and means structures can now be placed
+      underground (surrounding stone gets cleared where the structure says
+      air). Destination cells outside the rotated structure's bounds are
+      left untouched.
+- [x] Ghost preview updated to a real rotated wireframe box (12 edges from
+      the 8 rotated corners), not just an axis-aligned bounding box.
+
+## DM-mode flying + intangible movement [done, on feature/3d-build-tools]
+
+Two *separate* toggles, both double-tap:
+- [x] Flying (double-jump/Space): disables gravity/normal jump/wall-jump/
+      stair-stepping; direct vertical control (jump=up, new `fly_descend`
+      action=Ctrl=down). Still collides with terrain normally.
+- [x] Intangible (double-`fly_descend`/Ctrl): separately disables collision
+      entirely (bypasses `move_and_slide()` + the custom voxel collision
+      raycast, direct position update instead) so you can pass through
+      terrain. Implies the same direct vertical control flying does
+      (otherwise you'd just fall through everything with no way to stop),
+      but is a distinct flag from `is_flying` -- you can be intangible
+      without flying's "no gravity feel" mattering, or flying without
+      being able to pass through walls.
+
+Verified live: ascended clearly above the treeline while flying; separately
+descended straight through solid ground into an underground cross-section
+view while intangible, then toggled both off and landed normally again --
+all with zero script errors across the whole session. Should still get a
+real human playtest for movement *feel* (asked for, not something
+screenshots capture well).
 
 ## Phase 1 -- Draw tools (write into BuildSession's drawing)
 

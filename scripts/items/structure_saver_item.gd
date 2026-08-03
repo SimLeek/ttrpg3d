@@ -1,32 +1,35 @@
 extends BaseItem
 class_name StructureSaverItem
 
-## Selects a box region of voxels and saves it as a SavedVoxelStructure resource.
+## Selects a box region of voxels and saves it as a SavedVoxelStructure
+## resource.
 ##
 ## Controls (only active while this tool is equipped):
-##   primary click (use_item)  -- set corner A, then corner B, then restart
-##   structure_set_pivot (P)   -- set the pivot, once both corners are set
-##   structure_save (G)        -- save the current selection
-## If no pivot is set, the structure's min corner is used as the pivot when
-## saved (i.e. it places flush with whatever surface you're aiming at).
+##   primary click (use_item)  -- (re)place the anchor corner at the aim
+##                                 target, or near the player if not aiming
+##                                 at anything. Resets size to 1x1x1.
+##   build_mode_r (R)          -- enter resize mode
+##   build_mode_t (T)          -- enter translate mode
+##   build_axis_x/y/z_pos/neg
+##   (U/I/O, J/K/L)            -- in resize mode: grow/shrink that axis.
+##                                 in translate mode: move the anchor along
+##                                 that axis.
+##   structure_save (G)        -- save the current box
+## The anchor is always the box's min corner (no separate pivot step --
+## placement aligns on that corner).
 ##
-## Visual feedback every physics frame via DebugDraw3D -- wireframe boxes
-## are non-occluding/"see-through" by construction, and each element gets
-## its own color so corners, the rest of the volume, and the pivot are all
-## distinguishable from each other:
-##   corner A       -- cyan box
-##   corner B       -- orange box
-##   full selection -- dim white box
-##   pivot          -- red sphere
+## Visual feedback every physics frame via DebugDraw3D (wireframe --
+## non-occluding/"transparent" by construction): the anchor voxel in cyan,
+## the full box in dim white.
 
 const STRUCTURES_DIR := "user://structures"
+const MIN_SIZE := 1
 
 @export var voxel_interactor: VoxelInteractor
 
-var _corner_a = null  # Vector3i once set
-var _corner_b = null  # Vector3i once set
-var _pivot: Vector3i = Vector3i.ZERO
-var _has_pivot: bool = false
+var _anchor = null  # Vector3i once set
+var _size: Vector3i = Vector3i.ONE
+var _mode: String = "none"  # "none" | "resize" | "translate"
 
 func set_character(chara: CharacterBody3D) -> void:
 	super.set_character(chara)
@@ -42,97 +45,93 @@ func _physics_process(_delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("structure_set_pivot"):
-		_set_pivot()
+	if event.is_action_pressed("build_mode_r"):
+		_mode = "resize"
+		_notify("Resize mode\nU/I/O grow, J/K/L shrink  X/Y/Z")
+	elif event.is_action_pressed("build_mode_t"):
+		_mode = "translate"
+		_notify("Translate mode\nU/I/O +, J/K/L -  X/Y/Z")
 	elif event.is_action_pressed("structure_save"):
 		save_structure()
+	elif _anchor != null:
+		_handle_axis_input(event)
+
+
+func _handle_axis_input(event: InputEvent) -> void:
+	if _mode == "resize":
+		if event.is_action_pressed("build_axis_x_pos"): _size.x = max(MIN_SIZE, _size.x + 1)
+		elif event.is_action_pressed("build_axis_x_neg"): _size.x = max(MIN_SIZE, _size.x - 1)
+		elif event.is_action_pressed("build_axis_y_pos"): _size.y = max(MIN_SIZE, _size.y + 1)
+		elif event.is_action_pressed("build_axis_y_neg"): _size.y = max(MIN_SIZE, _size.y - 1)
+		elif event.is_action_pressed("build_axis_z_pos"): _size.z = max(MIN_SIZE, _size.z + 1)
+		elif event.is_action_pressed("build_axis_z_neg"): _size.z = max(MIN_SIZE, _size.z - 1)
+	elif _mode == "translate":
+		if event.is_action_pressed("build_axis_x_pos"): _anchor.x += 1
+		elif event.is_action_pressed("build_axis_x_neg"): _anchor.x -= 1
+		elif event.is_action_pressed("build_axis_y_pos"): _anchor.y += 1
+		elif event.is_action_pressed("build_axis_y_neg"): _anchor.y -= 1
+		elif event.is_action_pressed("build_axis_z_pos"): _anchor.z += 1
+		elif event.is_action_pressed("build_axis_z_neg"): _anchor.z -= 1
 
 
 func use_item(pressure: float) -> void:
 	super.use_item(pressure)
-
-	if not voxel_interactor or not voxel_interactor.has_valid_target():
+	var pos = _target_point()
+	if pos == null:
 		return
-	var hit = voxel_interactor.get_hit_info()
-	if not hit:
-		return
-
-	var pos := Vector3i(hit.position)
-	if _corner_a == null:
-		_corner_a = pos
-	elif _corner_b == null:
-		_corner_b = pos
-	else:
-		# Both already set -- start a fresh selection from here.
-		_corner_a = pos
-		_corner_b = null
-		_has_pivot = false
+	_anchor = pos
+	_size = Vector3i.ONE
+	_mode = "none"
+	_notify("Corner set\nR: resize  T: translate  G: save")
 
 
-func _set_pivot() -> void:
-	if _corner_a == null or _corner_b == null:
-		return
-	if not voxel_interactor or not voxel_interactor.has_valid_target():
-		return
-	var hit = voxel_interactor.get_hit_info()
-	if not hit:
-		return
-	_pivot = Vector3i(hit.position)
-	_has_pivot = true
+func _target_point():
+	if voxel_interactor.has_valid_target():
+		var hit = voxel_interactor.get_hit_info()
+		if hit:
+			return Vector3i(hit.position)
+	# Tool picks aren't world edits -- don't require a raycast hit.
+	if character and character.voxel_terrain:
+		return Vector3i((character.global_position - character.voxel_terrain.global_position).floor())
+	return null
 
 
-func _min_corner() -> Vector3i:
-	return Vector3i(min(_corner_a.x, _corner_b.x), min(_corner_a.y, _corner_b.y), min(_corner_a.z, _corner_b.z))
-
-
-func _max_corner() -> Vector3i:
-	return Vector3i(max(_corner_a.x, _corner_b.x), max(_corner_a.y, _corner_b.y), max(_corner_a.z, _corner_b.z))
+func _notify(text: String) -> void:
+	var tooltip = get_tree().get_first_node_in_group("item_tooltip")
+	if tooltip:
+		tooltip.show_message(text)
 
 
 func _draw_selection() -> void:
-	if not voxel_interactor._terrain:
+	if _anchor == null or not voxel_interactor._terrain:
 		return
 	var origin: Vector3 = voxel_interactor._terrain.global_position
-
-	if _corner_a != null:
-		DebugDraw3D.draw_aabb(AABB(Vector3(_corner_a) + origin, Vector3.ONE), Color.CYAN)
-	if _corner_b != null:
-		DebugDraw3D.draw_aabb(AABB(Vector3(_corner_b) + origin, Vector3.ONE), Color.ORANGE)
-	if _corner_a != null and _corner_b != null:
-		var mn := _min_corner()
-		var mx := _max_corner()
-		DebugDraw3D.draw_aabb(AABB(Vector3(mn) + origin, Vector3(mx - mn) + Vector3.ONE), Color(1, 1, 1, 0.6))
-	if _has_pivot:
-		DebugDraw3D.draw_sphere(Vector3(_pivot) + Vector3(0.5, 0.5, 0.5) + origin, 0.2, Color.RED)
+	DebugDraw3D.draw_aabb(AABB(Vector3(_anchor) + origin, Vector3.ONE), Color.CYAN)
+	DebugDraw3D.draw_aabb(AABB(Vector3(_anchor) + origin, Vector3(_size)), Color(1, 1, 1, 0.6))
 
 
 func save_structure() -> void:
-	if _corner_a == null or _corner_b == null:
+	if _anchor == null:
 		return
 
-	var mn := _min_corner()
-	var mx := _max_corner()
-	var size := mx - mn + Vector3i.ONE
-
 	var buffer := VoxelBuffer.new()
-	buffer.create(size.x, size.y, size.z)
-	voxel_interactor._terrain_tool.copy(mn, buffer, 1 << VoxelBuffer.CHANNEL_TYPE)
+	buffer.create(_size.x, _size.y, _size.z)
+	voxel_interactor._terrain_tool.copy(_anchor, buffer, 1 << VoxelBuffer.CHANNEL_TYPE)
 
 	var structure := SavedVoxelStructure.new()
 	structure.from_voxel_buffer(buffer)
-	structure.pivot = (_pivot - mn) if _has_pivot else Vector3i.ZERO
+	structure.pivot = Vector3i.ZERO  # anchor is already the min corner
 
 	DirAccess.make_dir_recursive_absolute(STRUCTURES_DIR)
 	var path := "%s/structure_%d.tres" % [STRUCTURES_DIR, _next_index()]
 	var err := ResourceSaver.save(structure, path)
 	if err == OK:
-		print("Saved structure to ", path)
+		_notify("Saved: %s" % path.get_file())
 	else:
 		push_error("Failed to save structure (%d): %s" % [err, path])
 
-	_corner_a = null
-	_corner_b = null
-	_has_pivot = false
+	_anchor = null
+	_mode = "none"
 
 
 func _next_index() -> int:
@@ -144,5 +143,7 @@ func _next_index() -> int:
 
 func on_unequipped() -> void:
 	super.on_unequipped()
+	_anchor = null
+	_mode = "none"
 	if voxel_interactor:
 		voxel_interactor.cleanup()

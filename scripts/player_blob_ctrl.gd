@@ -11,6 +11,21 @@ extends CharacterBody3D
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
+## DM-mode movement, both toggled by double-tapping within
+## DOUBLE_TAP_WINDOW_MS. Two separate things: flying (double-jump) just
+## disables gravity/normal jump for direct vertical control; intangible
+## (double-fly_descend, i.e. double-Ctrl) separately disables collision
+## entirely so you can pass through terrain. Either can be on without the
+## other, though intangible without flying would just free-fall through
+## everything with no way to stop, so intangible also uses the same direct
+## vertical control flying does.
+@export var FLY_SPEED: float = 6.0
+const DOUBLE_TAP_WINDOW_MS := 350
+var is_flying: bool = false
+var is_intangible: bool = false
+var _last_jump_tap_time: int = -100000
+var _last_descend_tap_time: int = -100000
+
 @onready var default_floor_angle: float = floor_max_angle
 
 # the player has a ...
@@ -65,6 +80,22 @@ func _ready() -> void:
 		last_safe_pos = true_position
 
 func _input(event: InputEvent) -> void:
+	if event.is_action_pressed("jump") and not event.is_echo():
+		var now := Time.get_ticks_msec()
+		if now - _last_jump_tap_time <= DOUBLE_TAP_WINDOW_MS:
+			is_flying = not is_flying
+			_last_jump_tap_time = -100000  # don't let a 3rd tap immediately re-toggle
+		else:
+			_last_jump_tap_time = now
+
+	if event.is_action_pressed("fly_descend") and not event.is_echo():
+		var now2 := Time.get_ticks_msec()
+		if now2 - _last_descend_tap_time <= DOUBLE_TAP_WINDOW_MS:
+			is_intangible = not is_intangible
+			_last_descend_tap_time = -100000
+		else:
+			_last_descend_tap_time = now2
+
 	mover.handle_immediate_input(event)
 	basic_jumper.handle_immediate_input(event)
 	#wall_jump.handle_immediate_input(event)
@@ -84,14 +115,24 @@ func _physics_process(delta: float) -> void:
 	if should_fall:
 		friction = SPEED_DECAY_AIR
 
-	sv_xyz = faller.apply_gravity(sv_xyz, self, delta)
+	var no_gravity := is_flying or is_intangible
+	if no_gravity:
+		friction = SPEED_DECAY_AIR
+		var vertical := 0.0
+		if Input.is_action_pressed("jump"):
+			vertical += FLY_SPEED
+		if Input.is_action_pressed("fly_descend"):
+			vertical -= FLY_SPEED
+		sv_xyz.y = move_toward(sv_xyz.y, vertical, FLY_SPEED * 4.0 * delta)
+	else:
+		sv_xyz = faller.apply_gravity(sv_xyz, self, delta)
 
-	basic_jumper.update_coyote_time(not should_fall, delta)
-	# Messy jump stuff. Maybe wall jump should extend basic jump. Idk.
-	sv_xyz = basic_jumper.apply_jump(sv_xyz, not should_fall)
-	wall_jumper.jump_requested = basic_jumper.jump_requested
-	sv_xyz = wall_jumper.apply_jump(sv_xyz, self, not should_fall)
-	basic_jumper.jump_requested = wall_jumper.jump_requested
+		basic_jumper.update_coyote_time(not should_fall, delta)
+		# Messy jump stuff. Maybe wall jump should extend basic jump. Idk.
+		sv_xyz = basic_jumper.apply_jump(sv_xyz, not should_fall)
+		wall_jumper.jump_requested = basic_jumper.jump_requested
+		sv_xyz = wall_jumper.apply_jump(sv_xyz, self, not should_fall)
+		basic_jumper.jump_requested = wall_jumper.jump_requested
 
 	# Movement input
 	input_dir = Input.get_vector("left", "right", "up", "down")
@@ -108,16 +149,18 @@ func _physics_process(delta: float) -> void:
 		gv_xyz[2] *= squeeze_factor
 	# ITEM USE SECTION
 	two_handed.handle_physics_process_input()
-	
-	sv_xyz = wall_jumper.handle_wall_slide(sv_xyz, self, direction)
+
+	if not no_gravity:
+		sv_xyz = wall_jumper.handle_wall_slide(sv_xyz, self, direction)
 
 	if Input.is_action_pressed("slide"):
 		floor_max_angle = 0.0
 	else:
 		floor_max_angle = default_floor_angle
 	# END ITEM USE SECTION
-	
-	sv_xyz = stair_stepper.handle_step_up(delta, self, sv_xyz)
+
+	if not no_gravity:
+		sv_xyz = stair_stepper.handle_step_up(delta, self, sv_xyz)
 
 	velocity = sv_xyz
 	if direction:
@@ -129,6 +172,11 @@ func _physics_process(delta: float) -> void:
 		
 	if hud_node:
 		hud_node.update_stamina_ui(mover.sprint_time_limit-mover.sprint_elapsed, mover.sprint_time_limit)
+
+	if is_intangible:
+		# No collision at all -- pass straight through terrain.
+		global_position += velocity * delta
+		return
 
 	_handle_voxel_collisions(delta)
 	var true_position = global_position-voxel_terrain.global_position

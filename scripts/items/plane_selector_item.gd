@@ -4,12 +4,11 @@ class_name PlaneSelectorItem
 ## Defines the shared BuildSession plane that draw tools (Phase 1, not
 ## built yet) will paint onto.
 ##
-## Click sets points in order. Two points commit immediately as an
-## axis-aligned plane if they share exactly one coordinate (e.g. same Y --
-## a horizontal plane, matching "top-left/bottom-right corner" style
-## selection); otherwise a third, non-collinear point is needed to fully
-## determine an arbitrary plane. Clicking again after a plane is resolved
-## starts a fresh selection.
+## Click sets points 1, 2, 3 in sequence; the plane commits once all three
+## are placed, rejected if they're collinear. (Earlier version allowed
+## committing after just 2 points if they happened to share an axis --
+## removed per feedback, that shortcut was confusing in practice. Always
+## 3 points now.)
 ##
 ## If the voxel raycast doesn't hit anything, falls back to a point near
 ## the player's feet -- these are tool picks, not world edits, so they
@@ -42,12 +41,7 @@ func use_item(pressure: float) -> void:
 		return
 
 	_points.append(pos)
-	if _points.size() == 2:
-		var axis := _shared_axis(_points[0], _points[1])
-		if axis >= 0:
-			_commit_axis_aligned(_points[0], _points[1], axis)
-			_points.clear()
-	elif _points.size() >= 3:
+	if _points.size() >= 3:
 		_commit_three_point(_points[0], _points[1], _points[2])
 		_points.clear()
 
@@ -61,38 +55,6 @@ func _target_point():
 	if character and character.voxel_terrain:
 		return Vector3i((character.global_position - character.voxel_terrain.global_position).floor())
 	return null
-
-
-## Returns which axis (0=x, 1=y, 2=z) is shared between the two points, or
-## -1 if zero or more than one axis matches (can't make a unique
-## axis-aligned plane from that -- need a third point instead).
-func _shared_axis(a: Vector3i, b: Vector3i) -> int:
-	var matches := int(a.x == b.x) + int(a.y == b.y) + int(a.z == b.z)
-	if matches != 1:
-		return -1
-	if a.x == b.x: return 0
-	if a.y == b.y: return 1
-	return 2
-
-
-func _commit_axis_aligned(a: Vector3i, b: Vector3i, axis: int) -> void:
-	var origin: Vector3i
-	var basis_u: Vector3i
-	var basis_v: Vector3i
-	match axis:
-		0:
-			origin = Vector3i(a.x, min(a.y, b.y), min(a.z, b.z))
-			basis_u = Vector3i(0, abs(a.y - b.y), 0)
-			basis_v = Vector3i(0, 0, abs(a.z - b.z))
-		1:
-			origin = Vector3i(min(a.x, b.x), a.y, min(a.z, b.z))
-			basis_u = Vector3i(abs(a.x - b.x), 0, 0)
-			basis_v = Vector3i(0, 0, abs(a.z - b.z))
-		_:
-			origin = Vector3i(min(a.x, b.x), min(a.y, b.y), a.z)
-			basis_u = Vector3i(abs(a.x - b.x), 0, 0)
-			basis_v = Vector3i(0, abs(a.y - b.y), 0)
-	_set_plane(origin, basis_u, basis_v)
 
 
 func _commit_three_point(a: Vector3i, b: Vector3i, c: Vector3i) -> void:
