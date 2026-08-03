@@ -24,25 +24,33 @@ tool needs to agree on:
 All the tools below are `kind: "tool"` `ItemCatalog` entries, same as the
 structure saver/placer, each `preload`ing their own script + a hint string.
 
-## Phase 0 -- Plane selection tool
+## Phase 0 -- Plane selection tool [done, on feature/3d-build-tools]
 
-- [ ] `PlaneSelectorItem`: click sets point 1, 2, 3 in sequence (reuse the
+- [x] `PlaneSelectorItem`: click sets point 1, 2, 3 in sequence (reuse the
       corner-setting pattern from `StructureSaverItem`).
-  - 2 points = axis-aligned plane (like the structure selector's box, but
-    a plane, not a volume -- need to decide which axis it's normal to, or
-    just require the two points to already share one coordinate).
-  - 3 non-collinear points = arbitrary plane (any two points can share an
-    axis and it still works, unlike the 2-point case).
-  - Reject collinear 3-point picks (cross product ~0) with an inventory
-    tooltip-style message, not a crash.
-- [ ] If the voxel raycast doesn't hit anything: fall back to a plane at the
-      player's feet/facing instead of requiring terrain. These are tool
-      picks, not world edits, so they shouldn't be gated on hitting a block.
-- [ ] Visual: DebugDraw3D gizmos again -- point 1/2/3 distinguishable colors,
-      the resolved plane drawn as a bounded quad/grid so its extent is
-      readable, consistent with the corner/pivot language from the structure
-      tools.
-- [ ] `BuildSession.set_plane(origin, basis_u, basis_v)`.
+  - [x] 2 points = axis-aligned plane when they share exactly one
+        coordinate (that shared axis is the normal); ambiguous/non-matching
+        picks fall through to 3-point mode instead of guessing.
+  - [x] 3 non-collinear points = arbitrary plane. Verified live: a
+        near-collinear 3-point pick (small camera-only rotation between
+        clicks) correctly got rejected; moving the player between clicks
+        (guaranteeing real spread) correctly committed and showed
+        "Plane set."
+  - [x] Reject collinear 3-point picks (cross product length < 0.5) with an
+        ItemTooltip message instead of crashing or silently no-op'ing.
+- [x] If the voxel raycast doesn't hit anything: fall back to a point near
+      the player's feet instead of requiring terrain -- these are tool
+      picks, not world edits.
+- [x] Visual: DebugDraw3D gizmos -- point 1/2/3 in cyan/orange/magenta, the
+      resolved plane drawn as a 4-line quad outline (yellow) sized to the
+      actual selected span, not a fixed preview size.
+- [x] `BuildSession.set_plane(origin, basis_u, basis_v)`.
+
+Not yet verified live: the 2-point axis-aligned path specifically (needs
+genuinely flat terrain between two aim points to trigger the shared-axis
+branch -- the 3-point path it falls back to when terrain isn't flat was
+confirmed instead, and shares the same `_set_plane()`/commit plumbing).
+Worth a real check next time flat ground is handy.
 
 ## Phase 1 -- Draw tools (write into BuildSession's drawing)
 

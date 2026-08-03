@@ -22,6 +22,7 @@
 [ext_resource type="Script" uid="uid://dc6qooqw53rnx" path="res://scripts/sunsetter.gd" id="19_07cqu"]
 [ext_resource type="Script" path="res://scripts/ui/player_inventory.gd" id="20_hotbar"]
 [ext_resource type="Script" path="res://scripts/ui/item_tooltip.gd" id="21_tooltip"]
+[ext_resource type="Script" path="res://scripts/pcg/build_session.gd" id="22_buildsession"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -236,6 +237,9 @@ script = ExtResource("16_jo7wf")
 
 [node name="ItemTooltip" type="Node3D" parent="." unique_id=3823914177]
 script = ExtResource("21_tooltip")
+
+[node name="BuildSession" type="Node" parent="." unique_id=3823914178]
+script = ExtResource("22_buildsession")
 
 [node name="VoxelViewer" type="VoxelViewer" parent="." unique_id=397434329]
 

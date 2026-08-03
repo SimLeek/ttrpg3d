@@ -18,6 +18,7 @@ class_name ItemCatalog
 const BLOCK_PLACER_SCRIPT := preload("res://scripts/items/voxelitem.gd")
 const STRUCTURE_SAVER_SCRIPT := preload("res://scripts/items/structure_saver_item.gd")
 const STRUCTURE_PLACER_SCRIPT := preload("res://scripts/items/structure_placer_item.gd")
+const PLANE_SELECTOR_SCRIPT := preload("res://scripts/items/plane_selector_item.gd")
 
 static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary]:
 	var items: Array[Dictionary] = []
@@ -56,6 +57,14 @@ static func _tool_items() -> Array[Dictionary]:
 			"icon": _solid_icon(Color(0.7, 0.3, 0.9)),
 			"item_script": STRUCTURE_PLACER_SCRIPT,
 			"hint": "Click: place structure\nR: cycle structures",
+		},
+		{
+			"kind": "tool",
+			"id": "tool_plane_selector",
+			"name": "Plane Selector",
+			"icon": _solid_icon(Color(1.0, 0.85, 0.2)),
+			"item_script": PLANE_SELECTOR_SCRIPT,
+			"hint": "Click 2-3 points to define a build plane\n(2 points work if they line up on one axis)",
 		},
 	]
 
