@@ -9,12 +9,52 @@ var _soft_body_local_transforms: Dictionary = {}
 var camera: Camera3D
 
 func _ready() -> void:
+	# Runs after CharacterBody3D's own _ready() (children _ready() before
+	# parent's), so player_blob_ctrl.gd has already computed last_safe_pos
+	# from the scene's default spawn -- fix that up too when overriding
+	# position here, or the "stuck in floor" safety check has a stale
+	# fallback position for one frame.
+	_apply_pending_world()
+
 	for body in soft_bodies:
 		if body:
 			_soft_body_parents[body] = body.get_parent()
 			_soft_body_local_transforms[body] = body.transform
 			var template = body.duplicate()
 			_soft_body_templates.append(template)
+
+func _apply_pending_world() -> void:
+	var world: Dictionary = WorldManager.pending_world
+	if world.is_empty():
+		return
+	WorldManager.pending_world = {}
+
+	var gen_def := WorldGeneratorCatalog.get_generator(world.get("generator_id", ""))
+	if gen_def.is_empty():
+		push_warning("[World] Unknown generator id: %s" % world.get("generator_id", "?"))
+		return
+	var params: Dictionary = world.get("params", {})
+
+	var terrain: VoxelTerrain = $World/VoxelTerrain
+	terrain.generator = WorldGeneratorCatalog.instantiate_generator(gen_def, params)
+
+	var spawn = WorldGeneratorCatalog.get_spawn_position(gen_def, params)
+	if spawn != null:
+		$CharacterBody3D.global_position = spawn
+		$CharacterBody3D.last_safe_pos = spawn - terrain.global_position
+
+	# Simple distinct-color sky for finite/non-default worlds for now --
+	# a real image-based skybox (the game already has an unused skybox
+	# texture asset) needs panini removed from the sky shader first, see
+	# TODO_modding_and_worlds.md.
+	if gen_def.get("id", "") == "limestone_slab":
+		var env := Environment.new()
+		env.background_mode = Environment.BG_COLOR
+		env.background_color = Color(0.55, 0.35, 0.65)
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = Color(0.55, 0.35, 0.65)
+		env.ambient_light_energy = 0.75
+		$World/WorldEnvironment.environment = env
 
 func shift_origin() -> void:
 	var shift_vector = $CharacterBody3D.global_position

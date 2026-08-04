@@ -23,6 +23,7 @@
 [ext_resource type="Script" path="res://scripts/ui/player_inventory.gd" id="20_hotbar"]
 [ext_resource type="Script" path="res://scripts/ui/item_tooltip.gd" id="21_tooltip"]
 [ext_resource type="Script" path="res://scripts/pcg/build_session.gd" id="22_buildsession"]
+[ext_resource type="Script" path="res://scripts/ui/dm_world_menu.gd" id="23_dmmenu"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -231,6 +232,15 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("20_hotbar")
+
+[node name="DMWorldMenu" type="Control" parent="HUD/Control" unique_id=2088711643]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("23_dmmenu")
 
 [node name="Health" type="Node3D" parent="." unique_id=1745098184]
 script = ExtResource("16_jo7wf")
