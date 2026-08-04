@@ -18,6 +18,7 @@ class_name ItemCatalog
 const BLOCK_PLACER_SCRIPT := preload("res://scripts/items/voxelitem.gd")
 const STRUCTURE_SAVER_SCRIPT := preload("res://scripts/items/structure_saver_item.gd")
 const STRUCTURE_PLACER_SCRIPT := preload("res://scripts/items/structure_placer_item.gd")
+const PLANE_SELECTOR_SCRIPT := preload("res://scripts/items/plane_selector_item.gd")
 
 static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary]:
 	var items: Array[Dictionary] = []
@@ -47,7 +48,7 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Structure Saver",
 			"icon": _solid_icon(Color(0.2, 0.8, 0.8)),
 			"item_script": STRUCTURE_SAVER_SCRIPT,
-			"hint": "Click: set corner A, then B\nP: set pivot  |  G: save",
+			"hint": "Click: set corner  |  R: resize  T: translate\nU/I/O + J/K/L -  X/Y/Z  |  P: pivot  G: save",
 		},
 		{
 			"kind": "tool",
@@ -55,7 +56,15 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Structure Placer",
 			"icon": _solid_icon(Color(0.7, 0.3, 0.9)),
 			"item_script": STRUCTURE_PLACER_SCRIPT,
-			"hint": "Click: place structure\nR: cycle structures",
+			"hint": "Click: place  |  C: cycle structure\nR: rotate  T: translate  |  U/I/O + J/K/L -  X/Y/Z\nM/N: rotation step",
+		},
+		{
+			"kind": "tool",
+			"id": "tool_plane_selector",
+			"name": "Plane Selector",
+			"icon": _solid_icon(Color(1.0, 0.85, 0.2)),
+			"item_script": PLANE_SELECTOR_SCRIPT,
+			"hint": "Click 3 points (not in a line) to define a build plane",
 		},
 	]
 
