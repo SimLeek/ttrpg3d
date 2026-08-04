@@ -24,6 +24,7 @@ config/icon="res://icon.svg"
 SaveSystem="*res://scripts/save_system.gd"
 GlobalsMain="*res://scripts/singleton_global_lib_stuff/globals_main.gd"
 AttributionManager="*res://scripts/attribution_manager.gd"
+ModManager="*res://scripts/modding/mod_manager.gd"
 
 [debug_draw_3d]
 

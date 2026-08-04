@@ -18,25 +18,25 @@ first because it enables everything else to be built in isolation:
 3. New voxels: a code-gen'd wood plank texture, and glass with edge-merging
    between adjacent glass voxels.
 
-## Phase 0 -- Mod loading infrastructure (do first)
+## Phase 0 -- Mod loading infrastructure (do first) [done, on feature/modding-system]
 
-- [ ] Mod directory layout: `res://mods/<mod_id>/` (bundled/dev, checked
+- [x] Mod directory layout: `res://mods/<mod_id>/` (bundled/dev, checked
       into git -- this is where the wood-plank proof-of-concept mod below
       lives) and `user://mods/<mod_id>/` (actually-user-installed, not
       checked in). Both scanned at boot.
-- [ ] Manifest: `mod.json` per mod folder -- id, name, version, entry
+- [x] Manifest: `mod.json` per mod folder -- id, name, version, entry
       script path (relative to the mod folder).
-- [ ] Enable/disable checklist: `user://mods_enabled.json`, a flat
+- [x] Enable/disable checklist: `user://mods_enabled.json`, a flat
       `{mod_id: bool}` map. Newly-discovered mods default to enabled and
       get added to the checklist automatically. No in-game toggle UI yet --
       "simple json checklist" was the explicit ask, editing the file by
       hand is fine for now.
-- [ ] `ModManager` autoload: discovers mods, loads the checklist, and for
+- [x] `ModManager` autoload: discovers mods, loads the checklist, and for
       each *enabled* mod calls a `static func register(...)` on its entry
       script (loaded dynamically via `load(path).call("register", ...)` --
       mods aren't known at compile time so there's no class_name to
       reference directly).
-- [ ] Mod API surface (methods on `ModManager` mods call directly, since
+- [x] Mod API surface (methods on `ModManager` mods call directly, since
       it's a globally-addressable autoload):
   - `register_item(entry: Dictionary)` -- same shape as `ItemCatalog`
     entries (kind/id/name/icon/item_script/hint). `ItemCatalog` merges
@@ -51,16 +51,28 @@ first because it enables everything else to be built in isolation:
     fetches the library each call. Idempotent (tracks which library
     instance it's already applied to) since `_refresh_items()` runs more
     than once (immediate + a 0.5s retry).
-- [ ] Toggling a mod off removes its content on the *next* launch, not
+- [x] Toggling a mod off removes its content on the *next* launch, not
       live mid-session -- voxel registration mutates the shared library in
       place, so there's no clean way to retroactively un-append a model
       from an already-running level. This is a normal restart-to-apply
       convention for mod toggles, not trying to avoid; don't build
       hot-reload for this.
-- [ ] Proof of concept: the wood-plank voxel (see Phase 2) ships as a real
+- [x] Proof of concept: the wood-plank voxel (see Phase 2) ships as a real
       mod under `res://mods/wood_plank/`, not hardcoded -- verifies the
       whole pipeline (discovery, checklist, dynamic voxel registration,
       catalog pickup) rather than just the plumbing in isolation.
+
+Verified live end-to-end: headless boot logs `[ModManager] Loaded mod:
+wood_plank` with zero new errors; `user://mods_enabled.json` auto-generated
+correctly; the inventory grid showed a genuinely new icon (a procedurally
+generated concentric wood-ring texture, distinct from the log/plank being
+copied) with hover tooltip correctly resolving to "Wood Plank" / "Click to
+place" (built-in DISPLAY_NAMES fallback to `ModManager.get_voxel_name()`
+working); equipping and clicking placed it with no errors. Then flipped
+`mods_enabled.json` to `false`, relaunched -- no "Loaded mod" log line, and
+the inventory grid came back to exactly the pre-mod 21 items with the
+wood-ring icon completely gone. Both the load and unload paths are for-real
+confirmed, not just "should work."
 
 ## Phase 1 -- World switching + DM world creation
 
@@ -88,16 +100,18 @@ first because it enables everything else to be built in isolation:
       voxel-weighting idea for nice biome boundaries. Purely a future
       idea right now, no implementation to build on. Logged here so it
       doesn't get lost, not attempting it this pass.
-- [ ] Panini removal: `panini_full.gdshader` / `panini_sky.gdshader` and
-      the panini distortion baked into `xray_if_behind_full.gdshader`
-      (the shared material every single block + the player's own shader
-      use -- `shader_dirt.tres`, `shader_grass.tres`, etc. all reference
-      it) get removed. This is *separate* from the cutout/x-ray-behind-
-      terrain effect in that same shader, which must survive --
-      that's explicitly called out as critical, not part of what's being
-      removed. Removing panini distortion is also what makes real
-      skyboxes (as opposed to whatever panini did to sky rendering)
-      possible -- ties directly into the limestone slab's distinct sky
+- [ ] Panini removal: **checked** -- panini distortion lives only in
+      `panini_full.gdshader` (the player's own shader, `Blob.tscn`) and
+      `panini_sky.gdshader` (presumably the skybox). The shared block
+      shader every voxel material uses (`xray_if_behind_full.gdshader` --
+      `shader_dirt.tres`, `shader_grass.tres`, etc. all reference it) has
+      no panini code at all; its cutout/x-ray-behind-terrain effect (the
+      thing explicitly called out as critical to keep) is safe by
+      construction, not something that needs careful untangling. So this
+      is scoped to just the two panini-named shaders. Removing panini
+      distortion is also what makes real skyboxes (as opposed to whatever
+      panini did to sky rendering) possible -- ties directly into the
+      limestone slab's distinct sky
       and the depth-based switch below.
 - [ ] Main world was supposed to have a Terraria-like depth-based skybox
       switch (different sky when underground vs. on the surface) -- not
@@ -119,3 +133,13 @@ first because it enables everything else to be built in isolation:
       voxel type, which `VoxelMesherBlocky`'s side-culling may or may not
       expose the hooks for; needs research before implementation, not
       assumed solvable the same way as a normal opaque/cutout block.
+      **Head start found while building the wood-plank mod:**
+      `VoxelBlockyModel` (the base class, not just Mesh) has
+      `culls_neighbors: bool` (default true) and `transparency_index: int`
+      (default 0) -- exactly sounds like the shared-face-removal
+      mechanism (voxels only cull each other's shared face if their
+      transparency_index matches, is the usual convention in this kind of
+      engine -- confirmed present in the API, not yet confirmed that's
+      actually how it behaves). Worth trying `culls_neighbors = true` +
+      a shared non-zero `transparency_index` for glass before assuming
+      custom per-neighbor mesh logic is needed.

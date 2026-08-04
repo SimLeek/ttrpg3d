@@ -46,10 +46,19 @@ static func get_placeable_voxels(library: VoxelBlockyLibrary) -> Array[Dictionar
 			continue
 		result.append({
 			"id": id,
-			"name": DISPLAY_NAMES.get(id, "Voxel %d" % id),
+			"name": _display_name(id),
 			"icon": icon,
 		})
 	return result
+
+## Built-in name if this is a known id, else whatever a mod registered it
+## with (ModManager.apply_voxel_registrations appends mod voxels to the
+## library and records their assigned id -> name), else a generic fallback.
+static func _display_name(id: int) -> String:
+	if DISPLAY_NAMES.has(id):
+		return DISPLAY_NAMES[id]
+	var mod_name: String = ModManager.get_voxel_name(id)
+	return mod_name if mod_name != "" else "Voxel %d" % id
 
 static func _extract_icon(model: VoxelBlockyModelMesh) -> Texture2D:
 	for surface in range(2):
