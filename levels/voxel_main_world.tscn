@@ -17,8 +17,6 @@ size = Vector3(1000, 1000, 1000)
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_mk15g"]
 shader = ExtResource("6_5qsys")
-shader_parameter/panini_d = 0.870000041325
-shader_parameter/panini_s = 0.0
 shader_parameter/sky_tint = Color(0.42000002, 0.8839998, 1, 1)
 shader_parameter/exposure = 1.0
 

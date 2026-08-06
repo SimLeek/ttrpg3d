@@ -10,7 +10,8 @@ extends Node
 ## - Each mod folder has a mod.json manifest: id, name, version, and an
 ##   entry_script path (relative to the mod folder) whose script defines
 ##   `static func register() -> void` and calls back into this autoload
-##   (ModManager.register_item()/register_voxel()) to add content.
+##   (ModManager.register_item()/register_voxel()/register_generator()) to
+##   add content.
 ## - user://mods_enabled.json is a flat {mod_id: bool} checklist. Newly
 ##   discovered mods default to enabled and get added automatically.
 ##   Editing the file by hand is the whole UI for now -- no in-game toggle
@@ -36,6 +37,14 @@ var registered_items: Array[Dictionary] = []
 ## sees it.
 var registered_voxels: Array[Dictionary] = []
 
+## Entries contributed by register_generator(), same shape as
+## WorldGeneratorCatalog's built-in entries -- it merges these in alongside
+## its own. Mods add these as data (id/name/classifications/script/params)
+## pointing at an existing generator script rather than needing their own
+## generation code -- see mods/plains_biome, which just reuses the core
+## hilly generator with a different trees_enabled param.
+var registered_generators: Array[Dictionary] = []
+
 var _applied_libraries: Array = []
 var _voxel_names_by_id: Dictionary = {}
 
@@ -53,6 +62,9 @@ func register_item(entry: Dictionary) -> void:
 
 func register_voxel(def: Dictionary) -> void:
 	registered_voxels.append(def)
+
+func register_generator(def: Dictionary) -> void:
+	registered_generators.append(def)
 
 ## Appends any not-yet-applied registered_voxels to this library, assigning
 ## each the next free integer id (library.models.size() at append time).

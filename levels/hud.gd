@@ -1,13 +1,27 @@
 extends CanvasLayer
 
+## Max range for the default-mode "what am I looking at" distance check --
+## purely a UI readout (range-check info for the player/DM), not a gameplay
+## interaction range.
+const RANGE_CHECK_MAX_DIST := 100.0
+
 @export var health_bar: TextureProgressBar
 @export var stamina_bar: TextureProgressBar
 
 var _flight_label: Label
+var _battle_label: Label
+var _range_check_label: Label
 
 func _ready() -> void:
 	visible = true  # don't start paused while being able to move
 	_build_flight_label()
+	_build_battle_label()
+	_build_range_check_label()
+	BattleModeManager.battle_mode_changed.connect(_on_battle_mode_changed)
+	BattleModeManager.waypoints_changed.connect(_on_waypoints_changed)
+
+func _physics_process(_delta: float) -> void:
+	_update_range_check()
 
 func update_health_ui(current: float, max_hp: float) -> void:
 	# This converts the 0.0-1.0 range to a 0-100 percentage
@@ -44,3 +58,77 @@ func update_flight_status(is_flying: bool, is_intangible: bool) -> void:
 	_flight_label.text = "   |   ".join(parts)
 	_flight_label.add_theme_color_override("font_color", Color(1.0, 0.5, 1.0) if is_intangible else Color(0.3, 1.0, 1.0))
 	_flight_label.visible = true
+
+
+func _build_battle_label() -> void:
+	_battle_label = Label.new()
+	_battle_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	_battle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_battle_label.position.y = 32
+	_battle_label.add_theme_font_size_override("font_size", 18)
+	_battle_label.add_theme_color_override("font_color", Color(1.0, 0.85, 0.2))
+	_battle_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	_battle_label.add_theme_constant_override("shadow_offset_x", 1)
+	_battle_label.add_theme_constant_override("shadow_offset_y", 1)
+	_battle_label.visible = false
+	add_child(_battle_label)
+
+
+func _on_battle_mode_changed(is_active: bool) -> void:
+	_battle_label.visible = is_active
+	_refresh_battle_label()
+
+
+func _on_waypoints_changed(_waypoints: Array) -> void:
+	_refresh_battle_label()
+
+
+func _refresh_battle_label() -> void:
+	if not BattleModeManager.active:
+		return
+	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  Euclidean: %.1f  |  Manhattan: %.1f  (LMB mark, RMB undo, B to end)" % [
+		BattleModeManager.waypoints.size(),
+		BattleModeManager.get_euclidean_distance(),
+		BattleModeManager.get_manhattan_distance(),
+	]
+
+
+func _build_range_check_label() -> void:
+	_range_check_label = Label.new()
+	_range_check_label.set_anchors_preset(Control.PRESET_CENTER)
+	_range_check_label.position += Vector2(0, 28)
+	_range_check_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_range_check_label.add_theme_font_size_override("font_size", 14)
+	_range_check_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
+	_range_check_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	_range_check_label.add_theme_constant_override("shadow_offset_x", 1)
+	_range_check_label.add_theme_constant_override("shadow_offset_y", 1)
+	_range_check_label.visible = false
+	add_child(_range_check_label)
+
+
+## Default-mode-only "range check": raycast from the camera along its look
+## direction, and if it hits something, show the distance from the player
+## (not the camera -- that's what actually matters for TTRPG range/spell
+## checks) to the hit point. Hidden in battle mode (which has its own
+## waypoint-distance readout) and while a menu has the mouse released.
+func _update_range_check() -> void:
+	if BattleModeManager.active or Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
+		_range_check_label.visible = false
+		return
+	var camera := get_viewport().get_camera_3d()
+	var player := get_tree().get_first_node_in_group("player")
+	if not camera or not player:
+		_range_check_label.visible = false
+		return
+	var from := camera.global_position
+	var to := from - camera.global_transform.basis.z * RANGE_CHECK_MAX_DIST
+	var space_state := camera.get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = [player.get_rid()]
+	var result := space_state.intersect_ray(query)
+	if result.is_empty():
+		_range_check_label.visible = false
+		return
+	_range_check_label.text = "%.1f m" % player.global_position.distance_to(result.position)
+	_range_check_label.visible = true

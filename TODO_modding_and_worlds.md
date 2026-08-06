@@ -108,39 +108,152 @@ Limestone Slab reveals width/height/depth fields with sane defaults;
 Create & Switch reloads the scene into a new purple-sky slab world. (Your
 words: "Good stuff. Sky very purple.")
 
-### Follow-up -- real seamless skybox (in progress, this turn)
+### Follow-up -- real seamless skybox [done]
 
 Flat purple proved the plumbing (generator swap, distinct env, spawn
-override) but not "actual skyboxes" -- want a real procedurally generated,
-seamless *cubemap* image (not just a color) to prove that half properly:
-6 square textures where each pair of adjacent faces' touching edge pixels
-match, so there's no visible seam at the cube corners. Godot's
-`PanoramaSkyMaterial` wants a single equirectangular `Texture2D`, not 6
-separate face images directly -- need to confirm the actual Godot-side
-mechanism (bake 6 procedural faces into one equirect image at generation
-time server-side, vs. a `Cubemap`/`TextureLayered` resource, vs. a custom
-sky shader sampling `samplerCube`) before committing to an approach.
+override); replaced with a real procedurally generated *cubemap*
+(`ProceduralSkybox.generate_cubemap()`), sampled by a custom
+`shader_type sky` shader (`simple_cubemap_sky.gdshader`, `samplerCube` +
+`EYEDIR`) -- seamless by construction since each face's color is a
+continuous function of the 3D direction vector, not 6 independently-baked
+images that need edge-matching. (`PanoramaSkyMaterial.panorama` turned out
+to be typed `Texture2D` only, confirmed via doctool XML, so a plain
+Cubemap resource wasn't an option -- this is why the custom shader.)
+Verified live: limestone-slab worlds now show a seamless purple
+procedural pattern, no visible seams at cube-face edges.
+
 - [ ] **Checked -- not in the codebase, confirmed by grep across
       `scripts/`:** the poisson-disc-sampling-in-a-capsule +
-      voxel-weighting idea for nice biome boundaries. Purely a future
-      idea right now, no implementation to build on. Logged here so it
-      doesn't get lost, not attempting it this pass.
-- [ ] Panini removal: **checked** -- panini distortion lives only in
-      `panini_full.gdshader` (the player's own shader, `Blob.tscn`) and
-      `panini_sky.gdshader` (presumably the skybox). The shared block
-      shader every voxel material uses (`xray_if_behind_full.gdshader` --
-      `shader_dirt.tres`, `shader_grass.tres`, etc. all reference it) has
-      no panini code at all; its cutout/x-ray-behind-terrain effect (the
-      thing explicitly called out as critical to keep) is safe by
-      construction, not something that needs careful untangling. So this
-      is scoped to just the two panini-named shaders. Removing panini
-      distortion is also what makes real skyboxes (as opposed to whatever
-      panini did to sky rendering) possible -- ties directly into the
-      limestone slab's distinct sky
-      and the depth-based switch below.
+      voxel-weighting idea for nice biome boundaries (see
+      `example_pcg_capsule.py` at repo root -- the Python reference
+      implementation, not yet ported to GDScript). Purely a future idea
+      right now, no implementation to build on. GDScript, not C#, per
+      your web-hosting note (Godot's HTML5/web export doesn't support
+      Mono/C#). Logged here so it doesn't get lost, not attempting it
+      this pass.
+- [ ] F1-menu world display with colors per biome point, using Godot's
+      own visuals (not VTK) -- depends on the capsule/biome system above
+      existing first.
+- [x] Panini removal: `panini_full.gdshader` (the player's own shader,
+      `Blob.tscn`) turned out to already have zero panini code -- just two
+      stale `shader_parameter/panini_d`/`panini_s` overrides in
+      `Blob.tscn` pointing at uniforms that no longer existed in the
+      shader, now deleted. `panini_sky.gdshader` (the default Hilly
+      world's sky) had the actual distortion math, but it was already
+      dead -- wrapped in a commented-out `if (panini_enabled > 0.5)`
+      block referencing an undeclared `camera_transform` uniform, so it
+      could never have run. Stripped the dead block and the now-unused
+      `panini_d`/`panini_s` uniforms (plus their matching stale overrides
+      in `voxel_main_world.tscn`), leaving a plain equirectangular
+      panorama sky shader. The shared block shader every voxel material
+      uses (`xray_if_behind_full.gdshader` -- `shader_dirt.tres`,
+      `shader_grass.tres`, etc.) was already confirmed panini-free, so
+      its cutout/x-ray-behind-terrain effect was never at risk. Net
+      effect on the actual rendered sky: none (the code was inert), just
+      cleanup -- both scenes' skies are now genuinely panini-free with no
+      leftover confusion for the depth-based switch below to build on.
 - [ ] Main world was supposed to have a Terraria-like depth-based skybox
       switch (different sky when underground vs. on the surface) -- not
-      built yet, logged as follow-up once plain skyboxes exist at all.
+      built yet, now unblocked since panini is fully removed.
+
+### Follow-up -- Plains biome [done]
+
+A second, simplified biome: the existing hilly generator reused via
+`fixed_params` (`mods/plains_biome/`) rather than a new generator script --
+`trees_enabled`/`windmills_enabled`/`height_scale` exports added to
+`HillyTerrainGenerator`/`generator_main.gd`, Plains sets
+`trees_enabled=false, windmills_enabled=false, height_scale=0.12`. Caught
+and fixed iteratively: first pass only killed trees (peaks/windmills still
+there, caught live), second pass flattened height + disabled windmills.
+Also fatal on spawn at first -- landing above freshly-streaming terrain
+that hadn't generated yet triggered `Health.gd`'s fall-damage curve
+(`max_health = 1.0`, quadratic) before the player ever saw the world.
+Fixed with a `_grant_spawn_protection()` helper in
+`center_of_universe.gd` (zero velocity + briefly disable
+`turn_on_fall_damage` after any generator-driven spawn teleport, not just
+Plains' -- limestone-slab spawns get the same protection). Verified live:
+flat treeless windmill-less landscape, player survives every spawn.
+
+### Follow-up -- world deletion, reset, and persistence [done]
+
+- [x] `WorldManager.delete_world(id)` / `reset_world(id)` /
+      `get_stream_path(id)`: each world gets its own
+      `user://world_saves/<id>.sqlite`; delete removes the world's
+      `worlds.json` entry and its save file, reset removes just the save
+      file (world regenerates fresh from its generator next load). World
+      ids are derived from the max existing `world_N` suffix + 1, not
+      `worlds.size()`, so a deleted-then-recreated world can't collide
+      with an older world's still-on-disk save.
+- [x] `dm_world_menu.gd`: right-click a world row for a Reset/Delete
+      `PopupMenu`, or hover + press Delete. (Popup position bug found
+      live: `DisplayServer.mouse_get_position()` is desktop-global and
+      landed the popup off-window once the game window wasn't at the
+      desktop origin -- fixed with `get_viewport().get_mouse_position()`,
+      which is viewport-local, matching what an embedded-subwindow
+      Popup's `position` actually expects.)
+- [x] Per-world `VoxelStreamSQLite` wired into
+      `center_of_universe.gd._apply_pending_world()` so voxel edits
+      persist instead of regenerating fresh every switch. **Live-tested
+      by you and initially found broken**: edits didn't survive an F1
+      world switch. Root cause -- `VoxelTerrain` only flushes a modified
+      block to its stream on unload or an explicit
+      `save_modified_blocks()` call; `change_scene_to_file()` just frees
+      the terrain node, neither happens automatically. Fixed by making
+      `WorldManager.switch_to_world()` await a `_flush_current_world()`
+      step first (`terrain.save_modified_blocks()`, then poll the
+      returned `VoxelSaveCompletionTracker.is_complete()` per-frame)
+      before reloading the scene. **Live-tested by you and confirmed
+      working** -- but surfaced a second bug: dying ("Player died.
+      Reloading...") used `get_tree().reload_current_scene()`, which
+      re-instantiates the scene file's own baked-in default terrain
+      (Hilly World) rather than whatever world you'd actually switched
+      to. Fixed with `WorldManager.current_world` (kept up to date by
+      `switch_to_world()`, defaulted to the first world at boot) and a
+      `respawn_in_current_world()` entry point that
+      `player_blob_ctrl.gd.die()` now calls instead -- reloads back into
+      the same world (and gets the same flush + spawn-protection
+      treatment as a manual F1 switch, since it's the same code path).
+      Live-tested and confirmed working.
+- [x] Fresh launch (no pending_world queued -- first boot, or the scene
+      run directly) was still using the scene file's own baked-in default
+      terrain instead of "the first existing world." `_apply_pending_world()`
+      now falls back to `WorldManager.current_world` (defaults to
+      `worlds[0]`) when `pending_world` is empty, so a fresh start always
+      loads whichever world is actually first in the list.
+- [x] Save file size shown per world in the DM menu list (e.g. "New World
+      (limestone_slab)  [128.0 KB]", "no save data" before anything's
+      been written) -- `WorldManager.get_save_size_string()`. Relevant to
+      your multi-user/web-hosting note: raw file size is also exactly
+      what you'd want to track/cap per-user if worlds are ever served
+      from a shared host. Live-tested and confirmed: size grows with
+      saved content (52 KB after building underground trees vs. 20 KB
+      before) -- a hand-built battlemap-scale structure lands in the
+      tens-of-KB range.
+- [ ] Minor, deprioritized by you ("of less importance now"): some
+      placed-voxel faces visually remain after deleting a neighboring
+      voxel. Noted, not investigated.
+- [ ] SpinBox max values for limestone-slab width/height/depth raised
+      256/64/256 -> 100000/100000/100000 (was never a real generator
+      limit, just an arbitrary UI cap coincidentally close to
+      `VoxelTerrain.max_view_distance = 256`, a separate streaming/
+      performance setting that was left untouched).
+- [x] `voxel_id` param (type `"voxel_picker"`) added to the limestone-slab
+      generator so a DM can pick which block (built-in or mod-added) fills
+      the slab -- `dm_world_menu.gd` populates the picker from
+      `VoxelCatalog.get_placeable_voxels()` after
+      `ModManager.apply_voxel_registrations()`. Boot-checked clean;
+      **not yet live-tested** (pick a non-default/mod block, confirm the
+      slab generates from it).
+
+### Follow-up -- screenshot token cost
+
+`scripts_dev/shrink_screenshot.py`: PIL-based downscale/crop CLI (opencv
+is installed but broken system-wide -- `libprotobuf.so.34.1.0` missing,
+a version mismatch against the `.31.1.0`/`.35.1.0` actually installed, not
+a missing package -- substituted PIL rather than fixing a system lib).
+~1330 tokens -> ~240 tokens per screenshot at the default 400px width,
+confirmed still legible. Use this for every screenshot going forward
+instead of reading full-resolution captures.
 
 ## Phase 2 -- New voxels, both as mods (Phase 0 dependency)
 
@@ -150,6 +263,13 @@ sky shader sampling `samplerCube`) before committing to an approach.
       matching what was asked, even though "plank" more typically implies
       flat straight grain. Done as part of Phase 0 (it's the mod-system
       proof of concept).
+- [ ] **Convention for later:** the next new world type (the capsule/
+      biome system, or anything else) should ship as a mod registering a
+      generator via `ModManager.register_generator()` (the `plains_biome`
+      pattern), not get hardcoded into `WorldGeneratorCatalog.get_generators()`
+      the way `hilly`/`limestone_slab` currently are -- those two are
+      grandfathered in as the original built-ins, not a precedent to keep
+      copying.
 - [ ] Glass: `res://mods/glass/`. Fully transparent except the edges,
       which are white-blue and mostly (not fully) transparent. **Two
       distinct problems, corrected after initially conflating them:**
@@ -192,3 +312,65 @@ sky shader sampling `samplerCube`) before committing to an approach.
     neighboring voxels' ids too. Needs a real spike before committing to
     either, not assumed solvable the same way as an ordinary opaque or
     single-texture cutout block.
+
+## Phase 3 -- TTRPG modes (new subject)
+
+Full ask: a turn-based battle mode alongside the existing default movement
+mode, where you travel as a transparent-you and mark voxels to travel to
+with running Euclidean/Manhattan distance shown; Tab shows character
+actions (spells/abilities -- possibly items under the hood, maybe via a
+character-sheet mod); line-of-sight from enemies to player as lines rather
+than the sneak-mode frustums; a dice roller; a DM-facing turn tracker; and
+a default-mode cursor readout showing distance to whatever you're looking
+at (range-check info). This first pass covers the mode switch, movement,
+turn tracker, and cursor distance -- actions/character-sheet, LOS lines,
+and dice roller are still ahead.
+
+- [x] Battle mode switch: `BattleModeManager` autoload, `toggle_battle_mode`
+      (B). Built on top of the DM-mode fly/intangible movement that
+      already existed in `player_blob_ctrl.gd` (double-tap Space / double-
+      tap Ctrl) rather than a new flight controller -- battle mode just
+      force-enables both (`is_flying`/`is_intangible`) instead of
+      requiring the double-tap, and drops the Blob's shader
+      `albedo_color.a` to 0.35 for the "transparent you" look, restoring
+      both on exit.
+- [x] Movement/waypoint marking: while battle mode is active, the
+      primary/secondary item-use clicks are repurposed
+      (`two_handed_resource.gd` checks `BattleModeManager.active` first)
+      to mark the player's current position as a waypoint (LMB) or undo
+      the last one (RMB), instead of using the held item. Small unshaded
+      yellow sphere markers are spawned at each waypoint in the world
+      (`BattleModeManager._refresh_markers()`) so the planned path is
+      actually visible, not just a HUD number. Total distance shown both
+      ways (Euclidean straight-line and Manhattan grid-step, since which
+      one matters depends on the table's rules) in a HUD label
+      (`hud.gd`).
+- [x] DM turn tracker: `TurnTracker` autoload (plain in-memory combatant
+      list + current-turn index + round counter, not persisted --
+      per-encounter, unlike worlds/mods) and `turn_tracker_menu.gd`
+      (`toggle_turn_tracker`, F2) -- add/remove combatants by name, "Next
+      Turn" advances the index and increments the round on wraparound,
+      current combatant highlighted.
+- [x] Default-mode cursor distance ("range check"): `hud.gd` raycasts from
+      the camera every physics frame (hidden in battle mode, which has its
+      own distance readout, and while any menu has the mouse released) and
+      shows the distance *from the player* (not the camera -- camera is
+      offset by the spring arm, would skew a range check) to whatever's
+      hit, in meters, near screen center. General-purpose -- hits terrain,
+      structures, anything with collision, not npc-specific.
+- [ ] None of this has been live-tested yet (built and boot-checked only).
+      In particular worth checking: does force-enabling intangible mid-
+      battle-mode ever strand the player inside terrain when it turns back
+      off at end of turn (a pre-existing risk of the manual double-tap
+      toggle too, not new, but worth confirming battle mode doesn't make
+      it easy to trigger by accident); do the waypoint markers clean up
+      correctly across a world switch/death-respawn (they're parented to
+      `get_tree().current_scene`, freed automatically on scene reload, but
+      not exercised together with a switch mid-battle-mode).
+- [ ] Not started: Tab character-action menu (Tab is currently bound to
+      `toggle_inventory` -- likely the right foundation to extend via a
+      character-sheet mod rather than a wholly separate panel, since
+      actions/spells were described as "might be technically items"), line-
+      of-sight lines from enemy to player (blocked on there being an actual
+      enemy/AI entity to draw from -- `blob_ai_resource.gd` exists but
+      hasn't been checked for fit), dice roller.
