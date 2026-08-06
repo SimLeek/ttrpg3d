@@ -345,32 +345,69 @@ and dice roller are still ahead.
       ways (Euclidean straight-line and Manhattan grid-step, since which
       one matters depends on the table's rules) in a HUD label
       (`hud.gd`).
-- [x] DM turn tracker: `TurnTracker` autoload (plain in-memory combatant
-      list + current-turn index + round counter, not persisted --
-      per-encounter, unlike worlds/mods) and `turn_tracker_menu.gd`
-      (`toggle_turn_tracker`, F2) -- add/remove combatants by name, "Next
-      Turn" advances the index and increments the round on wraparound,
-      current combatant highlighted.
-- [x] Default-mode cursor distance ("range check"): `hud.gd` raycasts from
-      the camera every physics frame (hidden in battle mode, which has its
-      own distance readout, and while any menu has the mouse released) and
-      shows the distance *from the player* (not the camera -- camera is
-      offset by the spring arm, would skew a range check) to whatever's
-      hit, in meters, near screen center. General-purpose -- hits terrain,
-      structures, anything with collision, not npc-specific.
-- [ ] None of this has been live-tested yet (built and boot-checked only).
-      In particular worth checking: does force-enabling intangible mid-
-      battle-mode ever strand the player inside terrain when it turns back
-      off at end of turn (a pre-existing risk of the manual double-tap
-      toggle too, not new, but worth confirming battle mode doesn't make
-      it easy to trigger by accident); do the waypoint markers clean up
-      correctly across a world switch/death-respawn (they're parented to
-      `get_tree().current_scene`, freed automatically on scene reload, but
-      not exercised together with a switch mid-battle-mode).
+- [x] DM turn tracker, redesigned after first live test: not a modal F2
+      panel anymore -- an always-on-screen, draggable, minimizable widget
+      (Roll20-style, per your explicit correction), `turn_tracker_menu.gd`,
+      no dedicated open/close key at all (the `toggle_turn_tracker`/F2
+      input action was removed). Drag by its title bar to reposition;
+      minimize collapses it to a compact "<name>'s turn" / "Your Turn"
+      bar. `TurnTracker` autoload still holds the actual data (in-memory
+      combatant list + current-turn index + round counter, not persisted).
+      Combatants can now carry `is_local_player: bool`; the player got a
+      `character_name` export (`player_blob_ctrl.gd`), and an "Add Me"
+      button adds the local player by that name -- when it's their turn,
+      the widget shows "Your Turn" in a distinct color instead of
+      "<name>'s turn". Clicking a character in the world to add them (with
+      an eventual initiative roll) is noted but not built -- there's only
+      the one local player to click on right now, no NPCs yet; "Add Me" is
+      the pragmatic stand-in until that's worth building.
+- [x] Range check moved from default mode to **battle mode only** (it's
+      combat range-check info, not general sightseeing -- your correction
+      after the first live test) and reimplemented on `VoxelTool.raycast()`
+      -- the same mechanism `voxel_interactor.gd`'s place/delete targeting
+      already uses -- instead of a generic `PhysicsDirectSpaceState3D`
+      query, which was intermittent (the voxel-native raycast "always
+      works" per how reliable block placement already is). Same origin
+      (camera) and direction as before; distance is measured from the
+      player's own position, not the camera, since that's what a TTRPG
+      range/spell check actually cares about. Can't hit the player's own
+      body by construction (VoxelTool.raycast only intersects voxel
+      geometry), so no separate self-exclusion was needed the way the old
+      physics-raycast version required.
+- [x] Fixed a real crash found on first live test: `set_active()` assigned
+      an untyped array literal (`[player.global_position] if player else
+      []`) to the typed `waypoints: Array[Vector3]` var, which throws at
+      runtime ("Trying to assign an array of type Array to a variable of
+      type Array[Vector3]"). Now uses `clear()` + `append()`.
+- [x] Fixed WASD moving the player while typing into a menu's text field
+      (found via the turn tracker's "Combatant name" field, but the same
+      gap existed in `dm_world_menu.gd`'s "Name" field too) --
+      `player_blob_ctrl.gd` reads movement input directly every physics
+      frame regardless of mouse mode, so releasing the mouse for a text
+      field wasn't enough. Both now request `get_tree().paused` through a
+      new `UiPauseGate` autoload (dm_world_menu.gd while open,
+      turn_tracker's name field while focused) rather than setting
+      `get_tree().paused` directly -- a single shared boolean would let
+      one of them closing/losing focus incorrectly unpause while the
+      other still wants it (e.g. DM menu open + turn tracker name field
+      focused at once). `WorldManager.switch_to_world()` now calls
+      `UiPauseGate.release_all()` up front, since `paused` (and the gate's
+      own reasons dict, being an autoload) persists across
+      `change_scene_to_file()` -- without it, a world switched-to while
+      paused would load already frozen.
+- [ ] Still not live-tested since the redesign+fixes above (this round was
+      all built and boot-checked only). Also still an open question from
+      before: does force-enabling intangible mid-battle-mode ever strand
+      the player inside terrain when it turns back off at end of turn (a
+      pre-existing risk of the manual double-tap toggle too, not new, but
+      worth confirming battle mode doesn't make it easy to trigger by
+      accident); do the waypoint markers clean up correctly across a world
+      switch/death-respawn.
 - [ ] Not started: Tab character-action menu (Tab is currently bound to
       `toggle_inventory` -- likely the right foundation to extend via a
       character-sheet mod rather than a wholly separate panel, since
       actions/spells were described as "might be technically items"), line-
       of-sight lines from enemy to player (blocked on there being an actual
       enemy/AI entity to draw from -- `blob_ai_resource.gd` exists but
-      hasn't been checked for fit), dice roller.
+      hasn't been checked for fit), dice roller, initiative rolling +
+      click-to-add-a-character-from-the-world for the turn tracker.

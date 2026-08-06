@@ -8,14 +8,14 @@ extends Node
 signal combatants_changed
 signal turn_changed(current_index: int, round_number: int)
 
-var combatants: Array[Dictionary] = []  # {name: String}
+var combatants: Array[Dictionary] = []  # {name: String, is_local_player: bool}
 var current_index: int = -1
 var round_number: int = 1
 
-func add_combatant(combatant_name: String) -> void:
+func add_combatant(combatant_name: String, is_local_player: bool = false) -> void:
 	if combatant_name.strip_edges().is_empty():
 		return
-	combatants.append({"name": combatant_name})
+	combatants.append({"name": combatant_name, "is_local_player": is_local_player})
 	if current_index == -1:
 		current_index = 0
 		turn_changed.emit(current_index, round_number)

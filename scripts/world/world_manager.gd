@@ -38,9 +38,12 @@ func switch_to_world(world: Dictionary) -> void:
 	# Switching can be triggered from a menu that paused the tree (e.g.
 	# dm_world_menu.gd, so WASD doesn't move the player while typing a
 	# world name) without that menu ever explicitly closing/unpausing
-	# first -- get_tree().paused persists across change_scene_to_file, so
-	# without this the freshly-loaded world would come up frozen.
-	get_tree().paused = false
+	# first -- get_tree().paused persists across change_scene_to_file, and
+	# UiPauseGate's reasons dict would too (it's an autoload; the menu
+	# instances that requested a pause don't survive the reload to release
+	# it themselves) -- so without this the freshly-loaded world would
+	# come up frozen, and stay that way.
+	UiPauseGate.release_all()
 	await _flush_current_world()
 	current_world = world
 	pending_world = world

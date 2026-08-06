@@ -1,5 +1,9 @@
 extends CharacterBody3D
 
+## Display name for the turn tracker ("<name>'s turn" / highlighted "Your
+## Turn" when this is the local player's combatant entry).
+@export var character_name: String = "Player"
+
 # the player is a...
 @export var mover: MoverResource
 @export var basic_jumper: BasicJumperResource
