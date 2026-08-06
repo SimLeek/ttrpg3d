@@ -37,6 +37,17 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# Release focus on Tab *before* Godot's own built-in Tab-for-focus-
+	# navigation gets a chance to run (that happens later, during GUI
+	# dispatch) and consume the key -- otherwise a focused LineEdit eats
+	# Tab every time, and toggle_inventory's _unhandled_input handler
+	# never sees it. _input() fires first, so by the time GUI dispatch
+	# checks "is there a focused control to intercept Tab for", there
+	# isn't one anymore, and the same keypress falls through to close
+	# the inventory too.
+	if _name_edit.has_focus() and event is InputEventKey and event.pressed and event.keycode == KEY_TAB:
+		_name_edit.release_focus()
+
 	if not _dragging:
 		return
 	if event is InputEventMouseMotion:
@@ -191,7 +202,14 @@ func _current_turn_text() -> Dictionary:
 	return {"text": "%s's turn" % combatant.get("name", "?"), "color": OTHER_TURN_COLOR}
 
 
-func _refresh() -> void:
+## Default-valued params so this can be connected directly to both
+## combatants_changed (0 args) and turn_changed (current_index,
+## round_number) -- Godot requires the receiving method's arity to be >=
+## what the signal emits, not just compatible; connecting to a strict
+## 0-param method threw "Method expected 0 argument(s), but called with
+## 2" every time turn_changed fired, silently skipping this whole refresh
+## and making Next Turn look like it wasn't doing anything.
+func _refresh(_current_index: int = 0, _round_number: int = 0) -> void:
 	_minimize_btn.text = "[]" if _minimized else "_"
 	_expanded_box.visible = not _minimized
 	_minimized_label.visible = _minimized

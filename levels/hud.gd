@@ -136,8 +136,10 @@ func _update_range_check() -> void:
 		_range_check_label.visible = false
 		return
 	# hit.position comes back in terrain-local space (same as
-	# voxel_interactor.gd's placement-plane math) -- add the terrain's own
-	# global position to get back to world space before measuring.
-	var hit_world_pos: Vector3 = hit.position + player.voxel_terrain.global_position
+	# voxel_interactor.gd's placement-plane math) as a Vector3i -- add the
+	# terrain's own global position to get back to world space before
+	# measuring (explicit Vector3() cast: GDScript won't implicitly mix
+	# Vector3i and Vector3 in a + operator).
+	var hit_world_pos: Vector3 = Vector3(hit.position) + player.voxel_terrain.global_position
 	_range_check_label.text = "%.1f m" % player.global_position.distance_to(hit_world_pos)
 	_range_check_label.visible = true
