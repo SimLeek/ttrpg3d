@@ -395,14 +395,32 @@ and dice roller are still ahead.
       own reasons dict, being an autoload) persists across
       `change_scene_to_file()` -- without it, a world switched-to while
       paused would load already frozen.
-- [ ] Still not live-tested since the redesign+fixes above (this round was
-      all built and boot-checked only). Also still an open question from
-      before: does force-enabling intangible mid-battle-mode ever strand
-      the player inside terrain when it turns back off at end of turn (a
-      pre-existing risk of the manual double-tap toggle too, not new, but
-      worth confirming battle mode doesn't make it easy to trigger by
-      accident); do the waypoint markers clean up correctly across a world
-      switch/death-respawn.
+- [x] Two bugs found on first live test of the redesigned tracker: (1)
+      "Next Turn" updated `TurnTracker.current_index` correctly (proven by
+      clicking Minimize immediately after showing the right state) but the
+      on-screen list/round label didn't visually update from the click
+      itself -- root cause not fully confirmed statically, so every
+      tracker button that mutates state (Next Turn, Clear All, Add, Add
+      Me, Remove) now also calls `_refresh()` directly as a defensive
+      redundancy alongside the signal-driven refresh, rather than relying
+      on the signal chain alone. (2) Tab could no longer close the
+      inventory menu -- it was cycling keyboard focus between the turn
+      tracker's own buttons instead, since they default to focusable
+      (`FOCUS_ALL`) and Godot's built-in Tab-for-focus-navigation consumes
+      the key before it reaches `toggle_inventory`'s `_unhandled_input`
+      handler. All the tracker's buttons are now `FOCUS_NONE` (mouse
+      clicks still work fine, focus_mode only affects keyboard/gamepad
+      navigation) -- only the "Combatant name" LineEdit still needs
+      focus, and it does still call `grab_focus()` after Add for rapid
+      multi-entry, so Tab could in principle still be at some risk right
+      after adding a combatant specifically; worth confirming this didn't
+      just narrow the window rather than close it.
+- [ ] Still an open question from before: does force-enabling intangible
+      mid-battle-mode ever strand the player inside terrain when it turns
+      back off at end of turn (a pre-existing risk of the manual
+      double-tap toggle too, not new, but worth confirming battle mode
+      doesn't make it easy to trigger by accident); do the waypoint
+      markers clean up correctly across a world switch/death-respawn.
 - [ ] Not started: Tab character-action menu (Tab is currently bound to
       `toggle_inventory` -- likely the right foundation to extend via a
       character-sheet mod rather than a wholly separate panel, since

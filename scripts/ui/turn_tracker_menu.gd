@@ -85,6 +85,7 @@ func _build_ui() -> void:
 	_minimize_btn = Button.new()
 	_minimize_btn.text = "_"
 	_minimize_btn.custom_minimum_size = Vector2(24, 0)
+	_minimize_btn.focus_mode = Control.FOCUS_NONE
 	_minimize_btn.pressed.connect(_on_minimize_pressed)
 	title_row.add_child(_minimize_btn)
 
@@ -122,11 +123,13 @@ func _build_ui() -> void:
 	add_row.add_child(_name_edit)
 	var add_btn := Button.new()
 	add_btn.text = "Add"
+	add_btn.focus_mode = Control.FOCUS_NONE
 	add_btn.pressed.connect(_on_add_pressed)
 	add_row.add_child(add_btn)
 
 	var add_me_btn := Button.new()
 	add_me_btn.text = "Add Me"
+	add_me_btn.focus_mode = Control.FOCUS_NONE
 	add_me_btn.pressed.connect(_on_add_me_pressed)
 	_expanded_box.add_child(add_me_btn)
 
@@ -135,11 +138,13 @@ func _build_ui() -> void:
 	_expanded_box.add_child(control_row)
 	var next_btn := Button.new()
 	next_btn.text = "Next Turn"
-	next_btn.pressed.connect(func(): TurnTracker.next_turn())
+	next_btn.focus_mode = Control.FOCUS_NONE
+	next_btn.pressed.connect(func(): TurnTracker.next_turn(); _refresh())
 	control_row.add_child(next_btn)
 	var clear_btn := Button.new()
 	clear_btn.text = "Clear All"
-	clear_btn.pressed.connect(func(): TurnTracker.clear())
+	clear_btn.focus_mode = Control.FOCUS_NONE
+	clear_btn.pressed.connect(func(): TurnTracker.clear(); _refresh())
 	control_row.add_child(clear_btn)
 
 
@@ -167,12 +172,14 @@ func _on_add_pressed() -> void:
 	TurnTracker.add_combatant(_name_edit.text)
 	_name_edit.text = ""
 	_name_edit.grab_focus()
+	_refresh()
 
 
 func _on_add_me_pressed() -> void:
 	var player := get_tree().get_first_node_in_group("player")
 	var player_name: String = player.character_name if player and ("character_name" in player) else "Player"
 	TurnTracker.add_combatant(player_name, true)
+	_refresh()
 
 
 func _current_turn_text() -> Dictionary:
@@ -215,9 +222,11 @@ func _refresh() -> void:
 
 		var remove_btn := Button.new()
 		remove_btn.text = "x"
+		remove_btn.focus_mode = Control.FOCUS_NONE
 		remove_btn.pressed.connect(_on_remove_pressed.bind(i))
 		row.add_child(remove_btn)
 
 
 func _on_remove_pressed(index: int) -> void:
 	TurnTracker.remove_combatant(index)
+	_refresh()
