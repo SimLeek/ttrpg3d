@@ -1,0 +1,6 @@
+{
+	"id": "wood_plank",
+	"name": "Wooden Plank",
+	"version": "1.0.0",
+	"entry_script": "register.gd"
+}

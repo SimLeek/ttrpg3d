@@ -21,6 +21,12 @@ const STRUCTURE_PLACER_SCRIPT := preload("res://scripts/items/structure_placer_i
 const PLANE_SELECTOR_SCRIPT := preload("res://scripts/items/plane_selector_item.gd")
 
 static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary]:
+	# Mod-registered voxels get appended to the library (assigning them an
+	# id) the first time it's seen -- do this before scanning, so mod
+	# blocks show up in the same pass as built-in ones, no separate merge
+	# step needed for those.
+	ModManager.apply_voxel_registrations(library)
+
 	var items: Array[Dictionary] = []
 	for block in VoxelCatalog.get_placeable_voxels(library):
 		items.append({
@@ -35,6 +41,9 @@ static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary
 	# Tools are appended after blocks so existing default hotbar slots keep
 	# their familiar block ordering; the tools just land in the slots after.
 	items.append_array(_tool_items())
+	# Mod-registered non-block items (tools, etc.) -- ItemCatalog is the
+	# merge point for these since they don't go through VoxelBlockyLibrary.
+	items.append_array(ModManager.registered_items)
 	return items
 
 ## Fixed non-block tools available from the inventory, beyond whatever
