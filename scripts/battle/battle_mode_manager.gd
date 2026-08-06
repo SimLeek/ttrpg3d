@@ -9,9 +9,10 @@ extends Node
 ## without needing a separate ghost node or camera. primary/secondary item
 ## clicks are repurposed while active (see two_handed_resource.gd) to mark
 ## a waypoint / undo the last one, instead of using the currently-held
-## item. Distance is tracked both Euclidean (straight-line) and Manhattan
-## (grid/voxel-step), since which one matters depends on the table's
-## movement rules.
+## item. Distance uses whichever single metric GameSettings.distance_norm_mode
+## selects (Manhattan / Euclidean / a custom Minkowski n-norm) -- a game
+## usually sticks to one, so this reports one number, not every metric at
+## once.
 ##
 ## Waypoints snap to the center of whichever voxel they're marked in by
 ## default (GameSettings.snap_waypoints_to_grid) -- the TTRPG-grid-
@@ -39,6 +40,13 @@ var waypoints: Array[Vector3] = []
 var _marker_container: Node3D = null
 var _live_line: MeshInstance3D = null
 var _live_label: Label3D = null
+
+func _ready() -> void:
+	# Re-label already-placed segments immediately if the unit or distance
+	# metric changes mid-battle-mode, rather than waiting for the next
+	# mark/undo to pick it up.
+	GameSettings.distance_unit_changed.connect(_refresh_markers)
+	GameSettings.distance_norm_changed.connect(_refresh_markers)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_battle_mode"):
@@ -96,17 +104,10 @@ func undo_last_waypoint() -> void:
 	_refresh_markers()
 	waypoints_changed.emit(waypoints)
 
-func get_euclidean_distance() -> float:
+func get_total_distance() -> float:
 	var total := 0.0
 	for i in range(1, waypoints.size()):
-		total += waypoints[i].distance_to(waypoints[i - 1])
-	return total
-
-func get_manhattan_distance() -> float:
-	var total := 0.0
-	for i in range(1, waypoints.size()):
-		var d: Vector3 = (waypoints[i] - waypoints[i - 1]).abs()
-		total += d.x + d.y + d.z
+		total += GameSettings.compute_distance(waypoints[i], waypoints[i - 1])
 	return total
 
 func _get_player() -> Node:
@@ -172,10 +173,14 @@ func _refresh_markers() -> void:
 	for i in range(1, waypoints.size()):
 		var from: Vector3 = waypoints[i - 1]
 		var to: Vector3 = waypoints[i]
+		# The cylinder's actual length is always the true geometric
+		# (Euclidean) span between the two points -- that's a rendering
+		# fact, not a measurement convention. Only the *label text* uses
+		# whichever metric is selected (Manhattan/Euclidean/custom n-norm).
 		var segment := _make_line_segment(LINE_COLOR, from.distance_to(to))
 		_marker_container.add_child(segment)
 		_orient_line_segment(segment, from, to)
-		var label := _make_distance_label(from.distance_to(to))
+		var label := _make_distance_label(GameSettings.compute_distance(from, to))
 		_marker_container.add_child(label)
 		label.global_position = (from + to) / 2.0 + Vector3(0, LABEL_Y_OFFSET, 0)
 
@@ -192,6 +197,9 @@ func _update_live_segment() -> void:
 		return
 	var last: Vector3 = waypoints[waypoints.size() - 1]
 	var current: Vector3 = _snap_if_enabled(player.global_position, player)
+	# The cylinder's length is always the true geometric (Euclidean) span;
+	# only the label uses whichever metric is selected -- same split as
+	# _refresh_markers() above.
 	var dist := last.distance_to(current)
 	if dist < 0.01:
 		_hide_live_segment()
@@ -209,7 +217,7 @@ func _update_live_segment() -> void:
 	(_live_line.mesh as CylinderMesh).height = dist
 	_orient_line_segment(_live_line, last, current)
 	_live_line.visible = true
-	_live_label.text = GameSettings.format_distance(dist)
+	_live_label.text = GameSettings.format_distance(GameSettings.compute_distance(last, current))
 	_live_label.global_position = (last + current) / 2.0 + Vector3(0, LABEL_Y_OFFSET, 0)
 	_live_label.visible = true
 

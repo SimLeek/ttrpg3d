@@ -509,6 +509,33 @@ and dice roller are still ahead.
       Phase 2 above) and anything else layering transparency on top of
       the xray cutout system -- same root cause, same fix needed once
       tackled.
+- [x] Settings menu redesigned: your call that the small floating panel
+      "should take up the whole screen and have a transparent background
+      like the real pause menu does" -- now a full-screen `Control`
+      (`pause_menu.gd`) styled with the exact same dim `ColorRect`
+      (`Color(0.285, 0.285, 0.285, 0.5)`) and themes
+      (`title_theme.tres`/`menu_button_theme.tres`) the actual pause
+      screen uses, replacing the main pause list entirely while open
+      (not stacked on top of it) with a "Back" button that returns to it,
+      rather than the previous small panel that just toggled independent
+      of the main list.
+- [x] Distance measurement is now a single selectable mode instead of
+      always showing both Euclidean and Manhattan at once, per your
+      point that "a game usually sticks to one measurement." Three
+      options in the settings screen: Manhattan, Euclidean, or a general
+      Minkowski "n-norm" with a `SpinBox` for `n` (Manhattan = n=1,
+      Euclidean = n=2 are just named shortcuts for this same formula) --
+      "so people can do weird stuff like whatever pathfinder does by
+      entering the right n number." `GameSettings.compute_distance()`;
+      `BattleModeManager.get_euclidean_distance()`/`get_manhattan_distance()`
+      collapsed into a single `get_total_distance()`. Segment *labels*
+      use whichever metric is selected, but each cylinder's actual
+      geometric length always stays the true Euclidean span between its
+      two points (a rendering fact, not a measurement-convention choice
+      -- got this backwards in a first pass and fixed it before
+      boot-checking).
+- [ ] None of this settings-screen/distance-metric work has been
+      live-tested yet (built and boot-checked only).
 - [ ] Still an open question from before: does force-enabling intangible
       mid-battle-mode ever strand the player inside terrain when it turns
       back off at end of turn (a pre-existing risk of the manual

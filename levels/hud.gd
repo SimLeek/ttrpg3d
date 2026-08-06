@@ -22,6 +22,7 @@ func _ready() -> void:
 	BattleModeManager.battle_mode_changed.connect(_on_battle_mode_changed)
 	BattleModeManager.waypoints_changed.connect(_on_waypoints_changed)
 	GameSettings.distance_unit_changed.connect(_refresh_battle_label)
+	GameSettings.distance_norm_changed.connect(_refresh_battle_label)
 
 func _physics_process(_delta: float) -> void:
 	_update_range_check()
@@ -89,10 +90,10 @@ func _on_waypoints_changed(_waypoints: Array) -> void:
 func _refresh_battle_label() -> void:
 	if not BattleModeManager.active:
 		return
-	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  Euclidean: %s  |  Manhattan: %s  (LMB mark, RMB undo, B to end)" % [
+	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  %s (%s)  (LMB mark, RMB undo, B to end)" % [
 		BattleModeManager.waypoints.size(),
-		GameSettings.format_distance(BattleModeManager.get_euclidean_distance()),
-		GameSettings.format_distance(BattleModeManager.get_manhattan_distance()),
+		GameSettings.format_distance(BattleModeManager.get_total_distance()),
+		GameSettings.distance_norm_label(),
 	]
 
 
