@@ -35,6 +35,12 @@ func create_world(display_name: String, generator_id: String, params: Dictionary
 	return _add_world(display_name, generator_id, params)
 
 func switch_to_world(world: Dictionary) -> void:
+	# Switching can be triggered from a menu that paused the tree (e.g.
+	# dm_world_menu.gd, so WASD doesn't move the player while typing a
+	# world name) without that menu ever explicitly closing/unpausing
+	# first -- get_tree().paused persists across change_scene_to_file, so
+	# without this the freshly-loaded world would come up frozen.
+	get_tree().paused = false
 	await _flush_current_world()
 	current_world = world
 	pending_world = world
