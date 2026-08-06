@@ -5,6 +5,8 @@ extends CanvasLayer
 var _settings_panel: Control
 var _meters_btn: Button
 var _feet_btn: Button
+var _snap_btn: Button
+var _float_btn: Button
 
 func _ready() -> void:
 	visible = false
@@ -36,10 +38,10 @@ func _on_config_pressed() -> void:
 	_settings_panel.visible = not _settings_panel.visible
 
 
-## Currently just the battle-mode/range-check distance display unit --
-## D&D-style tables measure in 5ft squares, not meters, and there was no
-## way to switch that before now. Built here (rather than a dedicated
-## menu like DMWorldMenu/TurnTrackerMenu) since the Config button already
+## Distance display unit (D&D tables measure in 5ft squares, not meters)
+## and whether battle-mode waypoints snap to voxel centers or float at
+## the exact marked position. Built here (rather than a dedicated menu
+## like DMWorldMenu/TurnTrackerMenu) since the Config button already
 ## existed and did nothing.
 func _build_settings_panel() -> void:
 	_settings_panel = PanelContainer.new()
@@ -86,12 +88,32 @@ func _build_settings_panel() -> void:
 	_feet_btn.pressed.connect(func(): GameSettings.set_distance_unit(GameSettings.DistanceUnit.FEET_5_PER_BLOCK); _refresh_unit_buttons())
 	vbox.add_child(_feet_btn)
 
+	vbox.add_child(HSeparator.new())
+
+	var snap_label := Label.new()
+	snap_label.text = "Battle-mode waypoints:"
+	vbox.add_child(snap_label)
+
+	_snap_btn = Button.new()
+	_snap_btn.text = "Snap to voxel centers"
+	_snap_btn.toggle_mode = true
+	_snap_btn.pressed.connect(func(): GameSettings.set_snap_waypoints_to_grid(true); _refresh_unit_buttons())
+	vbox.add_child(_snap_btn)
+
+	_float_btn = Button.new()
+	_float_btn.text = "Floating (exact position)"
+	_float_btn.toggle_mode = true
+	_float_btn.pressed.connect(func(): GameSettings.set_snap_waypoints_to_grid(false); _refresh_unit_buttons())
+	vbox.add_child(_float_btn)
+
 	_refresh_unit_buttons()
 
 
 func _refresh_unit_buttons() -> void:
 	_meters_btn.button_pressed = GameSettings.distance_unit == GameSettings.DistanceUnit.METERS
 	_feet_btn.button_pressed = GameSettings.distance_unit == GameSettings.DistanceUnit.FEET_5_PER_BLOCK
+	_snap_btn.button_pressed = GameSettings.snap_waypoints_to_grid
+	_float_btn.button_pressed = not GameSettings.snap_waypoints_to_grid
 
 
 func _on_respawn_pressed() -> void:

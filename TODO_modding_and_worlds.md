@@ -464,6 +464,29 @@ and dice roller are still ahead.
       "Config" button, which previously did nothing
       (`_on_config_pressed(): pass`) -- now opens a small panel with two
       toggle buttons for the two units.
+- [x] Waypoints now snap to voxel centers by default (TTRPG-grid-
+      appropriate), with floating (exact position) as a non-default
+      option -- `GameSettings.snap_waypoints_to_grid`, toggled in the same
+      pause-menu Config panel as the distance unit. Snapping happens in
+      the terrain's own local space (`player.voxel_terrain.global_position`
+      subtracted/re-added around the floor+0.5 snap), not raw world space,
+      since `shift_origin()` can put the terrain away from world origin.
+- [x] The last segment now runs from the last *marked* waypoint to
+      wherever the player actually is *right now*, updating live every
+      physics frame as they fly -- not just the committed marks. Reuses
+      one MeshInstance3D/Label3D (mutating mesh height + transform each
+      frame) rather than recreating nodes 60 times a second; parented
+      directly under the scene root rather than
+      `BattleModeWaypointMarkers`, since that container gets fully
+      queue_free()'d and rebuilt on every mark/undo and would otherwise
+      take the live segment down with it.
+- [x] Distance for every segment (committed and live) is now also shown
+      on a 3D billboard `Label3D` above its midpoint, not just in the 2D
+      HUD text -- visible in-world to anyone looking at the same
+      screen/scene, per your reasoning that other players/the DM should
+      be able to read it too.
+- [ ] None of the snap/live-segment/billboard work has been live-tested
+      yet (built and boot-checked only).
 - [ ] Still an open question from before: does force-enabling intangible
       mid-battle-mode ever strand the player inside terrain when it turns
       back off at end of turn (a pre-existing risk of the manual

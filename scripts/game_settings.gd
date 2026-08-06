@@ -7,6 +7,7 @@ extends Node
 ## data with its own lifecycle.
 
 signal distance_unit_changed
+signal snap_waypoints_changed
 
 const SETTINGS_FILE := "user://settings.json"
 
@@ -20,6 +21,12 @@ enum DistanceUnit { METERS, FEET_5_PER_BLOCK }
 
 var distance_unit: int = DistanceUnit.METERS
 
+## Battle-mode waypoint marking: snap to the center of the voxel you're
+## in (the TTRPG-grid-appropriate default) vs. mark the exact floating
+## position you're at (useful for measuring precise distances rather than
+## grid movement).
+var snap_waypoints_to_grid: bool = true
+
 func _ready() -> void:
 	_load()
 
@@ -29,6 +36,13 @@ func set_distance_unit(unit: int) -> void:
 	distance_unit = unit
 	_save()
 	distance_unit_changed.emit()
+
+func set_snap_waypoints_to_grid(value: bool) -> void:
+	if value == snap_waypoints_to_grid:
+		return
+	snap_waypoints_to_grid = value
+	_save()
+	snap_waypoints_changed.emit()
 
 ## Converts a raw in-engine distance (1 unit = 1 voxel = 1 meter) into the
 ## currently selected display unit, formatted with a suffix.
@@ -44,10 +58,16 @@ func _load() -> void:
 	if not f:
 		return
 	var parsed = JSON.parse_string(f.get_as_text())
-	if parsed is Dictionary and parsed.has("distance_unit"):
-		distance_unit = parsed["distance_unit"]
+	if parsed is Dictionary:
+		if parsed.has("distance_unit"):
+			distance_unit = parsed["distance_unit"]
+		if parsed.has("snap_waypoints_to_grid"):
+			snap_waypoints_to_grid = parsed["snap_waypoints_to_grid"]
 
 func _save() -> void:
 	var f := FileAccess.open(SETTINGS_FILE, FileAccess.WRITE)
 	if f:
-		f.store_string(JSON.stringify({"distance_unit": distance_unit}))
+		f.store_string(JSON.stringify({
+			"distance_unit": distance_unit,
+			"snap_waypoints_to_grid": snap_waypoints_to_grid,
+		}))
