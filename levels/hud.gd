@@ -107,28 +107,37 @@ func _build_range_check_label() -> void:
 	add_child(_range_check_label)
 
 
-## Default-mode-only "range check": raycast from the camera along its look
-## direction, and if it hits something, show the distance from the player
+## Battle-mode-only "range check": raycast along the camera's look
+## direction and, if it hits a voxel, show the distance from the player
 ## (not the camera -- that's what actually matters for TTRPG range/spell
-## checks) to the hit point. Hidden in battle mode (which has its own
-## waypoint-distance readout) and while a menu has the mouse released.
+## checks) to the hit point.
+##
+## Uses VoxelTool.raycast() -- the same underlying mechanism
+## voxel_interactor.gd's place/delete targeting uses -- rather than a
+## generic PhysicsDirectSpaceState3D raycast. The generic physics raycast
+## was intermittent (voxel terrain collision shapes apparently aren't
+## always reliably queryable that way, especially on freshly-streamed
+## chunks); VoxelTool's raycast is voxel-native and "always works" per
+## live testing of the placement system. It also can't ever hit the
+## player's own body (it only intersects voxel geometry), so there's no
+## need for an explicit self-exclusion the way the physics raycast needed.
 func _update_range_check() -> void:
-	if BattleModeManager.active or Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
+	if not BattleModeManager.active:
 		_range_check_label.visible = false
 		return
 	var camera := get_viewport().get_camera_3d()
 	var player := get_tree().get_first_node_in_group("player")
-	if not camera or not player:
+	if not camera or not player or not ("vt" in player) or not player.vt or not player.voxel_terrain:
 		_range_check_label.visible = false
 		return
-	var from := camera.global_position
-	var to := from - camera.global_transform.basis.z * RANGE_CHECK_MAX_DIST
-	var space_state := camera.get_world_3d().direct_space_state
-	var query := PhysicsRayQueryParameters3D.create(from, to)
-	query.exclude = [player.get_rid()]
-	var result := space_state.intersect_ray(query)
-	if result.is_empty():
+	var forward: Vector3 = -camera.global_transform.basis.z
+	var hit = player.vt.raycast(camera.global_position, forward, RANGE_CHECK_MAX_DIST)
+	if not hit:
 		_range_check_label.visible = false
 		return
-	_range_check_label.text = "%.1f m" % player.global_position.distance_to(result.position)
+	# hit.position comes back in terrain-local space (same as
+	# voxel_interactor.gd's placement-plane math) -- add the terrain's own
+	# global position to get back to world space before measuring.
+	var hit_world_pos: Vector3 = hit.position + player.voxel_terrain.global_position
+	_range_check_label.text = "%.1f m" % player.global_position.distance_to(hit_world_pos)
 	_range_check_label.visible = true

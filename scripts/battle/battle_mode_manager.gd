@@ -38,8 +38,13 @@ func set_active(value: bool) -> void:
 	active = value
 	var player := _get_player()
 	if active:
-		waypoints = [player.global_position] if player else []
+		# array-literal-in-a-ternary infers as plain Array, not
+		# Array[Vector3] -- assigning that to the typed waypoints var
+		# throws at runtime ("Trying to assign an array of type Array to
+		# a variable of type Array[Vector3]"). clear()+append() instead.
+		waypoints.clear()
 		if player:
+			waypoints.append(player.global_position)
 			player.is_flying = true
 			player.is_intangible = true
 			_set_player_alpha(player, 0.35)
