@@ -271,7 +271,16 @@ instead of reading full-resolution captures.
       grandfathered in as the original built-ins, not a precedent to keep
       copying.
 - [ ] Glass: `res://mods/glass/`. Fully transparent except the edges,
-      which are white-blue and mostly (not fully) transparent. **Two
+      which are white-blue and mostly (not fully) transparent. **A third
+      problem beyond the two below, found via battle-mode's waypoint
+      lines occasionally disappearing (Phase 3)**: Godot doesn't write
+      depth for transparent objects by default, so overlapping
+      transparents occlude each other by draw order rather than real
+      depth -- interacting badly with the `xray_if_behind_full.gdshader`
+      cutout/backface-culling trick that keeps the player visible behind
+      terrain. Glass will hit this same issue once built. Properly fixing
+      it needs overriding Godot's default transparent-object rendering/
+      sorting, logged as important but not attempted yet. **Two more
       distinct problems, corrected after initially conflating them:**
   - **Shared-face culling** (don't draw the 2 mutually-hidden faces where
     two touching glass cubes meet) -- a real, separate optimization,
@@ -485,8 +494,21 @@ and dice roller are still ahead.
       HUD text -- visible in-world to anyone looking at the same
       screen/scene, per your reasoning that other players/the DM should
       be able to read it too.
-- [ ] None of the snap/live-segment/billboard work has been live-tested
-      yet (built and boot-checked only).
+- [x] Live-tested: snapping confirmed working ("Good snapping and stuff
+      though"). Live-segment/billboard rendering itself works, but
+      **not** waypoint-marking logic -- occasional line disappearance
+      turned out to be camera-angle-dependent, and you diagnosed it
+      yourself: Godot's transparent-object rendering (no depth write by
+      default, so overlapping transparents occlude each other based on
+      draw order, not real depth) interacting with the custom
+      `xray_if_behind_full.gdshader` cutout/backface-culling trick used
+      so the player stays visible behind terrain. **Not fixed, logged as
+      important for later** -- properly fixing this needs overriding
+      Godot's default transparent-object rendering/sorting, not a
+      one-line tweak. Also affects the still-unbuilt glass voxel (see
+      Phase 2 above) and anything else layering transparency on top of
+      the xray cutout system -- same root cause, same fix needed once
+      tackled.
 - [ ] Still an open question from before: does force-enabling intangible
       mid-battle-mode ever strand the player inside terrain when it turns
       back off at end of turn (a pre-existing risk of the manual
