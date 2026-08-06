@@ -2,8 +2,13 @@ extends CanvasLayer
 
 @export var hud: CanvasLayer
 
+var _settings_panel: Control
+var _meters_btn: Button
+var _feet_btn: Button
+
 func _ready() -> void:
 	visible = false
+	_build_settings_panel()
 
 func _input(event):
 	if event.is_action_pressed("pause"):
@@ -28,7 +33,65 @@ func _on_continue_pressed() -> void:
 
 
 func _on_config_pressed() -> void:
-	pass # Nothing for now
+	_settings_panel.visible = not _settings_panel.visible
+
+
+## Currently just the battle-mode/range-check distance display unit --
+## D&D-style tables measure in 5ft squares, not meters, and there was no
+## way to switch that before now. Built here (rather than a dedicated
+## menu like DMWorldMenu/TurnTrackerMenu) since the Config button already
+## existed and did nothing.
+func _build_settings_panel() -> void:
+	_settings_panel = PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.1, 0.1, 0.13, 0.97)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.6, 0.6, 0.65)
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	style.content_margin_top = 16
+	style.content_margin_bottom = 16
+	_settings_panel.add_theme_stylebox_override("panel", style)
+	_settings_panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	_settings_panel.position += Vector2(-260, 0)
+	_settings_panel.custom_minimum_size = Vector2(240, 0)
+	_settings_panel.visible = false
+	add_child(_settings_panel)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	_settings_panel.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Settings"
+	title.add_theme_font_size_override("font_size", 18)
+	vbox.add_child(title)
+
+	var unit_label := Label.new()
+	unit_label.text = "Distance display:"
+	vbox.add_child(unit_label)
+
+	_meters_btn = Button.new()
+	_meters_btn.text = "1 block = 1 meter"
+	_meters_btn.toggle_mode = true
+	_meters_btn.pressed.connect(func(): GameSettings.set_distance_unit(GameSettings.DistanceUnit.METERS); _refresh_unit_buttons())
+	vbox.add_child(_meters_btn)
+
+	_feet_btn = Button.new()
+	_feet_btn.text = "1 block = 5 feet (D&D)"
+	_feet_btn.toggle_mode = true
+	_feet_btn.pressed.connect(func(): GameSettings.set_distance_unit(GameSettings.DistanceUnit.FEET_5_PER_BLOCK); _refresh_unit_buttons())
+	vbox.add_child(_feet_btn)
+
+	_refresh_unit_buttons()
+
+
+func _refresh_unit_buttons() -> void:
+	_meters_btn.button_pressed = GameSettings.distance_unit == GameSettings.DistanceUnit.METERS
+	_feet_btn.button_pressed = GameSettings.distance_unit == GameSettings.DistanceUnit.FEET_5_PER_BLOCK
 
 
 func _on_respawn_pressed() -> void:

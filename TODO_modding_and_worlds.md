@@ -415,6 +415,55 @@ and dice roller are still ahead.
       multi-entry, so Tab could in principle still be at some risk right
       after adding a combatant specifically; worth confirming this didn't
       just narrow the window rather than close it.
+- [x] Battle mode crash fixed: `VoxelTool.raycast()`'s `hit.position` is a
+      `Vector3i`, not `Vector3` -- adding it directly to the terrain's
+      `Vector3` position threw every physics frame in battle mode.
+      Explicit `Vector3()` cast in `hud.gd`.
+- [x] Turn tracker's `turn_changed` signal (2 args) was connected to
+      `_refresh()` (a strict 0-arg method) -- Godot requires the
+      receiver's arity to be >= what's emitted, so every `Next Turn` threw
+      "Method expected 0 argument(s), but called with 2" and silently
+      skipped the whole refresh. This was the actual root cause of the
+      "Next Turn doesn't update" bug logged above; the defensive direct
+      `_refresh()` calls were a workaround, this is the real fix
+      (`_refresh()` now takes two unused default-valued params).
+- [x] Tab still got eaten if the "Combatant name" field had focus (it
+      re-grabs focus after Add for rapid entry) -- now releases focus on
+      Tab from `_input()`, which runs before Godot's built-in Tab-for-
+      focus-navigation gets a chance to intercept the key, so the same
+      keypress both leaves the field and reaches `toggle_inventory`.
+- [x] Waypoint connecting lines: your ask ("lines in between those points
+      ... so we can see what's actually happening") -- solid `CylinderMesh`
+      segments between consecutive waypoints, `LINE_RADIUS = 0.09`
+      (bumped up once from an initial too-thin value, per your feedback).
+      Two real bugs on the way to a working version, both in
+      `battle_mode_manager.gd`: (1) a hand-built 3-axis `Basis` from two
+      cross products rendered every line **perpendicular** to the intended
+      direction -- replaced with `Basis(Quaternion(Vector3.UP, direction))`,
+      a single well-defined Godot constructor, rather than keep chasing
+      the sign/order mistake in the original derivation. (2)
+      `Quaternion(from_vec, to_vec)` has no unique rotation axis when the
+      two vectors point exactly opposite each other (a waypoint marked
+      directly below the previous one) -- some cylinders were disappearing
+      because of the resulting degenerate/NaN transform; now falls back to
+      an explicit 180-degree flip (`Basis(Vector3.RIGHT, PI)`) when the
+      target direction is within 0.0001 of exactly `-UP`. Confirmed stable
+      by you afterward across "moving in lines or in other movements."
+- [x] Range check distance: was capped at `RANGE_CHECK_MAX_DIST = 100.0`
+      in `hud.gd` (you observed effectively ~50m) but some TTRPG
+      moves/spells reach 200+ ft -- raised to 500.0. Also raised
+      `VoxelTerrain.max_view_distance` 256 -> 400 in
+      `voxel_main_world.tscn`, since terrain has to actually be
+      streamed/generated that far out for the raycast to have anything to
+      hit regardless of the raycast's own max-distance parameter (real
+      memory/CPU tradeoff for more loaded chunks, but a moderate bump).
+- [x] 5ft-per-block vs. 1m-per-block display option: new `GameSettings`
+      autoload (`distance_unit`, persisted to `user://settings.json`,
+      `format_distance()` used by both the battle-mode waypoint distance
+      label and the range-check label). Wired into the pause menu's
+      "Config" button, which previously did nothing
+      (`_on_config_pressed(): pass`) -- now opens a small panel with two
+      toggle buttons for the two units.
 - [ ] Still an open question from before: does force-enabling intangible
       mid-battle-mode ever strand the player inside terrain when it turns
       back off at end of turn (a pre-existing risk of the manual

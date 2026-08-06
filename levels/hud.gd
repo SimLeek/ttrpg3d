@@ -1,9 +1,11 @@
 extends CanvasLayer
 
-## Max range for the default-mode "what am I looking at" distance check --
-## purely a UI readout (range-check info for the player/DM), not a gameplay
-## interaction range.
-const RANGE_CHECK_MAX_DIST := 100.0
+## Max range for the battle-mode "what am I looking at" distance check --
+## purely a UI readout (range-check info for the player/DM), not a
+## gameplay interaction range. Generous on purpose: some TTRPG moves/spells
+## reach 200+ ft (well past a typical 5ft-per-block battlemap's visible
+## area), and a single raycast this long costs nothing extra to run.
+const RANGE_CHECK_MAX_DIST := 500.0
 
 @export var health_bar: TextureProgressBar
 @export var stamina_bar: TextureProgressBar
@@ -19,6 +21,7 @@ func _ready() -> void:
 	_build_range_check_label()
 	BattleModeManager.battle_mode_changed.connect(_on_battle_mode_changed)
 	BattleModeManager.waypoints_changed.connect(_on_waypoints_changed)
+	GameSettings.distance_unit_changed.connect(_refresh_battle_label)
 
 func _physics_process(_delta: float) -> void:
 	_update_range_check()
@@ -86,10 +89,10 @@ func _on_waypoints_changed(_waypoints: Array) -> void:
 func _refresh_battle_label() -> void:
 	if not BattleModeManager.active:
 		return
-	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  Euclidean: %.1f  |  Manhattan: %.1f  (LMB mark, RMB undo, B to end)" % [
+	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  Euclidean: %s  |  Manhattan: %s  (LMB mark, RMB undo, B to end)" % [
 		BattleModeManager.waypoints.size(),
-		BattleModeManager.get_euclidean_distance(),
-		BattleModeManager.get_manhattan_distance(),
+		GameSettings.format_distance(BattleModeManager.get_euclidean_distance()),
+		GameSettings.format_distance(BattleModeManager.get_manhattan_distance()),
 	]
 
 
@@ -141,5 +144,5 @@ func _update_range_check() -> void:
 	# measuring (explicit Vector3() cast: GDScript won't implicitly mix
 	# Vector3i and Vector3 in a + operator).
 	var hit_world_pos: Vector3 = Vector3(hit.position) + player.voxel_terrain.global_position
-	_range_check_label.text = "%.1f m" % player.global_position.distance_to(hit_world_pos)
+	_range_check_label.text = GameSettings.format_distance(player.global_position.distance_to(hit_world_pos))
 	_range_check_label.visible = true
