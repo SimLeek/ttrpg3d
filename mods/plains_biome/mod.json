@@ -1,0 +1,6 @@
+{
+	"id": "plains_biome",
+	"name": "Plains Biome",
+	"version": "1.0.0",
+	"entry_script": "register.gd"
+}

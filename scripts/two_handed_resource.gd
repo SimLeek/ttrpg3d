@@ -15,6 +15,16 @@ func handle_immediate_input(event):
 	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
 		return
 
+	# In battle mode, the same clicks mark/undo movement waypoints instead
+	# of using the held item -- you're flying as a ghost to plan a move,
+	# not placing/breaking blocks.
+	if BattleModeManager.active:
+		if event.is_action_pressed("primary_item_click"):
+			BattleModeManager.mark_current_position()
+		elif event.is_action_pressed("secondary_item_click"):
+			BattleModeManager.undo_last_waypoint()
+		return
+
 	if event.is_action_pressed("primary_item_click"):
 		print("prim")
 		handle_primary_hand_input(1.0)

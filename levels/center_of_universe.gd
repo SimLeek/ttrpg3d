@@ -26,8 +26,17 @@ func _ready() -> void:
 func _apply_pending_world() -> void:
 	var world: Dictionary = WorldManager.pending_world
 	if world.is_empty():
+		# No explicit switch queued -- this is a fresh load of the scene
+		# (first launch, or the scene run directly), not a switch or a
+		# death-respawn. Fall back to WorldManager's notion of the current
+		# world (worlds[0] by default) instead of leaving the scene's own
+		# baked-in default terrain in place, so a fresh start always loads
+		# whatever the first existing world actually is.
+		world = WorldManager.current_world
+	if world.is_empty():
 		return
 	WorldManager.pending_world = {}
+	WorldManager.current_world = world
 
 	var gen_def := WorldGeneratorCatalog.get_generator(world.get("generator_id", ""))
 	if gen_def.is_empty():
@@ -38,23 +47,67 @@ func _apply_pending_world() -> void:
 	var terrain: VoxelTerrain = $World/VoxelTerrain
 	terrain.generator = WorldGeneratorCatalog.instantiate_generator(gen_def, params)
 
+	# Per-world save file so voxel edits (placing/breaking blocks) persist
+	# across world switches/relaunches instead of regenerating fresh from
+	# the generator every time. "Reset" (WorldManager.reset_world) just
+	# deletes this file.
+	var world_id: String = world.get("id", "")
+	if not world_id.is_empty():
+		DirAccess.make_dir_recursive_absolute(WorldManager.WORLD_SAVES_DIR)
+		var stream := VoxelStreamSQLite.new()
+		stream.database_path = WorldManager.get_stream_path(world_id)
+		terrain.stream = stream
+
 	var spawn = WorldGeneratorCatalog.get_spawn_position(gen_def, params)
 	if spawn != null:
 		$CharacterBody3D.global_position = spawn
 		$CharacterBody3D.last_safe_pos = spawn - terrain.global_position
+		$CharacterBody3D.velocity = Vector3.ZERO
+		_grant_spawn_protection()
 
-	# Simple distinct-color sky for finite/non-default worlds for now --
-	# a real image-based skybox (the game already has an unused skybox
-	# texture asset) needs panini removed from the sky shader first, see
-	# TODO_modding_and_worlds.md.
+	# Real procedural skybox for finite/non-default worlds -- a seamless
+	# generated cubemap (ProceduralSkybox), sampled by a plain cubemap sky
+	# shader with no panini distortion anywhere in the chain. Proves the
+	# "actual skyboxes" half of the panini-removal goal on new content,
+	# even though the default hilly world's own sky still uses
+	# panini_sky.gdshader for now (see TODO_modding_and_worlds.md).
 	if gen_def.get("id", "") == "limestone_slab":
+		var cubemap := ProceduralSkybox.generate_cubemap(
+			64, Color(0.18, 0.05, 0.32), Color(0.62, 0.32, 0.85))
+
+		var sky_material := ShaderMaterial.new()
+		sky_material.shader = load("res://3dAssets/shaders/simple_cubemap_sky.gdshader")
+		sky_material.set_shader_parameter("sky_cubemap", cubemap)
+
+		var sky := Sky.new()
+		sky.sky_material = sky_material
+
 		var env := Environment.new()
-		env.background_mode = Environment.BG_COLOR
-		env.background_color = Color(0.55, 0.35, 0.65)
-		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-		env.ambient_light_color = Color(0.55, 0.35, 0.65)
+		env.background_mode = Environment.BG_SKY
+		env.sky = sky
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 		env.ambient_light_energy = 0.75
 		$World/WorldEnvironment.environment = env
+
+## A generator-driven spawn teleport (limestone_slab, plains) drops the
+## player into freshly-streaming terrain -- if the chunks under them
+## haven't finished generating yet, they can fall much further than the
+## spawn height math assumes before solid ground actually exists, and
+## Health.gd's fall-damage curve (max_health = 1.0, quadratic past a
+## velocity threshold) makes that reliably fatal. Disable fall damage
+## briefly so a slow chunk-load can't kill the player before they've even
+## seen the world -- reproduced live: switching to Plains killed the
+## player via "Player died. Reloading..." every time before this fix.
+func _grant_spawn_protection(duration: float = 2.0) -> void:
+	var health := $CharacterBody3D/Health
+	if not health or not ("turn_on_fall_damage" in health):
+		return
+	var was_enabled: bool = health.turn_on_fall_damage
+	health.turn_on_fall_damage = false
+	get_tree().create_timer(duration).timeout.connect(func():
+		if is_instance_valid(health):
+			health.turn_on_fall_damage = was_enabled
+	)
 
 func shift_origin() -> void:
 	var shift_vector = $CharacterBody3D.global_position

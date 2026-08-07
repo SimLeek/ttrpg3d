@@ -32,6 +32,19 @@ const QUARTZ_THRESH: float = 0.9
 const MAGNETITE_THRESH: float = 0.9
 const WINDMILL_CHANCE := 1.0 # Currently, setting this below 100% results in partial windmills
 
+## Toggle for biome variants that reuse this same generator with trees
+## turned off (e.g. the plains_biome mod) instead of duplicating the whole
+## generator. Only gates the generate_trees() call -- tree structures still
+## get precomputed either way (harmless, just unused when this is false).
+@export var trees_enabled: bool = true
+
+## Same idea, gates generate_windmills().
+@export var windmills_enabled: bool = true
+
+## See get_height_at() -- shrinks noise deviation around the height range's
+## midpoint. 1.0 = unchanged (full hilly range).
+@export var height_scale: float = 1.0
+
 var tree_structures: Array[Structure] = []
 var windmill_structure: Structure # The fix for your identifier error
 
@@ -238,9 +251,11 @@ func generate_block(buffer: VoxelBuffer, origin: Vector3i) -> void:
 			# 4. Surface Decoration (Run once per column after the Y loop)
 			_decorate_surface(buffer, local_x, local_z, surface_height, origin.y, block_size, rng)
 
-	generate_trees(buffer, origin, block_size, chunk_pos)
+	if trees_enabled:
+		generate_trees(buffer, origin, block_size, chunk_pos)
 	#if (origin.y + block_size) > PLASTIGLOMERATE_MIN_Y:
-	generate_windmills(buffer, origin, block_size, chunk_pos)
+	if windmills_enabled:
+		generate_windmills(buffer, origin, block_size, chunk_pos)
 	buffer.compress_uniform_channels()
 
 # --- MODULAR PROCESSORS ---
@@ -435,6 +450,15 @@ static func get_chunk_seed_2d(chunk_pos: Vector3i) -> int:
 	return int(chunk_pos.x) ^ (31 * int(chunk_pos.z))
 
 ## Samples the height at a global (x, z) position using noise and curve.
+## height_scale (1.0 = full hilly range, toward 0.0 = flatter) shrinks the
+## noise deviation around the range's midpoint rather than the noise
+## itself, so it flattens peaks *and* valleys symmetrically instead of
+## just clipping one side -- used by the plains_biome mod to kill the
+## "massive peaks" without also flattening only the low end.
 func get_height_at(x: int, z: int) -> int:
 	var normalized_noise: float = 0.5 + 0.5 * heightmap_noise.get_noise_2d(x, z)
-	return int(HeightmapCurve.sample_baked(normalized_noise))
+	var full_height: float = HeightmapCurve.sample_baked(normalized_noise)
+	if height_scale >= 1.0:
+		return int(full_height)
+	var mid: float = (heightmap_min_y + heightmap_max_y) / 2.0
+	return int(mid + (full_height - mid) * height_scale)

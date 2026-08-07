@@ -2,14 +2,17 @@ extends VoxelGeneratorScript
 class_name LimestoneSlabGenerator
 
 ## A finite, repeatable world generator: a solid width x height x depth
-## slab of limestone starting at the origin, air everywhere else. No
-## randomness at all -- same params always produce the same (trivial)
-## result, and it's bounded (not an endless streaming terrain), which is
-## what makes it "finite" in WorldGeneratorCatalog's classification.
+## slab of a single configurable voxel type (limestone by default --
+## that's what gives it its name/id, "limestone_slab", not a hardcoded
+## restriction) starting at the origin, air everywhere else. No randomness
+## at all -- same params always produce the same (trivial) result, and
+## it's bounded (not an endless streaming terrain), which is what makes it
+## "finite" in WorldGeneratorCatalog's classification.
 
 @export var width: int = 32
 @export var height: int = 8
 @export var depth: int = 32
+@export var voxel_id: int = VoxelTypes.LIMESTONE
 
 func _get_used_channels_mask() -> int:
 	return 1 << VoxelBuffer.CHANNEL_TYPE
@@ -28,7 +31,7 @@ func _generate_block(buffer: VoxelBuffer, origin_in_voxels: Vector3i, _lod: int)
 				var wz := origin_in_voxels.z + z
 				if wz < 0 or wz >= depth:
 					continue
-				buffer.set_voxel(VoxelTypes.LIMESTONE, x, y, z, VoxelBuffer.CHANNEL_TYPE)
+				buffer.set_voxel(voxel_id, x, y, z, VoxelBuffer.CHANNEL_TYPE)
 
 ## Where the player should spawn for a slab of these dimensions -- centered
 ## above it, not inside/under it.

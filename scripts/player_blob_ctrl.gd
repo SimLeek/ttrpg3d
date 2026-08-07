@@ -1,5 +1,9 @@
 extends CharacterBody3D
 
+## Display name for the turn tracker ("<name>'s turn" / highlighted "Your
+## Turn" when this is the local player's combatant entry).
+@export var character_name: String = "Player"
+
 # the player is a...
 @export var mover: MoverResource
 @export var basic_jumper: BasicJumperResource
@@ -250,7 +254,11 @@ func _handle_voxel_collisions(delta: float) -> void:
 
 func die() -> void:
 	print("Player died. Reloading...")
-	get_tree().call_deferred("reload_current_scene")
+	# reload_current_scene() re-instantiates the scene file's own baked-in
+	# default terrain (Hilly World), dropping whatever world the player
+	# had actually switched to -- WorldManager tracks that separately and
+	# reloads back into it instead.
+	WorldManager.call_deferred("respawn_in_current_world")
 
 # Not used in this file. Used by other scripts.
 func handle_pause_menu_visibility(is_paused: bool) -> void:

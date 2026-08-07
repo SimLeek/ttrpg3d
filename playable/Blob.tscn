@@ -24,6 +24,7 @@
 [ext_resource type="Script" path="res://scripts/ui/item_tooltip.gd" id="21_tooltip"]
 [ext_resource type="Script" path="res://scripts/pcg/build_session.gd" id="22_buildsession"]
 [ext_resource type="Script" path="res://scripts/ui/dm_world_menu.gd" id="23_dmmenu"]
+[ext_resource type="Script" path="res://scripts/ui/turn_tracker_menu.gd" id="24_turntracker"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -35,8 +36,6 @@ radius = 0.125
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_jjan2"]
 render_priority = 0
 shader = ExtResource("5_rhn68")
-shader_parameter/panini_d = 0.5
-shader_parameter/panini_s = 0.0
 shader_parameter/albedo_color = Color(1, 0.32156864, 0.80784315, 0.9137255)
 shader_parameter/albedo_texture = ExtResource("6_3wje3")
 shader_parameter/normal_scale = 1.0
@@ -241,6 +240,15 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("23_dmmenu")
+
+[node name="TurnTrackerMenu" type="Control" parent="HUD/Control"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("24_turntracker")
 
 [node name="Health" type="Node3D" parent="." unique_id=1745098184]
 script = ExtResource("16_jo7wf")
