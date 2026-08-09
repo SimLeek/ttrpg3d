@@ -79,36 +79,54 @@ func _get_player() -> Node:
 
 ## ---------------------------------------------------------------------
 ## Built-in commands
+##
+## GDScript has no decorators to self-register a function the moment it's
+## defined, but reflection gets close enough: every method here named
+## _cmd_<name> is picked up automatically via get_method_list(), so adding
+## a new command is *only* writing the function -- no separate list to
+## remember to update. All of them share one signature,
+## func _cmd_x(args: Array[String]) -> String, purely so this scan can
+## call any of them uniformly.
 ## ---------------------------------------------------------------------
 
 func _register_builtin_commands() -> void:
-	register_command("help", func(_a): return _cmd_help())
-	register_command("pos", func(_a): return _cmd_pos())
-	register_command("point", func(_a): return _cmd_point())
-	register_command("goto", _cmd_goto)
-	register_command("hold", _cmd_hold)
-	register_command("world", _cmd_world)
-	register_command("battle", func(_a): BattleModeManager.toggle(); return "battle mode: %s" % BattleModeManager.active)
-	register_command("mark", func(_a): BattleModeManager.mark_current_position(); return "marked")
-	register_command("undo", func(_a): BattleModeManager.undo_last_waypoint(); return "undone")
-	register_command("quit", func(_a): get_tree().quit(); return "quitting")
+	for method in get_method_list():
+		var method_name: String = method.get("name", "")
+		if method_name.begins_with("_cmd_"):
+			register_command(method_name.substr(5), Callable(self, method_name))
 
-func _cmd_help() -> String:
+func _cmd_help(_args: Array[String]) -> String:
 	var names := _commands.keys()
 	names.sort()
 	return "Commands: %s" % ", ".join(names)
 
-func _cmd_pos() -> String:
+func _cmd_pos(_args: Array[String]) -> String:
 	var player := _get_player()
 	if not player:
 		return "no player"
 	return "pos=%s rot_deg=%s" % [player.global_position, player.rotation_degrees]
 
+func _cmd_battle(_args: Array[String]) -> String:
+	BattleModeManager.toggle()
+	return "battle mode: %s" % BattleModeManager.active
+
+func _cmd_mark(_args: Array[String]) -> String:
+	BattleModeManager.mark_current_position()
+	return "marked"
+
+func _cmd_undo(_args: Array[String]) -> String:
+	BattleModeManager.undo_last_waypoint()
+	return "undone"
+
+func _cmd_quit(_args: Array[String]) -> String:
+	get_tree().quit()
+	return "quitting"
+
 ## Raycast along the player's look direction using the same voxel-native
 ## VoxelTool.raycast() as battle mode's range check (reliable; a generic
 ## physics raycast was intermittent -- see TODO_modding_and_worlds.md).
 ## Works regardless of battle mode, unlike hud.gd's range check.
-func _cmd_point() -> String:
+func _cmd_point(_args: Array[String]) -> String:
 	var player := _get_player()
 	var camera := get_viewport().get_camera_3d()
 	if not player or not camera or not ("vt" in player) or not player.vt or not player.voxel_terrain:
