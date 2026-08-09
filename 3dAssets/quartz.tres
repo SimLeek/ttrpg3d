@@ -1,6 +1,6 @@
-[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://5unrmrqq6ycx"]
+[gd_resource type="ShaderMaterial" format=3 uid="uid://5unrmrqq6ycx"]
 
-[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_full.gdshader" id="1_3hved"]
+[ext_resource type="Shader" uid="uid://dw4ula0mc0jji" path="res://3dAssets/shaders/xray_if_behind_transparent.gdshader" id="1_3hved"]
 [ext_resource type="Texture2D" uid="uid://cmkedk5us7bkm" path="res://3dAssets/blocks/transparent/16xquartz.png" id="2_kjf1s"]
 
 [resource]
@@ -8,7 +8,6 @@ render_priority = 0
 shader = ExtResource("1_3hved")
 shader_parameter/cutout_radius = 1.5
 shader_parameter/cutout_pow = 3.0
-shader_parameter/below_pow = 0.2
 shader_parameter/forward_pow = 0.05
 shader_parameter/cone_extra = 1.0
 shader_parameter/floor_fade_start = 0.0
