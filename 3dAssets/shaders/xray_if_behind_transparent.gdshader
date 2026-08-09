@@ -78,7 +78,10 @@ void fragment() {
 
 			float cutout = 1.0;
 
-			if (perp_dist < cone_radius && t > 0.0) {
+			// See xray_if_behind_cutout.gdshader for why this isn't just
+			// "perp_dist < cone_radius" -- the t > 0.0 restriction here
+			// was what flattened the cutout into a plain circle.
+			if (perp_dist < cone_radius) {
 				float normalized = perp_dist / cone_radius;
 				cutout = pow(normalized, cutout_pow);
 			}
@@ -90,6 +93,9 @@ void fragment() {
 			}
 
 			ALPHA = original_alpha * cutout;
+			if (t < 0.0) {
+				ALPHA -= t / (cutout_radius * forward_pow);
+			}
 			ALPHA = mix(ALPHA, original_alpha, vertical_mask);
 			ALPHA = clamp(ALPHA, alpha_min * original_alpha, original_alpha);
 		}

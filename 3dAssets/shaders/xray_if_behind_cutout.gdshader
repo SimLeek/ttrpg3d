@@ -78,7 +78,15 @@ void fragment() {
 
 			float cutout = 1.0;
 
-			if (perp_dist < cone_radius && t > 0.0) {
+			// perp_dist alone gives a plain circular cutout -- the
+			// asymmetric "slime shape" (a Grok/Kimi edit accidentally
+			// dropped restoring depth_prepass_alpha's hard-cutout
+			// requirement, which is worth keeping) comes from *also*
+			// tapering/fading based on t (position along the
+			// camera-player line): the cone-radius cutout applies on
+			// both sides of the player (no t > 0.0 restriction), plus an
+			// extra fade for points behind the player (t < 0.0).
+			if (perp_dist < cone_radius) {
 				float normalized = perp_dist / cone_radius;
 				cutout = pow(normalized, cutout_pow);
 			}
@@ -90,6 +98,9 @@ void fragment() {
 			}
 
 			ALPHA = original_alpha * cutout;
+			if (t < 0.0) {
+				ALPHA -= t / (cutout_radius * forward_pow);
+			}
 			ALPHA = mix(ALPHA, original_alpha, vertical_mask);
 			ALPHA = clamp(ALPHA, alpha_min * original_alpha, original_alpha);
 		}
