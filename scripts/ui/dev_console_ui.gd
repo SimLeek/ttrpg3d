@@ -18,21 +18,28 @@ func _ready() -> void:
 	DevConsole.log_updated.connect(_on_log_updated)
 	_refresh_log()
 
-func _unhandled_input(event: InputEvent) -> void:
-	if _root.visible and event.is_action_pressed("ui_cancel"):
-		_set_visible(false)
+## _input(), not _unhandled_input()+"ui_cancel": with the console's LineEdit
+## focused, Escape was getting consumed by the LineEdit's own built-in
+## defocus-on-Escape behavior first (so the console stayed open, just with
+## keyboard/mouse control silently handed back to the player), and a
+## second Escape then reached pause_menu.gd's _input() (bound to the same
+## key) before this handler ever saw it -- opening the pause menu instead
+## of closing the console. _input() runs before both of those, same fix
+## as the Tab-focus-stealing bug in turn_tracker_menu.gd.
+func _input(event: InputEvent) -> void:
+	if DevConsole.is_open and event is InputEventKey and event.pressed \
+			and event.keycode == KEY_ESCAPE and not event.is_echo():
+		_input.release_focus()
+		DevConsole.set_open(false)
 		get_viewport().set_input_as_handled()
 
 func _on_visibility_toggled(is_open: bool) -> void:
-	_set_visible(is_open)
-
-func _set_visible(show_it: bool) -> void:
-	_root.visible = show_it
-	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if show_it else Input.MOUSE_MODE_CAPTURED)
-	if show_it:
+	_root.visible = is_open
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if is_open else Input.MOUSE_MODE_CAPTURED)
+	if is_open:
 		UiPauseGate.request("dev_console")
-		# Defensive: the \ keypress that opened the console can otherwise
-		# leak into this field the moment it grabs focus (seen live).
+		# Defensive: the toggle keypress can otherwise leak into this
+		# field the moment it grabs focus (seen live).
 		_input.text = ""
 		_input.grab_focus()
 		_refresh_log()

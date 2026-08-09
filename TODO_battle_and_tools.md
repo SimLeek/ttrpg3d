@@ -240,6 +240,11 @@ simpler statement in the same message -- this is the one to build):
       use it" -- investigate (likely `item_tooltip.gd`'s pagination,
       given `tooltip_next_page`/`tooltip_prev_page` actions already
       exist) and either make it usable or remove it if it's not needed.
+- [ ] Found while poking at `tooltip_toggle` (`/`) chasing an unrelated
+      dev-console-keybind question: after pressing it, mouse movement
+      stops affecting the player/camera, and no tooltips pop up on
+      hovering items afterward -- something about that toggle is leaving
+      input/mouse-mode state stuck. Not investigated yet.
 - [ ] World save-size ("KB info") in the F1 menu doesn't update until the
       player dies -- diagnose whether that's because the world genuinely
       hasn't saved yet (fix: **autosave periodically**, not just on

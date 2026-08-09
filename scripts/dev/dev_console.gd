@@ -3,8 +3,12 @@ extends Node
 ## Autoload. Dev/testing console -- "make sure to keep making progress" on
 ## the rest of the backlog needs a much less fragile way to drive the game
 ## than pixel-precise xdotool clicking, so this is a real command console:
-## toggled in-game with \ (backslash -- see toggle_dev_console in the input
-## map; `/` was already taken by tooltip_toggle), plus startup CLI args for
+## toggled in-game with \ (backslash -- see toggle_dev_console in the
+## input map; `/` was already taken by tooltip_toggle. Apostrophe was
+## tried too but did nothing at all for you, live -- most likely your
+## system's input method treats it as a compose/dead-key for accented
+## characters and swallows it before Godot ever sees a keypress; reverted
+## rather than debug an X11/IME quirk further), plus startup CLI args for
 ## the same operations so a whole test scenario can be scripted with no
 ## interaction at all.
 ##
@@ -23,6 +27,13 @@ signal visibility_toggled(is_open: bool)
 
 const LOG_PATH := "user://logs/godot.log"
 const MAX_LOG_LINES := 500
+
+## Canonical open/closed state -- other scripts (pause_menu.gd) check this
+## directly rather than racing input-handler order against
+## dev_console_ui.gd, since both it and pause_menu.gd react to Escape and
+## which node's _input() runs first between two separate nodes isn't
+## something to rely on.
+var is_open: bool = false
 
 var log_lines: Array[String] = []
 var command_history: Array[String] = []
@@ -45,8 +56,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	# backslashes ended up typed into the newly-focused input field from
 	# a single \ press during testing).
 	if event.is_action_pressed("toggle_dev_console") and not event.is_echo():
-		visibility_toggled.emit(true)
+		set_open(not is_open)
 		get_viewport().set_input_as_handled()
+
+func set_open(value: bool) -> void:
+	if value == is_open:
+		return
+	is_open = value
+	visibility_toggled.emit(is_open)
 
 ## Runs a command line like "goto 10 64 10" or "hold wood_plank left".
 ## Returns the result text (also appended to log_lines/log_updated so both

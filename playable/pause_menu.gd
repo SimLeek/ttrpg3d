@@ -20,7 +20,10 @@ func _ready() -> void:
 	_build_settings_screen()
 
 func _input(event):
-	if event.is_action_pressed("pause"):
+	# DevConsole.is_open guard: without it, Escape closing the dev console
+	# and Escape opening the pause menu raced each other (both nodes react
+	# to the same key) -- the console owns Escape while it's open instead.
+	if event.is_action_pressed("pause") and not DevConsole.is_open:
 		handle_pause()
 
 func handle_pause():
