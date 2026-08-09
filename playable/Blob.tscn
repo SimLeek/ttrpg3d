@@ -25,6 +25,7 @@
 [ext_resource type="Script" path="res://scripts/pcg/build_session.gd" id="22_buildsession"]
 [ext_resource type="Script" path="res://scripts/ui/dm_world_menu.gd" id="23_dmmenu"]
 [ext_resource type="Script" path="res://scripts/ui/turn_tracker_menu.gd" id="24_turntracker"]
+[ext_resource type="Script" path="res://scripts/ui/dev_console_ui.gd" id="25_devconsole"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_f14xy"]
 radius = 0.25
@@ -249,6 +250,15 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("24_turntracker")
+
+[node name="DevConsoleUI" type="Control" parent="HUD/Control"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("25_devconsole")
 
 [node name="Health" type="Node3D" parent="." unique_id=1745098184]
 script = ExtResource("16_jo7wf")

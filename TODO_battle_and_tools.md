@@ -20,19 +20,57 @@ Also: keep tunable values (colors, sizes, thresholds, speeds) exposed via
 settings/@export rather than hardcoded constants, per "Keep all details
 that aren't in 2d/3d billboards/hints in UIs so I can modify them."
 
-## Phase 0 -- Dev tooling / terminal [priority: first]
+## Phase 0 -- Dev tooling / terminal [priority: first, done]
 
-- [ ] Command-line startup args (godot `--` args, parsed in an autoload):
-      load a specific world, hold a specific item, position/rotate the
-      player to an exact location.
-- [ ] Report player position to stdout on request/change.
-- [ ] Report what's being pointed at (raycast target info) to stdout.
-- [ ] In-game command console: `/` or `\|` opens a text input, typed
-      commands execute with "full control" -- meant to replace fragile
-      xdotool pixel-clicking for testing going forward.
-- [ ] Mirror anything printed to the terminal onto an on-screen overlay
-      too (so a live windowed session's stdout is visible without needing
-      to tail a log file).
+- [x] Command-line startup args: `godot --scene res://levels/voxel_main_world.tscn --
+      --world=hilly --pos=x,y,z --rot=x,y,z --hold=<item id or name>`,
+      parsed in the new `DevConsole` autoload (`scripts/dev/dev_console.gd`)
+      from `OS.get_cmdline_user_args()`. `--world` matches by saved-world
+      id, display name, *or* generator id (so `--world=hilly` works
+      without knowing which specific saved world to target). `--hold`
+      matches by item id (`block_5`) or display name
+      (`"Wood Plank"`/`wood_plank`). Verified end-to-end headless: world
+      switch -> position -> item all applied correctly in sequence, with
+      output confirming each step
+      (`world hilly -> switching to world_0 (matched generator hilly)`,
+      `goto 5 20 5 -> moved to (5.0, 20.0, 5.0)`,
+      `hold wood_plank -> equipped wood_plank to primary hand`). Real bug
+      caught and fixed on the way: applying pos/hold immediately after
+      a world switch raced the scene reload (switching worlds frees and
+      recreates the player node asynchronously) -- now properly awaits
+      the old player reference going away and a new one appearing first.
+- [x] `pos` command reports player position + rotation; `point` reports
+      what's being aimed at (voxel id, world position, distance) --
+      raycasts via `VoxelTool.raycast()`, same reliable mechanism as
+      voxel_interactor.gd/battle mode's range check, and works regardless
+      of battle mode (unlike hud.gd's range check, which is
+      battle-mode-only by design).
+- [x] In-game command console: `\` (not `/`, which was already
+      `tooltip_toggle`) opens `dev_console_ui.gd` -- a scrolling log plus
+      a command-line input. Commands: `help`, `pos`, `point`, `goto`,
+      `hold`, `world`, `battle`, `mark`, `undo`, `quit`.
+- [x] Mirrors real stdout: tails `user://logs/godot.log` (Godot's own
+      default file log, already capturing every print()/push_warning()/
+      push_error()) rather than only re-printing what this script itself
+      outputs -- confirmed live, the on-screen log showed the pre-existing
+      `biome_wind_controller.gd` error spam that this feature had nothing
+      to do with.
+- [x] Three more real bugs found and fixed via live testing of the
+      console itself: (1) the `pause` action was bound to **both** Escape
+      and Enter -- meaning pressing Enter to submit *any* text field in
+      the game (world name, combatant name, and now console commands)
+      also toggled the pause menu; removed the Enter binding, Escape only
+      now. (2) A held/auto-repeating key fired `_unhandled_input` many
+      times for one physical press (16 stray backslashes ended up typed
+      into the console's own input field from a single `\` press) -- now
+      guarded with `not event.is_echo()`. (3) The `\` keypress that opens
+      the console could itself leak into the newly-focused input field;
+      now explicitly cleared on open. **Not fully self-verified** after
+      those three fixes -- boot-checks clean and the CLI-args path is
+      solidly verified, but the last live interactive test of typing a
+      command hit apparent xdotool timing flakiness on my end (mouse/key
+      simulation, not a reproduced code error) rather than a clean pass;
+      worth a real try when convenient.
 
 ## Phase 1 -- Battle mode controls & movement rework
 
@@ -217,6 +255,16 @@ simpler statement in the same message -- this is the one to build):
 - [ ] Structure paste: the structure's **pivot block** should replace
       (overwrite) whatever block is currently being pointed at, rather
       than whatever placement-anchor behavior it currently has.
+- [ ] Missing-mod-blocks warning: mod voxel ids are assigned append-only
+      when `ModManager.apply_voxel_registrations()` runs, so a world
+      saved with mod blocks placed, then loaded with that mod disabled
+      (or in a different enable-order), will have those voxel ids
+      missing or pointing at the wrong block entirely -- silent data
+      corruption, not just a missing texture. Loading a world should
+      check for this and show a warning; practical fallback is swapping
+      the missing ids for empty/air, plus a link from the warning
+      straight to a mod-enable dialog so the user can re-enable the
+      missing mod and reload instead of losing the blocks.
 
 ## Phase 10 -- Glass voxel (simplified scope)
 
