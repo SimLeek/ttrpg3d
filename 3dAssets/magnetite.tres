@@ -1,6 +1,6 @@
-[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://comtv8n1qot3d"]
+[gd_resource type="ShaderMaterial" format=3 uid="uid://comtv8n1qot3d"]
 
-[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_full.gdshader" id="1_laq43"]
+[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_cutout.gdshader" id="1_laq43"]
 [ext_resource type="Texture2D" uid="uid://cjy5kwrcd4ey2" path="res://3dAssets/blocks/ores/16xmagnetite.png" id="2_etrfm"]
 
 [resource]

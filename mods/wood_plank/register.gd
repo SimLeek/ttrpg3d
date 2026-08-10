@@ -9,7 +9,7 @@ extends RefCounted
 ## in user://mods_enabled.json.
 
 const CUBE_MESH := preload("res://3dAssets/blocks/dirt.obj")
-const XRAY_SHADER := preload("res://3dAssets/shaders/xray_if_behind_full.gdshader")
+const XRAY_SHADER := preload("res://3dAssets/shaders/xray_if_behind_cutout.gdshader")
 
 static func register() -> void:
 	var material := ShaderMaterial.new()

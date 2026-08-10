@@ -51,7 +51,7 @@ voxel_terrain = NodePath("../World/VoxelTerrain")
 [node name="LeftHandMesh" parent="CharacterBody3D" index="4" unique_id=1952010508 node_paths=PackedStringArray("held_item")]
 held_item = NodePath("delvoxitem")
 
-[node name="sunsetter" parent="CharacterBody3D" index="13" unique_id=964712856 node_paths=PackedStringArray("sun", "world_env")]
+[node name="sunsetter" parent="CharacterBody3D" index="15" unique_id=964712856 node_paths=PackedStringArray("sun", "world_env")]
 sun = NodePath("../../World/DirectionalLight3D")
 world_env = NodePath("../../World/WorldEnvironment")
 dark_bg_value = 0.5

@@ -1,6 +1,6 @@
-[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://tejwl67wfwmq"]
+[gd_resource type="ShaderMaterial" format=3 uid="uid://tejwl67wfwmq"]
 
-[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_full.gdshader" id="1_un2es"]
+[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_cutout.gdshader" id="1_un2es"]
 [ext_resource type="Texture2D" uid="uid://csla2a5wohr0w" path="res://3dAssets/blocks/ores/16xgypsum.png" id="2_8f2g8"]
 
 [resource]

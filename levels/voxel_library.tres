@@ -7,7 +7,7 @@
 [ext_resource type="Material" uid="uid://dehwif82rnqu8" path="res://3dAssets/shader_water_top.tres" id="5_vrciv"]
 [ext_resource type="Material" uid="uid://cploi6qk80y50" path="res://3dAssets/shader_log.tres" id="6_vhdqt"]
 [ext_resource type="Material" uid="uid://blin8pr502ru0" path="res://3dAssets/shader_leaves.tres" id="7_oxc0q"]
-[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_full.gdshader" id="8_eehgy"]
+[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_cutout.gdshader" id="8_ilt7a"]
 [ext_resource type="Texture2D" uid="uid://jq2ec4olhy7v" path="res://3dAssets/blocks/shrub/16xtallgrass.png" id="9_cdj8w"]
 [ext_resource type="ArrayMesh" uid="uid://b3dv7ew4x0pdh" path="res://3dAssets/blocks/plant/tall_grass.obj" id="10_txers"]
 [ext_resource type="Material" uid="uid://b2rbxwsjkulyk" path="res://3dAssets/shader_shrub.tres" id="11_ojqck"]
@@ -81,12 +81,9 @@ resource_name = "leaves"
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_80i00"]
 render_priority = 0
-shader = ExtResource("8_eehgy")
-shader_parameter/panini_d = 0.5
-shader_parameter/panini_s = 0.0
+shader = ExtResource("8_ilt7a")
 shader_parameter/cutout_radius = 1.5
 shader_parameter/cutout_pow = 3.0
-shader_parameter/below_pow = 0.2
 shader_parameter/forward_pow = 0.05
 shader_parameter/cone_extra = 1.0
 shader_parameter/floor_fade_start = 0.0
@@ -176,12 +173,9 @@ collision_enabled_0 = true
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_lwe7w"]
 render_priority = 0
-shader = ExtResource("8_eehgy")
-shader_parameter/panini_d = 0.5
-shader_parameter/panini_s = 0.0
+shader = ExtResource("8_ilt7a")
 shader_parameter/cutout_radius = 1.5
 shader_parameter/cutout_pow = 3.0
-shader_parameter/below_pow = 0.2
 shader_parameter/forward_pow = 0.05
 shader_parameter/cone_extra = 1.0
 shader_parameter/floor_fade_start = 0.0
@@ -207,6 +201,7 @@ collision_enabled_0 = true
 
 [sub_resource type="VoxelBlockyModelMesh" id="VoxelBlockyModelMesh_1rfhr"]
 mesh = ExtResource("2_bxrbp")
+side_vertex_tolerance = 0.01
 transparency_index = 1
 collision_aabbs = Array[AABB]([AABB(0, 0, 0, 1, 1, 1)])
 material_override_0 = ExtResource("20_y6ui6")

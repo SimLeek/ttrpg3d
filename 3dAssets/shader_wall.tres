@@ -1,6 +1,6 @@
-[gd_resource type="ShaderMaterial" load_steps=3 format=3 uid="uid://brnctogxnqgdq"]
+[gd_resource type="ShaderMaterial" format=3 uid="uid://brnctogxnqgdq"]
 
-[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_full.gdshader" id="1_myddq"]
+[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_cutout.gdshader" id="1_myddq"]
 [ext_resource type="Texture2D" uid="uid://cgmok5n72kity" path="res://3dAssets/blocks/16xdirt.png" id="2_w0gv5"]
 
 [resource]
