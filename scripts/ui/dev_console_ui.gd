@@ -7,7 +7,7 @@ extends Control
 
 var _root: Control
 var _log_label: RichTextLabel
-var _input: LineEdit
+var _command_input: LineEdit
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -29,7 +29,7 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	if DevConsole.is_open and event is InputEventKey and event.pressed \
 			and event.keycode == KEY_ESCAPE and not event.is_echo():
-		_input.release_focus()
+		_command_input.release_focus()
 		DevConsole.set_open(false)
 		get_viewport().set_input_as_handled()
 
@@ -40,8 +40,8 @@ func _on_visibility_toggled(is_open: bool) -> void:
 		UiPauseGate.request("dev_console")
 		# Defensive: the toggle keypress can otherwise leak into this
 		# field the moment it grabs focus (seen live).
-		_input.text = ""
-		_input.grab_focus()
+		_command_input.text = ""
+		_command_input.grab_focus()
 		_refresh_log()
 	else:
 		UiPauseGate.release("dev_console")
@@ -82,16 +82,16 @@ func _build_ui() -> void:
 	_log_label.add_theme_font_size_override("normal_font_size", 14)
 	vbox.add_child(_log_label)
 
-	_input = LineEdit.new()
-	_input.placeholder_text = "type a command, e.g. 'help'"
-	_input.text_submitted.connect(_on_command_submitted)
-	vbox.add_child(_input)
+	_command_input = LineEdit.new()
+	_command_input.placeholder_text = "type a command, e.g. 'help'"
+	_command_input.text_submitted.connect(_on_command_submitted)
+	vbox.add_child(_command_input)
 
 
 func _on_command_submitted(text: String) -> void:
 	DevConsole.run_command(text)
-	_input.text = ""
-	_input.grab_focus()
+	_command_input.text = ""
+	_command_input.grab_focus()
 
 
 func _on_log_updated(_new_lines: Array) -> void:
