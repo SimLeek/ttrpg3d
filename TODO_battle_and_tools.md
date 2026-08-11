@@ -71,6 +71,47 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       command hit apparent xdotool timing flakiness on my end (mouse/key
       simulation, not a reproduced code error) rather than a clean pass;
       worth a real try when convenient.
+- [x] Fixed a real GDScript name collision (`var _input` and `func
+      _input()` on the same script) that broke the console script
+      entirely -- see the dedicated commit for how this was missed twice
+      (routine boot-check loads the main menu scene by default, never
+      touching this script; the one time it *was* tested with the right
+      scene, output was grepped for specific strings that didn't match
+      "Parse Error"). Confirmed via live testing this was also the actual
+      cause of your "mouse input isn't working at all" report.
+- [x] Console no longer pauses the game (physics/chunk-loading/etc. keep
+      running while typing a command) -- deliberately different from the
+      DM-facing menus, since this is a dev/testing tool where you
+      generally want to watch the game keep going. Confirmed live via the
+      new command queue below (position changed between two `pos` calls
+      purely from gravity, with no command in between).
+- [x] New reliable test channel: appending a line to
+      `user://dev_console_commands.txt` (reset empty on every launch)
+      runs it as a command, independent of the in-game UI or window focus
+      -- xdotool's OS-level input simulation turned out to have too many
+      of its own quirks (held-key auto-repeat, dead/compose-key
+      swallowing depending on the specific key, focus races) to be a
+      reliable way to verify game state from outside the process.
+      Verified live: three commands piped in via plain `echo >> file`
+      from a separate shell, all executed correctly in order.
+- [ ] Still open: Escape now correctly closes the console (fixed, verified
+      live), but re-focusing the input field after pressing Enter to
+      submit a command is still unconfirmed -- a `_process()` "babysitter"
+      that unconditionally re-grabs focus every frame while the console is
+      open is the current fix, but the live test session that would have
+      confirmed it hit unrelated xdotool issues (repeated `\` characters
+      from a single keypress) before it could be cleanly verified. Should
+      be checked directly next time either via your own testing or via
+      the new command-queue channel once there's a command that can prove
+      focus state from outside the process.
+- [ ] WASD no longer moves the player while a UI text field has the
+      mouse released (matches the existing gate `two_handed_resource.gd`
+      already used for item-use input) -- needed specifically because the
+      console no longer pauses the game, so nothing else was stopping
+      movement from bleeding through while typing. Boot-checked and
+      confirmed not to break normal movement; not yet independently
+      confirmed fixed for the console case specifically (same session
+      that would have confirmed it hit the xdotool issues above).
 
 ## Phase 1 -- Battle mode controls & movement rework
 
@@ -87,15 +128,52 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       returns them to *that* one, then undoes on the press after, and so
       on. One key walks you back through history AND lets you jump back
       onto whichever waypoint you're currently reasoning about.
-- [ ] Battle mode should not force-enable flying/intangible automatically
-      anymore. Movement in battle mode is **normal movement** unless the
-      player has a flight or dig-speed item equipped (see Phase 8) -- in
-      which case movement uses that item's speed, and switching equipped
-      movement items switches movement mode/speed.
+- [x] Battle mode no longer force-enables flying/intangible on entry or
+      clears them on exit -- whatever movement type was already active
+      (walking, or manually double-tapped flying/intangible) stays
+      exactly as it was the whole time. The transparency visual cue
+      stays. The rest of this item (movement speed while in battle mode
+      coming from an *equipped item* once flight/dig move to mod items)
+      is still Phase 8 -- this was just "stop overriding it", not the
+      full rework. Boot-checked; live-tested enough to confirm the player
+      stays grounded/walking normally on entering battle mode rather than
+      lifting off.
 - [ ] Double-tap-jump-to-fly interferes with wall jumping -- remove the
       built-in double-tap gesture detection from `player_blob_ctrl.gd`
       entirely. Fly and "dig"/intangible move to mod items instead (see
-      Phase 8), not built-in double-tap keys.
+      Phase 8), not built-in double-tap keys. ("Right the double ctrl and
+      double space things were a bad idea it seems" -- confirmed worth
+      doing, not done yet.)
+- [x] Battle-mode waypoint lines were using true alpha-blend transparency
+      -- same underlying flicker issue as everything else layered on the
+      xray cutout system (Godot doesn't depth-sort overlapping alpha-
+      blended transparents). Switched to `TRANSPARENCY_ALPHA_SCISSOR`
+      (Godot's built-in "cutout" mode -- binary discard by threshold, no
+      blending, so nothing to sort) and made the line radius thinner
+      (0.09 -> 0.05). Live-tested: line renders solid/stable, visibly
+      thinner. The live-segment color also had to become an actual
+      different shade rather than a lower alpha, since alpha-scissor
+      doesn't preserve a translucent look the way alpha-blend did.
+- [x] Range-check distance detection was using plain camera-forward,
+      which drifts from what the actual voxel-targeting beam aims at as
+      zoom changes (the camera itself moves further from the character in
+      third person; a ray from its position traces a different path than
+      one from near the character's body at the same look angle). Added
+      `VoxelInteractor.get_aim_ray()`, extracting the exact
+      origin/direction math `update_target()`'s own beam already used, so
+      `hud.gd`'s range check and `DevConsole`'s `point` command both agree
+      with what placing/breaking a block would actually hit. Live-tested,
+      confirmed distance now updates correctly and consistently whether
+      zoomed in or out.
+- [x] Zoom changed from plain mouse-scroll to **Ctrl+scroll**
+      (`spring_arm_3d_look.gd`); plain scroll now cycles the hotbar
+      selection instead (`player_inventory.gd`, Minecraft-style). Live-
+      tested: plain scroll cycling confirmed working (slot 3 -> 4).
+      Ctrl+scroll's own zoom behavior wasn't independently confirmed in
+      the same session -- the test attempt was confounded by the
+      synthetic Ctrl key-hold accidentally also triggering the unrelated
+      double-tap-Ctrl-for-intangible gesture. Code review looks correct
+      (`event.ctrl_pressed` gate); worth a real check.
 - [ ] "Change ctrl-down to shift": rebind `fly_descend` from Ctrl to
       Shift. The same Shift key, when grounded (not flying), triggers
       ledge-safety instead (Phase 6) -- context-dependent like `jump`
@@ -161,6 +239,11 @@ simpler statement in the same message -- this is the one to build):
   - Ctrl+number (hotbar slot) -> equips that item to the **right** hand.
     (Plain number key presumably still equips left/primary as today --
     confirm current behavior before changing.)
+  - Once dual-hand hotbar selection exists per the above: plain
+    mouse-wheel cycles the **left**-hand hotbar selection (already built,
+    this round -- see player_inventory.gd), Shift+wheel should cycle the
+    **right**-hand selection. Not built yet since there's only one
+    hotbar selection today; noted for when this phase actually lands.
 
 ## Phase 5 -- Inventory split (DM vs. player)
 
