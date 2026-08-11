@@ -138,6 +138,44 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       10s-fade behavior need your live testing, since they depend on real
       window keyboard focus/keystrokes and elapsed wall-clock idle time,
       neither of which the command-queue channel exercises.
+- [x] Fixed the "console is always on" / "clicking re-focuses it" report:
+      the fade timer was resetting on *any* new log line, and DevConsole
+      tails real stdout project-wide -- so `two_handed_resource.gd`'s
+      `print("prim")`/`print("sec")` on every click was resetting it too,
+      making the UI look permanently visible/"re-opened" on click when it
+      was really just never fading. Fade is now driven purely by
+      `DevConsole.is_focused`, nothing else.
+    - Per your follow-up spec, `\`/Esc/Tab/Enter are no longer a single
+      toggle: `\` only GAINS focus (does nothing if already focused, but
+      still consumes the keypress so it can't leak into the field as
+      text); Esc, Tab, and Enter (submitting a command) each only REMOVE
+      it, never grant it.
+    - Extracted the fade math into a standalone, dependency-free class,
+      `DevConsoleFadeState` (`scripts/ui/dev_console_fade_state.gd`) --
+      `compute_alpha(is_focused, now_msec)` takes time as a parameter
+      instead of calling `Time.get_ticks_msec()` itself, specifically so
+      it's exhaustively testable with spoofed timestamps. Per your
+      suggestion, added `unit_fade_new`/`unit_fade_step`/`unit_set_focused`/
+      `unit_ui_alpha` commands to DevConsole (hidden from `help`) as the
+      testing back door: `unit_fade_step` drives the pure math directly
+      with hand-picked timestamps (no real waiting), `unit_set_focused`
+      does exactly what a real keypress would do to `is_focused` without
+      needing one, and `unit_ui_alpha` reads the real on-screen UI's
+      actual rendered alpha back out to confirm the wiring, not just the
+      isolated math. All four verified live through the command-queue file
+      -- fade curve is exactly linear 1.0->0.0 over 10000ms and snaps back
+      to 1.0 the instant focus returns, and the real UI's alpha tracks it
+      correctly (checked before/after `unit_set_focused`).
+    - Found and fixed a genuine race while auditing this: `_input()` order
+      between separate nodes isn't guaranteed, and `set_input_as_handled()`
+      doesn't stop *other* nodes' `_input()` from still running the same
+      frame -- so if `dev_console_ui.gd`'s Escape handler happened to run
+      before `pause_menu.gd`'s, it would flip `is_focused` to false and
+      the pause menu's `not DevConsole.is_focused` check would then read
+      *true*, opening the pause menu on the same Escape press that just
+      unfocused the console. `pause_menu.gd` now also checks
+      `not get_viewport().is_input_handled()`, which catches this
+      regardless of which node's `_input()` happens to run first.
 
 ## Phase 1 -- Battle mode controls & movement rework
 

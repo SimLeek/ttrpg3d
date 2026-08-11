@@ -85,18 +85,20 @@ func _process(_delta: float) -> void:
 ## _input(), not _unhandled_input(): Node._input() runs before the Viewport
 ## dispatches to whichever Control has GUI focus, so consuming the event
 ## here (set_input_as_handled()) stops \ from ever reaching the focused
-## LineEdit as a typed character -- previously (_unhandled_input, which
-## only runs for events the GUI dispatch didn't consume) toggling focus
-## OFF while the input already had focus let the LineEdit's own
-## _gui_input eat the keypress as text first, leaking a literal "\" into
-## whatever you'd typed.
+## LineEdit as a typed character.
+##
+## \ only GAINS focus, never removes it -- Esc/Tab/Enter are the only ways
+## to remove it (dev_console_ui.gd handles Esc/Tab; Enter via
+## LineEdit.text_submitted). Still consumed even when already focused, so
+## pressing \ again doesn't leak a literal "\" into whatever you'd typed.
 func _input(event: InputEvent) -> void:
 	# is_echo() guard: a held/auto-repeating key otherwise fires this
 	# handler many times for one physical press (seen live: 16 stray
 	# backslashes ended up typed into the newly-focused input field from
 	# a single \ press during testing).
 	if event.is_action_pressed("toggle_dev_console") and not event.is_echo():
-		set_focused(not is_focused)
+		if not is_focused:
+			set_focused(true)
 		get_viewport().set_input_as_handled()
 
 func set_focused(value: bool) -> void:
@@ -153,7 +155,10 @@ func _register_builtin_commands() -> void:
 			register_command(method_name.substr(5), Callable(self, method_name))
 
 func _cmd_help(_args: Array[String]) -> String:
-	var names := _commands.keys()
+	# unit_* commands are deliberately left out -- they're a testing-only
+	# back door for driving/inspecting the console's own UI state (see
+	# below), not something a player/DM ever needs to know exists.
+	var names: Array = _commands.keys().filter(func(n): return not n.begins_with("unit_"))
 	names.sort()
 	return "Commands: %s" % ", ".join(names)
 
@@ -269,6 +274,59 @@ func _cmd_world(args: Array[String]) -> String:
 			WorldManager.switch_to_world(w)
 			return "switching to %s (matched generator %s)" % [w.get("id", "?"), target]
 	return "no such world: %s" % target
+
+## ---------------------------------------------------------------------
+## Testing back door for the console's OWN ui/focus state -- live/visual
+## testing of dev_console_ui.gd (fade timing, focus gating) kept missing
+## real bugs (xdotool quirks, and separately a fade-reset-on-any-log-line
+## design that made the fade look "always on"). These commands let an
+## external harness (the COMMAND_QUEUE_PATH file) drive and inspect that
+## state directly and deterministically -- spoofed timestamps for the pure
+## fade math, no real waiting or window focus required.
+## ---------------------------------------------------------------------
+
+var _test_fade_state: DevConsoleFadeState = null
+
+## unit_fade_new: starts a fresh, isolated DevConsoleFadeState -- doesn't
+## touch the real UI's own fade state, so this can be exercised mid-game
+## without disturbing what's actually on screen.
+func _cmd_unit_fade_new(_args: Array[String]) -> String:
+	_test_fade_state = DevConsoleFadeState.new()
+	return "ok"
+
+## unit_fade_step <0|1> <now_msec>: feeds one (is_focused, now) pair into
+## the test fade state and returns the resulting alpha -- call repeatedly
+## with hand-picked timestamps to check exact fade-curve behavior (e.g. at
+## exactly +10000ms, +10001ms, +5000ms after unfocusing) without waiting
+## real seconds for each check.
+func _cmd_unit_fade_step(args: Array[String]) -> String:
+	if not _test_fade_state:
+		_test_fade_state = DevConsoleFadeState.new()
+	if args.size() < 2:
+		return "usage: unit_fade_step <0|1> <now_msec>"
+	var focused: bool = args[0] == "1" or args[0].to_lower() == "true"
+	var alpha: float = _test_fade_state.compute_alpha(focused, args[1].to_int())
+	return "alpha=%.4f" % alpha
+
+## unit_set_focused <0|1>: does exactly what a real \/Esc/Tab/Enter would
+## do to is_focused, without needing a real keypress to land on the real
+## game window -- lets a test check the *downstream effects* of a focus
+## change (movement gating, the real UI's alpha) deterministically.
+func _cmd_unit_set_focused(args: Array[String]) -> String:
+	if args.is_empty():
+		return "usage: unit_set_focused <0|1>"
+	set_focused(args[0] == "1" or args[0].to_lower() == "true")
+	return "is_focused=%s" % is_focused
+
+## unit_ui_alpha: reports the REAL dev_console_ui.gd instance's current
+## rendered alpha, to confirm it's actually wired to DevConsoleFadeState
+## correctly in the live scene (not just correct in isolation via
+## unit_fade_step above).
+func _cmd_unit_ui_alpha(_args: Array[String]) -> String:
+	var ui := get_tree().get_first_node_in_group("dev_console_ui")
+	if not ui:
+		return "no dev_console_ui node found"
+	return "alpha=%.4f focused=%s" % [ui.get_debug_alpha(), is_focused]
 
 ## ---------------------------------------------------------------------
 ## Startup CLI args
