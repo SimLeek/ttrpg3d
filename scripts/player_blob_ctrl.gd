@@ -84,6 +84,12 @@ func _ready() -> void:
 		last_safe_pos = true_position
 
 func _input(event: InputEvent) -> void:
+	# DevConsole.is_focused: the console never changes mouse mode anymore,
+	# so this is the only way gameplay knows the player is typing instead
+	# of playing -- without it, e.g. double-tapping "w" while typing "world"
+	# would toggle flight.
+	if DevConsole.is_focused:
+		return
 	if event.is_action_pressed("jump") and not event.is_echo():
 		var now := Time.get_ticks_msec()
 		if now - _last_jump_tap_time <= DOUBLE_TAP_WINDOW_MS:
@@ -111,9 +117,20 @@ func _physics_process(delta: float) -> void:
 	var sv_xyz = velocity  # immediate set velocity vector
 	var gv_xyz = Vector3.ZERO  # goal velocity vector
 	
-	var input_dir: Vector2 = Input.get_vector("left", "right", "up", "down")
-	var is_slow: bool = Input.is_action_pressed("slow")
-	var is_sprint: bool = Input.is_action_pressed("sprint")
+	# Mouse released means some other UI has the player's attention (a menu
+	# that also switches mouse mode) -- same gate two_handed_resource.gd
+	# already uses for item-use input, extended to movement. DevConsole.is_focused
+	# covers the dev console specifically, since it deliberately never
+	# touches mouse mode (physics/chunk-loading keep running while you
+	# type) -- WASD was otherwise still moving the player out from under
+	# you mid-command.
+	var input_dir: Vector2 = Vector2.ZERO
+	var is_slow: bool = false
+	var is_sprint: bool = false
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and not DevConsole.is_focused:
+		input_dir = Input.get_vector("left", "right", "up", "down")
+		is_slow = Input.is_action_pressed("slow")
+		is_sprint = Input.is_action_pressed("sprint")
 	gv_xyz = mover.handle_physics_process_input(input_dir, is_slow,is_sprint, gv_xyz, delta, transform)
 
 	var friction: float = SPEED_DECAY_GROUND
@@ -125,10 +142,11 @@ func _physics_process(delta: float) -> void:
 	if no_gravity:
 		friction = SPEED_DECAY_AIR
 		var vertical := 0.0
-		if Input.is_action_pressed("jump"):
-			vertical += FLY_SPEED
-		if Input.is_action_pressed("fly_descend"):
-			vertical -= FLY_SPEED
+		if not DevConsole.is_focused:
+			if Input.is_action_pressed("jump"):
+				vertical += FLY_SPEED
+			if Input.is_action_pressed("fly_descend"):
+				vertical -= FLY_SPEED
 		sv_xyz.y = move_toward(sv_xyz.y, vertical, FLY_SPEED * 4.0 * delta)
 	else:
 		sv_xyz = faller.apply_gravity(sv_xyz, self, delta)
@@ -140,8 +158,10 @@ func _physics_process(delta: float) -> void:
 		sv_xyz = wall_jumper.apply_jump(sv_xyz, self, not should_fall)
 		basic_jumper.jump_requested = wall_jumper.jump_requested
 
-	# Movement input
-	input_dir = Input.get_vector("left", "right", "up", "down")
+	# Movement input -- reuses input_dir from above (already zeroed while
+	# DevConsole.is_focused); re-polling Input directly here used to
+	# silently undo that gate for `direction`, which wall_jumper.handle_wall_slide
+	# below still reacts to even when the gated gv_xyz was correctly zero.
 	var direction: Vector3 = (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
 
 	var squeeze_factor: float = 1.0
@@ -159,7 +179,7 @@ func _physics_process(delta: float) -> void:
 	if not no_gravity:
 		sv_xyz = wall_jumper.handle_wall_slide(sv_xyz, self, direction)
 
-	if Input.is_action_pressed("slide"):
+	if not DevConsole.is_focused and Input.is_action_pressed("slide"):
 		floor_max_angle = 0.0
 	else:
 		floor_max_angle = default_floor_angle

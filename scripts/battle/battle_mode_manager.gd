@@ -2,17 +2,22 @@ extends Node
 
 ## Autoload. Turn-based "battle mode" -- toggled with toggle_battle_mode (B).
 ##
-## While active, the player becomes a translucent, flying, intangible
-## "ghost" (reusing the existing DM-mode fly/intangible movement already in
-## player_blob_ctrl.gd, just force-enabled instead of requiring the
-## double-tap) so a move can be planned by flying to preview positions
-## without needing a separate ghost node or camera. primary/secondary item
-## clicks are repurposed while active (see two_handed_resource.gd) to mark
-## a waypoint / undo the last one, instead of using the currently-held
-## item. Distance uses whichever single metric GameSettings.distance_norm_mode
-## selects (Manhattan / Euclidean / a custom Minkowski n-norm) -- a game
-## usually sticks to one, so this reports one number, not every metric at
-## once.
+## While active, the player turns translucent (a visual "you're in
+## planning mode" cue) but movement itself is left completely alone --
+## whatever combination of walking/flying/intangible (double-tap Space /
+## double-tap Ctrl in player_blob_ctrl.gd) was already active going in
+## stays active, and stays that way coming back out too. Battle mode used
+## to force-enable flying+intangible on entry and clear both on exit; that
+## fought with the double-tap gestures (and, per the TTRPG-modes backlog,
+## flight/dig-speed are meant to move to equippable mod items eventually,
+## at which point *those* should determine movement speed while in battle
+## mode -- not this script silently overriding whatever's equipped).
+## primary/secondary item clicks are repurposed while active (see
+## two_handed_resource.gd) to mark a waypoint / undo the last one, instead
+## of using the currently-held item. Distance uses whichever single metric
+## GameSettings.distance_norm_mode selects (Manhattan / Euclidean / a
+## custom Minkowski n-norm) -- a game usually sticks to one, so this
+## reports one number, not every metric at once.
 ##
 ## Waypoints snap to the center of whichever voxel they're marked in by
 ## default (GameSettings.snap_waypoints_to_grid) -- the TTRPG-grid-
@@ -28,9 +33,10 @@ signal waypoints_changed(waypoints: Array)
 
 const MARKER_COLOR := Color(1.0, 0.85, 0.2)
 const MARKER_RADIUS := 0.15
-const LINE_COLOR := Color(1.0, 0.85, 0.2, 0.85)
-const LINE_RADIUS := 0.09
-const LIVE_LINE_COLOR := Color(1.0, 0.85, 0.2, 0.5)
+const LINE_COLOR := Color(1.0, 0.85, 0.2, 1.0)
+const LINE_RADIUS := 0.05
+const LIVE_LINE_COLOR := Color(1.0, 0.95, 0.6, 1.0)
+const LINE_ALPHA_SCISSOR_THRESHOLD := 0.5
 const LABEL_Y_OFFSET := 0.4
 const VOXEL_SIZE := 1.0
 
@@ -73,13 +79,9 @@ func set_active(value: bool) -> void:
 		waypoints.clear()
 		if player:
 			waypoints.append(_snap_if_enabled(player.global_position, player))
-			player.is_flying = true
-			player.is_intangible = true
 			_set_player_alpha(player, 0.35)
 	else:
 		if player:
-			player.is_flying = false
-			player.is_intangible = false
 			_set_player_alpha(player, 1.0)
 		waypoints.clear()
 		_hide_live_segment()
@@ -244,7 +246,15 @@ func _make_line_segment(color: Color, initial_height: float) -> MeshInstance3D:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_color = color
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# Alpha-scissor ("cutout"), not alpha-blend: same fix as
+	# xray_if_behind_cutout.gdshader for the same underlying reason --
+	# Godot doesn't depth-sort overlapping alpha-blended transparents, so
+	# multiple lines (or a line plus terrain) can flicker/occlude each
+	# other by draw order instead of real depth. Scissor has no sorting
+	# problem since there's nothing to blend -- each pixel is either
+	# fully drawn or fully discarded.
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	mat.alpha_scissor_threshold = LINE_ALPHA_SCISSOR_THRESHOLD
 	line.material_override = mat
 	return line
 

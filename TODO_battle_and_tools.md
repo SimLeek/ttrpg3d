@@ -71,6 +71,111 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       command hit apparent xdotool timing flakiness on my end (mouse/key
       simulation, not a reproduced code error) rather than a clean pass;
       worth a real try when convenient.
+- [x] Fixed a real GDScript name collision (`var _input` and `func
+      _input()` on the same script) that broke the console script
+      entirely -- see the dedicated commit for how this was missed twice
+      (routine boot-check loads the main menu scene by default, never
+      touching this script; the one time it *was* tested with the right
+      scene, output was grepped for specific strings that didn't match
+      "Parse Error"). Confirmed via live testing this was also the actual
+      cause of your "mouse input isn't working at all" report.
+- [x] Console no longer pauses the game (physics/chunk-loading/etc. keep
+      running while typing a command) -- deliberately different from the
+      DM-facing menus, since this is a dev/testing tool where you
+      generally want to watch the game keep going. Confirmed live via the
+      new command queue below (position changed between two `pos` calls
+      purely from gravity, with no command in between).
+- [x] New reliable test channel: appending a line to
+      `user://dev_console_commands.txt` (reset empty on every launch)
+      runs it as a command, independent of the in-game UI or window focus
+      -- xdotool's OS-level input simulation turned out to have too many
+      of its own quirks (held-key auto-repeat, dead/compose-key
+      swallowing depending on the specific key, focus races) to be a
+      reliable way to verify game state from outside the process.
+      Verified live: three commands piped in via plain `echo >> file`
+      from a separate shell, all executed correctly in order.
+- [x] Redesigned per your feedback ("E still tries to do ledge grabbing in
+      the console... I think we should just give all controls back to the
+      player including the mouse, but show the text on the screen, fading
+      away after about 10 seconds slowly, unless they press \ again and it
+      focuses"): the console no longer toggles a show/hide panel or mouse
+      mode at all -- `\` now only toggles keyboard FOCUS
+      (`DevConsole.is_focused`, renamed from `is_open`) on the command
+      input. The log + input bar stay in the tree permanently and just
+      fade to transparent ~10s after the last activity (new log line, or
+      focus changing) unless focused, in which case they stay at full
+      opacity. Removed the black dim background entirely -- fully
+      transparent now, per "we probably don't want the transparent black
+      background for the dev console, just fully transparent background
+      so we can see the game."
+    - The old WASD-only gate wasn't enough on its own: since the mouse
+      never leaves the player anymore, the previous `Input.mouse_mode ==
+      CAPTURED` check (which used to also cover the console, back when it
+      switched mouse mode) is now a no-op for the console specifically.
+      `DevConsole.is_focused` is the explicit state every gameplay input
+      path checks instead: `player_blob_ctrl.gd`'s `_input()` (double-tap
+      fly/intangible, wall-jump/basic-jump immediate input) and
+      `_physics_process()` (WASD, slow/sprint, fly-vertical, slide),
+      `ledge_grabber.gd` and `left_hand_gripper.gd` ("E" ledge grab, both
+      the real grab logic and the hand's own reaching-visual poll, which
+      read the action independently), and `two_handed_resource.gd`
+      (attack/place-block clicks and battle-mode mark/undo clicks). Godot's
+      GUI focus system only intercepts *event*-based input for whichever
+      Control has focus -- it does nothing for `Input.is_action_pressed()`
+      polling elsewhere in the tree, which is how most of these read
+      input, so a state check was required regardless of the redesign.
+    - Real latent bug found and fixed on the way: `player_blob_ctrl.gd`
+      recomputed `input_dir` a second time, ungated, a few lines after the
+      correctly-gated first read, silently overwriting it and feeding
+      `wall_jumper.handle_wall_slide()` an ungated direction even while
+      typing. Removed the redundant re-read.
+    - Boot-checked clean (`godot-mono --headless --scene
+      res://levels/voxel_main_world.tscn`, no parse/script errors in any
+      touched file) and smoke-tested via a real (non-headless) launch
+      driven entirely through the command-queue file -- `pos` commands
+      round-tripped correctly and `quit` shut the process down cleanly.
+      **Not yet independently confirmed**: the actual focus-gating and
+      10s-fade behavior need your live testing, since they depend on real
+      window keyboard focus/keystrokes and elapsed wall-clock idle time,
+      neither of which the command-queue channel exercises.
+- [x] Fixed the "console is always on" / "clicking re-focuses it" report:
+      the fade timer was resetting on *any* new log line, and DevConsole
+      tails real stdout project-wide -- so `two_handed_resource.gd`'s
+      `print("prim")`/`print("sec")` on every click was resetting it too,
+      making the UI look permanently visible/"re-opened" on click when it
+      was really just never fading. Fade is now driven purely by
+      `DevConsole.is_focused`, nothing else.
+    - Per your follow-up spec, `\`/Esc/Tab/Enter are no longer a single
+      toggle: `\` only GAINS focus (does nothing if already focused, but
+      still consumes the keypress so it can't leak into the field as
+      text); Esc, Tab, and Enter (submitting a command) each only REMOVE
+      it, never grant it.
+    - Extracted the fade math into a standalone, dependency-free class,
+      `DevConsoleFadeState` (`scripts/ui/dev_console_fade_state.gd`) --
+      `compute_alpha(is_focused, now_msec)` takes time as a parameter
+      instead of calling `Time.get_ticks_msec()` itself, specifically so
+      it's exhaustively testable with spoofed timestamps. Per your
+      suggestion, added `unit_fade_new`/`unit_fade_step`/`unit_set_focused`/
+      `unit_ui_alpha` commands to DevConsole (hidden from `help`) as the
+      testing back door: `unit_fade_step` drives the pure math directly
+      with hand-picked timestamps (no real waiting), `unit_set_focused`
+      does exactly what a real keypress would do to `is_focused` without
+      needing one, and `unit_ui_alpha` reads the real on-screen UI's
+      actual rendered alpha back out to confirm the wiring, not just the
+      isolated math. All four verified live through the command-queue file
+      -- fade curve is exactly linear 1.0->0.0 over 10000ms and snaps back
+      to 1.0 the instant focus returns, and the real UI's alpha tracks it
+      correctly (checked before/after `unit_set_focused`).
+    - Found and fixed a genuine race while auditing this: `_input()` order
+      between separate nodes isn't guaranteed, and `set_input_as_handled()`
+      doesn't stop *other* nodes' `_input()` from still running the same
+      frame -- so if `dev_console_ui.gd`'s Escape handler happened to run
+      before `pause_menu.gd`'s, it would flip `is_focused` to false and
+      the pause menu's `not DevConsole.is_focused` check would then read
+      *true*, opening the pause menu on the same Escape press that just
+      unfocused the console. `pause_menu.gd` now also checks
+      `not get_viewport().is_input_handled()`, which catches this
+      regardless of which node's `_input()` happens to run first.
 
 ## Phase 1 -- Battle mode controls & movement rework
 
@@ -87,15 +192,52 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       returns them to *that* one, then undoes on the press after, and so
       on. One key walks you back through history AND lets you jump back
       onto whichever waypoint you're currently reasoning about.
-- [ ] Battle mode should not force-enable flying/intangible automatically
-      anymore. Movement in battle mode is **normal movement** unless the
-      player has a flight or dig-speed item equipped (see Phase 8) -- in
-      which case movement uses that item's speed, and switching equipped
-      movement items switches movement mode/speed.
+- [x] Battle mode no longer force-enables flying/intangible on entry or
+      clears them on exit -- whatever movement type was already active
+      (walking, or manually double-tapped flying/intangible) stays
+      exactly as it was the whole time. The transparency visual cue
+      stays. The rest of this item (movement speed while in battle mode
+      coming from an *equipped item* once flight/dig move to mod items)
+      is still Phase 8 -- this was just "stop overriding it", not the
+      full rework. Boot-checked; live-tested enough to confirm the player
+      stays grounded/walking normally on entering battle mode rather than
+      lifting off.
 - [ ] Double-tap-jump-to-fly interferes with wall jumping -- remove the
       built-in double-tap gesture detection from `player_blob_ctrl.gd`
       entirely. Fly and "dig"/intangible move to mod items instead (see
-      Phase 8), not built-in double-tap keys.
+      Phase 8), not built-in double-tap keys. ("Right the double ctrl and
+      double space things were a bad idea it seems" -- confirmed worth
+      doing, not done yet.)
+- [x] Battle-mode waypoint lines were using true alpha-blend transparency
+      -- same underlying flicker issue as everything else layered on the
+      xray cutout system (Godot doesn't depth-sort overlapping alpha-
+      blended transparents). Switched to `TRANSPARENCY_ALPHA_SCISSOR`
+      (Godot's built-in "cutout" mode -- binary discard by threshold, no
+      blending, so nothing to sort) and made the line radius thinner
+      (0.09 -> 0.05). Live-tested: line renders solid/stable, visibly
+      thinner. The live-segment color also had to become an actual
+      different shade rather than a lower alpha, since alpha-scissor
+      doesn't preserve a translucent look the way alpha-blend did.
+- [x] Range-check distance detection was using plain camera-forward,
+      which drifts from what the actual voxel-targeting beam aims at as
+      zoom changes (the camera itself moves further from the character in
+      third person; a ray from its position traces a different path than
+      one from near the character's body at the same look angle). Added
+      `VoxelInteractor.get_aim_ray()`, extracting the exact
+      origin/direction math `update_target()`'s own beam already used, so
+      `hud.gd`'s range check and `DevConsole`'s `point` command both agree
+      with what placing/breaking a block would actually hit. Live-tested,
+      confirmed distance now updates correctly and consistently whether
+      zoomed in or out.
+- [x] Zoom changed from plain mouse-scroll to **Ctrl+scroll**
+      (`spring_arm_3d_look.gd`); plain scroll now cycles the hotbar
+      selection instead (`player_inventory.gd`, Minecraft-style). Live-
+      tested: plain scroll cycling confirmed working (slot 3 -> 4).
+      Ctrl+scroll's own zoom behavior wasn't independently confirmed in
+      the same session -- the test attempt was confounded by the
+      synthetic Ctrl key-hold accidentally also triggering the unrelated
+      double-tap-Ctrl-for-intangible gesture. Code review looks correct
+      (`event.ctrl_pressed` gate); worth a real check.
 - [ ] "Change ctrl-down to shift": rebind `fly_descend` from Ctrl to
       Shift. The same Shift key, when grounded (not flying), triggers
       ledge-safety instead (Phase 6) -- context-dependent like `jump`
@@ -161,6 +303,11 @@ simpler statement in the same message -- this is the one to build):
   - Ctrl+number (hotbar slot) -> equips that item to the **right** hand.
     (Plain number key presumably still equips left/primary as today --
     confirm current behavior before changing.)
+  - Once dual-hand hotbar selection exists per the above: plain
+    mouse-wheel cycles the **left**-hand hotbar selection (already built,
+    this round -- see player_inventory.gd), Shift+wheel should cycle the
+    **right**-hand selection. Not built yet since there's only one
+    hotbar selection today; noted for when this phase actually lands.
 
 ## Phase 5 -- Inventory split (DM vs. player)
 

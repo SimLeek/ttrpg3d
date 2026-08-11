@@ -20,10 +20,15 @@ func _ready() -> void:
 	_build_settings_screen()
 
 func _input(event):
-	# DevConsole.is_open guard: without it, Escape closing the dev console
-	# and Escape opening the pause menu raced each other (both nodes react
-	# to the same key) -- the console owns Escape while it's open instead.
-	if event.is_action_pressed("pause") and not DevConsole.is_open:
+	# Both checks matter, not just DevConsole.is_focused: Node._input() order
+	# between separate nodes isn't guaranteed, and set_input_as_handled()
+	# doesn't stop other nodes' _input() from still running this frame --
+	# if dev_console_ui.gd's _input() happens to run before this one, it
+	# already flipped is_focused to false by the time we get here even
+	# though IT owned this exact keypress. is_input_handled() catches that
+	# case regardless of ordering; is_focused alone catches the (also
+	# possible) reverse ordering.
+	if event.is_action_pressed("pause") and not DevConsole.is_focused and not get_viewport().is_input_handled():
 		handle_pause()
 
 func handle_pause():
