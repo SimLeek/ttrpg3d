@@ -70,6 +70,20 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _hotbar_item_ids.is_empty():
 		return
 
+	# Plain mouse-wheel cycles the hotbar (Minecraft-style); Ctrl+wheel is
+	# reserved for zoom (spring_arm_3d_look.gd) instead, so this excludes
+	# it explicitly rather than going through voxel_select_next/prev --
+	# Godot's action-match system has no "this modifier must NOT be held"
+	# condition, only exact-match bindings, so a plain action binding
+	# can't express "wheel, but only without Ctrl" on its own.
+	if event is InputEventMouseButton and event.pressed and not event.ctrl_pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_select_slot((_selected_slot + 1) % _hotbar_item_ids.size())
+			return
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_select_slot((_selected_slot - 1 + _hotbar_item_ids.size()) % _hotbar_item_ids.size())
+			return
+
 	if event.is_action_pressed("voxel_select_next"):
 		_select_slot((_selected_slot + 1) % _hotbar_item_ids.size())
 	elif event.is_action_pressed("voxel_select_prev"):

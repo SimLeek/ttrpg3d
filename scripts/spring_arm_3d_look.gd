@@ -56,15 +56,16 @@ func _unhandled_input(event):
 
 		# 3. Clamp vertical rotation so you don't flip upside down
 		rotation.x = clamp(rotation.x, deg_to_rad(-89.9), deg_to_rad(89.9))
-	# 2. MOUSE SCROLL ZOOM
-	if event is InputEventMouseButton:
+	# 2. MOUSE SCROLL ZOOM -- Ctrl+scroll only now; plain scroll cycles the
+	# held hotbar item instead (player_inventory.gd), so it needed to stop
+	# also zooming underneath that.
+	if event is InputEventMouseButton and event.ctrl_pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			print("zoom in")
 			target_zoom = clamp(target_zoom - zoom_speed, min_zoom, max_zoom)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			print("zoom out")
 			target_zoom = clamp(target_zoom + zoom_speed, min_zoom, max_zoom)
-		elif event.button_index == MOUSE_BUTTON_LEFT:
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
 			print("left button pressed")
 			if event.pressed:
 				print("web compatible pointer capture")
