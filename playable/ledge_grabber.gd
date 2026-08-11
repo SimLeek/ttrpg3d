@@ -96,7 +96,11 @@ func _physics_process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		grab_input = true  # no input available in editor
 	else:
-		grab_input = ledge_grab_key.is_empty() or Input.is_action_pressed(ledge_grab_key)
+		# DevConsole.is_focused: the console is a plain autoload, referenced
+		# directly here like BattleModeManager elsewhere in this codebase --
+		# without this, holding "E" to type into the console still triggered
+		# a ledge grab even though the console never changes mouse mode.
+		grab_input = ledge_grab_key.is_empty() or (not DevConsole.is_focused and Input.is_action_pressed(ledge_grab_key))
 	if not grab_input:
 		_debug_print("LedgeGrabber: Grab input not pressed")
 		if is_grabbing_ledge:

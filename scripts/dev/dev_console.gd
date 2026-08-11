@@ -12,6 +12,17 @@ extends Node
 ## the same operations so a whole test scenario can be scripted with no
 ## interaction at all.
 ##
+## The console never takes control away from the player: mouse mode is
+## never touched, and the log/input bar stay in the scene tree at all
+## times (dev_console_ui.gd just fades the log out ~10s after the last
+## activity). \ only toggles keyboard FOCUS on the command input --
+## is_focused below is the single source of truth other gameplay scripts
+## check ("if DevConsole.is_focused: don't act on this key") since Godot's
+## GUI focus system only intercepts *event*-based input for the focused
+## Control, not Input.is_action_pressed()-style polling elsewhere in the
+## tree -- see player_blob_ctrl.gd/ledge_grabber.gd/two_handed_resource.gd
+## for the actual gates.
+##
 ## Launch example:
 ##   godot --scene res://levels/voxel_main_world.tscn -- --world=hilly --pos=10,64,10 --hold=wood_plank
 ## Everything after the bare `--` is a user arg (OS.get_cmdline_user_args()),
@@ -33,7 +44,7 @@ extends Node
 ## outside the process.
 
 signal log_updated(new_lines: Array)
-signal visibility_toggled(is_open: bool)
+signal focus_toggled(is_focused: bool)
 
 const LOG_PATH := "user://logs/godot.log"
 const MAX_LOG_LINES := 500
@@ -45,12 +56,12 @@ const MAX_LOG_LINES := 500
 ## replay. Independent of whether the in-game \ console UI is even open.
 const COMMAND_QUEUE_PATH := "user://dev_console_commands.txt"
 
-## Canonical open/closed state -- other scripts (pause_menu.gd) check this
-## directly rather than racing input-handler order against
-## dev_console_ui.gd, since both it and pause_menu.gd react to Escape and
-## which node's _input() runs first between two separate nodes isn't
-## something to rely on.
-var is_open: bool = false
+## Canonical focus state -- other scripts (pause_menu.gd, player_blob_ctrl.gd,
+## ledge_grabber.gd, two_handed_resource.gd) check this directly rather than
+## racing input-handler order against dev_console_ui.gd, since both it and
+## pause_menu.gd react to Escape and which node's _input() runs first
+## between two separate nodes isn't something to rely on.
+var is_focused: bool = false
 
 var log_lines: Array[String] = []
 var command_history: Array[String] = []
@@ -71,20 +82,28 @@ func _process(_delta: float) -> void:
 	_poll_log_tail()
 	_poll_command_queue()
 
-func _unhandled_input(event: InputEvent) -> void:
+## _input(), not _unhandled_input(): Node._input() runs before the Viewport
+## dispatches to whichever Control has GUI focus, so consuming the event
+## here (set_input_as_handled()) stops \ from ever reaching the focused
+## LineEdit as a typed character -- previously (_unhandled_input, which
+## only runs for events the GUI dispatch didn't consume) toggling focus
+## OFF while the input already had focus let the LineEdit's own
+## _gui_input eat the keypress as text first, leaking a literal "\" into
+## whatever you'd typed.
+func _input(event: InputEvent) -> void:
 	# is_echo() guard: a held/auto-repeating key otherwise fires this
 	# handler many times for one physical press (seen live: 16 stray
 	# backslashes ended up typed into the newly-focused input field from
 	# a single \ press during testing).
 	if event.is_action_pressed("toggle_dev_console") and not event.is_echo():
-		set_open(not is_open)
+		set_focused(not is_focused)
 		get_viewport().set_input_as_handled()
 
-func set_open(value: bool) -> void:
-	if value == is_open:
+func set_focused(value: bool) -> void:
+	if value == is_focused:
 		return
-	is_open = value
-	visibility_toggled.emit(is_open)
+	is_focused = value
+	focus_toggled.emit(is_focused)
 
 ## Runs a command line like "goto 10 64 10" or "hold wood_plank left".
 ## Returns the result text (also appended to log_lines/log_updated so both

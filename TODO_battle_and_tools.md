@@ -94,24 +94,50 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       reliable way to verify game state from outside the process.
       Verified live: three commands piped in via plain `echo >> file`
       from a separate shell, all executed correctly in order.
-- [ ] Still open: Escape now correctly closes the console (fixed, verified
-      live), but re-focusing the input field after pressing Enter to
-      submit a command is still unconfirmed -- a `_process()` "babysitter"
-      that unconditionally re-grabs focus every frame while the console is
-      open is the current fix, but the live test session that would have
-      confirmed it hit unrelated xdotool issues (repeated `\` characters
-      from a single keypress) before it could be cleanly verified. Should
-      be checked directly next time either via your own testing or via
-      the new command-queue channel once there's a command that can prove
-      focus state from outside the process.
-- [ ] WASD no longer moves the player while a UI text field has the
-      mouse released (matches the existing gate `two_handed_resource.gd`
-      already used for item-use input) -- needed specifically because the
-      console no longer pauses the game, so nothing else was stopping
-      movement from bleeding through while typing. Boot-checked and
-      confirmed not to break normal movement; not yet independently
-      confirmed fixed for the console case specifically (same session
-      that would have confirmed it hit the xdotool issues above).
+- [x] Redesigned per your feedback ("E still tries to do ledge grabbing in
+      the console... I think we should just give all controls back to the
+      player including the mouse, but show the text on the screen, fading
+      away after about 10 seconds slowly, unless they press \ again and it
+      focuses"): the console no longer toggles a show/hide panel or mouse
+      mode at all -- `\` now only toggles keyboard FOCUS
+      (`DevConsole.is_focused`, renamed from `is_open`) on the command
+      input. The log + input bar stay in the tree permanently and just
+      fade to transparent ~10s after the last activity (new log line, or
+      focus changing) unless focused, in which case they stay at full
+      opacity. Removed the black dim background entirely -- fully
+      transparent now, per "we probably don't want the transparent black
+      background for the dev console, just fully transparent background
+      so we can see the game."
+    - The old WASD-only gate wasn't enough on its own: since the mouse
+      never leaves the player anymore, the previous `Input.mouse_mode ==
+      CAPTURED` check (which used to also cover the console, back when it
+      switched mouse mode) is now a no-op for the console specifically.
+      `DevConsole.is_focused` is the explicit state every gameplay input
+      path checks instead: `player_blob_ctrl.gd`'s `_input()` (double-tap
+      fly/intangible, wall-jump/basic-jump immediate input) and
+      `_physics_process()` (WASD, slow/sprint, fly-vertical, slide),
+      `ledge_grabber.gd` and `left_hand_gripper.gd` ("E" ledge grab, both
+      the real grab logic and the hand's own reaching-visual poll, which
+      read the action independently), and `two_handed_resource.gd`
+      (attack/place-block clicks and battle-mode mark/undo clicks). Godot's
+      GUI focus system only intercepts *event*-based input for whichever
+      Control has focus -- it does nothing for `Input.is_action_pressed()`
+      polling elsewhere in the tree, which is how most of these read
+      input, so a state check was required regardless of the redesign.
+    - Real latent bug found and fixed on the way: `player_blob_ctrl.gd`
+      recomputed `input_dir` a second time, ungated, a few lines after the
+      correctly-gated first read, silently overwriting it and feeding
+      `wall_jumper.handle_wall_slide()` an ungated direction even while
+      typing. Removed the redundant re-read.
+    - Boot-checked clean (`godot-mono --headless --scene
+      res://levels/voxel_main_world.tscn`, no parse/script errors in any
+      touched file) and smoke-tested via a real (non-headless) launch
+      driven entirely through the command-queue file -- `pos` commands
+      round-tripped correctly and `quit` shut the process down cleanly.
+      **Not yet independently confirmed**: the actual focus-gating and
+      10s-fade behavior need your live testing, since they depend on real
+      window keyboard focus/keystrokes and elapsed wall-clock idle time,
+      neither of which the command-queue channel exercises.
 
 ## Phase 1 -- Battle mode controls & movement rework
 
