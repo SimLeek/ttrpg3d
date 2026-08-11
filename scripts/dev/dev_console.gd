@@ -21,12 +21,29 @@ extends Node
 ## already captures every print()/push_warning()/push_error() call) so the
 ## on-screen console mirrors real stdout output, rather than only whatever
 ## this script itself prints.
+##
+## For automated testing specifically: appending a line to
+## COMMAND_QUEUE_PATH (a plain text file, reset empty on every launch)
+## runs it as a command too, independent of the in-game UI or window
+## focus entirely -- simulating keypresses/clicks into the actual OS
+## window turned out to be unreliable for this (xdotool-specific quirks:
+## held-key auto-repeat, dead-key/compose-key swallowing, focus races),
+## so driving the game by writing to this file and reading results back
+## out of the log is the actually-reliable way to verify game state from
+## outside the process.
 
 signal log_updated(new_lines: Array)
 signal visibility_toggled(is_open: bool)
 
 const LOG_PATH := "user://logs/godot.log"
 const MAX_LOG_LINES := 500
+## A plain text file polled for new lines each frame, each run as a
+## command -- lets an external process (a test harness, a human echoing
+## into it from a terminal) drive the game directly by appending to a
+## file, sidestepping window-focus/OS-input-simulation entirely. Reset
+## empty on every launch so a previous session's leftover commands never
+## replay. Independent of whether the in-game \ console UI is even open.
+const COMMAND_QUEUE_PATH := "user://dev_console_commands.txt"
 
 ## Canonical open/closed state -- other scripts (pause_menu.gd) check this
 ## directly rather than racing input-handler order against
@@ -40,15 +57,19 @@ var command_history: Array[String] = []
 
 var _log_file: FileAccess = null
 var _log_read_pos: int = 0
+var _command_queue_file: FileAccess = null
+var _command_queue_read_pos: int = 0
 var _commands: Dictionary = {}  # name -> Callable(args: Array[String]) -> String
 
 func _ready() -> void:
 	_register_builtin_commands()
 	_open_log_tail()
+	_open_command_queue()
 	_apply_startup_args()
 
 func _process(_delta: float) -> void:
 	_poll_log_tail()
+	_poll_command_queue()
 
 func _unhandled_input(event: InputEvent) -> void:
 	# is_echo() guard: a held/auto-repeating key otherwise fires this
@@ -145,11 +166,14 @@ func _cmd_quit(_args: Array[String]) -> String:
 ## Works regardless of battle mode, unlike hud.gd's range check.
 func _cmd_point(_args: Array[String]) -> String:
 	var player := _get_player()
-	var camera := get_viewport().get_camera_3d()
-	if not player or not camera or not ("vt" in player) or not player.vt or not player.voxel_terrain:
-		return "no player/camera/voxel tool"
-	var forward: Vector3 = -camera.global_transform.basis.z
-	var hit = player.vt.raycast(camera.global_position, forward, 500.0)
+	if not player or not ("vt" in player) or not player.vt or not player.voxel_terrain or not ("spring_arm" in player):
+		return "no player/voxel tool"
+	# Same aim origin+direction the real targeting beam uses (anchored
+	# near the character, not the camera -- see hud.gd's range check for
+	# why that matters), so this agrees with what placing/breaking a
+	# block would actually hit.
+	var aim := VoxelInteractor.get_aim_ray(player)
+	var hit = player.vt.raycast(aim.origin, aim.direction, 500.0)
 	if not hit:
 		return "pointing at: nothing within range"
 	var world_pos: Vector3 = Vector3(hit.position) + player.voxel_terrain.global_position
@@ -277,6 +301,32 @@ func _parse_cmdline_args() -> Dictionary:
 		else:
 			result[stripped.substr(0, eq)] = stripped.substr(eq + 1)
 	return result
+
+## ---------------------------------------------------------------------
+## External command queue (see COMMAND_QUEUE_PATH above)
+## ---------------------------------------------------------------------
+
+func _open_command_queue() -> void:
+	# Truncate to empty on every launch (fresh each run -- a leftover
+	# command from a previous session should never replay), then reopen
+	# for reading.
+	var writer := FileAccess.open(COMMAND_QUEUE_PATH, FileAccess.WRITE)
+	if writer:
+		writer.close()
+	_command_queue_file = FileAccess.open(COMMAND_QUEUE_PATH, FileAccess.READ)
+	_command_queue_read_pos = 0
+
+func _poll_command_queue() -> void:
+	if not _command_queue_file:
+		return
+	var current_len := _command_queue_file.get_length()
+	if current_len <= _command_queue_read_pos:
+		return
+	_command_queue_file.seek(_command_queue_read_pos)
+	var new_text := _command_queue_file.get_buffer(current_len - _command_queue_read_pos).get_string_from_utf8()
+	_command_queue_read_pos = current_len
+	for line in new_text.split("\n", false):
+		run_command(line)
 
 ## ---------------------------------------------------------------------
 ## Log tailing (mirrors real stdout -- Godot's own file log already

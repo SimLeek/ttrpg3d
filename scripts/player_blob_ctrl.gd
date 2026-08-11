@@ -111,9 +111,20 @@ func _physics_process(delta: float) -> void:
 	var sv_xyz = velocity  # immediate set velocity vector
 	var gv_xyz = Vector3.ZERO  # goal velocity vector
 	
-	var input_dir: Vector2 = Input.get_vector("left", "right", "up", "down")
-	var is_slow: bool = Input.is_action_pressed("slow")
-	var is_sprint: bool = Input.is_action_pressed("sprint")
+	# Mouse released means some UI has the player's attention (typing a
+	# world/combatant name, a dev console command, etc.) -- same gate
+	# two_handed_resource.gd already uses for item-use input, extended to
+	# movement. This only matters for UI that *doesn't* also pause the
+	# tree (the dev console, deliberately, so physics/chunk-loading keep
+	# running while you type) -- WASD was otherwise still moving the
+	# player out from under you while a command was mid-type.
+	var input_dir: Vector2 = Vector2.ZERO
+	var is_slow: bool = false
+	var is_sprint: bool = false
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		input_dir = Input.get_vector("left", "right", "up", "down")
+		is_slow = Input.is_action_pressed("slow")
+		is_sprint = Input.is_action_pressed("sprint")
 	gv_xyz = mover.handle_physics_process_input(input_dir, is_slow,is_sprint, gv_xyz, delta, transform)
 
 	var friction: float = SPEED_DECAY_GROUND

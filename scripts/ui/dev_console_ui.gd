@@ -18,6 +18,19 @@ func _ready() -> void:
 	DevConsole.log_updated.connect(_on_log_updated)
 	_refresh_log()
 
+## Focus "babysitter": whatever is actually stealing it back after Enter
+## (LineEdit's own post-submit internal handling, most likely -- a
+## deferred re-grab_focus() in _on_command_submitted() didn't survive it
+## either) isn't worth chasing further when this just keeps it pinned
+## unconditionally while the console is open. Still reported losing focus
+## in your last live test though -- worth another look if it's still
+## happening; DevConsole's new file-based command queue makes it possible
+## to verify this kind of thing precisely from outside the process now
+## instead of guessing from screenshots.
+func _process(_delta: float) -> void:
+	if DevConsole.is_open and not _command_input.has_focus():
+		_command_input.grab_focus()
+
 ## _input(), not _unhandled_input()+"ui_cancel": with the console's LineEdit
 ## focused, Escape was getting consumed by the LineEdit's own built-in
 ## defocus-on-Escape behavior first (so the console stayed open, just with
@@ -36,15 +49,16 @@ func _input(event: InputEvent) -> void:
 func _on_visibility_toggled(is_open: bool) -> void:
 	_root.visible = is_open
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if is_open else Input.MOUSE_MODE_CAPTURED)
+	# Deliberately does NOT request a UiPauseGate pause -- unlike the
+	# DM-facing menus, this is a dev/testing tool where you usually want
+	# to watch physics/chunk-loading/etc. keep running while typing a
+	# command, not freeze the world.
 	if is_open:
-		UiPauseGate.request("dev_console")
 		# Defensive: the toggle keypress can otherwise leak into this
 		# field the moment it grabs focus (seen live).
 		_command_input.text = ""
 		_command_input.grab_focus()
 		_refresh_log()
-	else:
-		UiPauseGate.release("dev_console")
 
 func _build_ui() -> void:
 	_root = Control.new()
@@ -91,7 +105,7 @@ func _build_ui() -> void:
 func _on_command_submitted(text: String) -> void:
 	DevConsole.run_command(text)
 	_command_input.text = ""
-	_command_input.grab_focus()
+	# Refocusing is handled by the _process() babysitter above.
 
 
 func _on_log_updated(_new_lines: Array) -> void:
