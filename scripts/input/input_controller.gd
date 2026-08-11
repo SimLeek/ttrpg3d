@@ -35,7 +35,7 @@ signal sequence_matched(name: String)
 var _capture_reasons: Dictionary = {}  # owner key -> hide_mouse: bool
 var _last_tap_msec: Dictionary = {}  # action -> int
 var _sequences: Dictionary = {}  # name -> {"steps": Array[String], "window_ms": int}
-var _recent_presses: Array = []  # [{"action": String, "msec": int}, ...], newest last
+var _sequence_progress: Dictionary = {}  # name -> {"index": int, "since_msec": int}
 
 ## ---------------------------------------------------------------------
 ## Exclusive capture -- also owns Input.mouse_mode
@@ -138,22 +138,29 @@ func was_double_tapped(action: String, window_ms: int = 350, now_msec: int = -1)
 ## jump timing windows, mod-defined gestures, all by the same action-name
 ## strings register_action()/is_action_pressed()/etc. already use.
 ##
-## Matching is a plain rolling-buffer tail-check: every fresh press appends
-## to _recent_presses, trimmed to the longest registered sequence, and each
-## registered sequence is checked against the buffer's tail. A match clears
-## the whole buffer (so overlapping/repeated steps, like the Konami code's
-## own up-up-down-down, can't double-fire on a shared prefix).
+## Each registered sequence tracks its OWN progress index rather than
+## sharing one rolling buffer across all of them (an earlier version did
+## that, and it had a real bug: the buffer was capped to the longest
+## registered sequence's length, so literally any OTHER action press
+## during an attempt -- a stray scroll-wheel tick, "slow", anything --
+## evicted an earlier step and silently broke the match; a live Konami-code
+## attempt failed because of exactly this). A press that isn't this
+## sequence's next expected step resets ONLY this sequence's progress
+## (matching genre convention -- a wrong button breaks the combo) without
+## touching any other registered sequence's progress at all.
 ## ---------------------------------------------------------------------
 
-## window_ms: how long the WHOLE sequence has to land in, start to finish.
-## -1 (the default) picks a generous 600ms per step.
-func register_sequence(name: String, steps: Array, window_ms: int = -1) -> void:
-	if window_ms < 0:
-		window_ms = 600 * steps.size()
+## window_ms: max gap allowed between two CONSECUTIVE correct steps (not a
+## fixed budget for the whole sequence, which would unfairly penalize slow
+## early steps) -- default 600ms, forgiving enough for deliberate manual
+## input but tight enough to require real intent.
+func register_sequence(name: String, steps: Array, window_ms: int = 600) -> void:
 	_sequences[name] = {"steps": steps, "window_ms": window_ms}
+	_sequence_progress[name] = {"index": 0, "since_msec": 0}
 
 func unregister_sequence(name: String) -> void:
 	_sequences.erase(name)
+	_sequence_progress.erase(name)
 
 ## Normally only called internally from _input() above with the real
 ## clock -- exposed (not `_`-prefixed) specifically so DevConsole's
@@ -161,30 +168,30 @@ func unregister_sequence(name: String) -> void:
 ## same reasoning as was_double_tapped()'s now_msec parameter. Returns the
 ## names of any sequences that completed on this press.
 func record_press_for_sequences(action: String, now_msec: int) -> Array:
-	_recent_presses.append({"action": action, "msec": now_msec})
-	var max_len := 1
-	for name in _sequences:
-		max_len = max(max_len, _sequences[name].steps.size())
-	if _recent_presses.size() > max_len:
-		_recent_presses = _recent_presses.slice(_recent_presses.size() - max_len)
 	var matched: Array = []
 	for name in _sequences:
 		var steps: Array = _sequences[name].steps
 		var window_ms: int = _sequences[name].window_ms
-		if _recent_presses.size() < steps.size():
-			continue
-		var tail: Array = _recent_presses.slice(_recent_presses.size() - steps.size())
-		if now_msec - tail[0].msec > window_ms:
-			continue
-		var ok := true
-		for i in range(steps.size()):
-			if tail[i].action != steps[i]:
-				ok = false
-				break
-		if ok:
+		var progress: Dictionary = _sequence_progress[name]
+		var index: int = progress.index
+
+		if index > 0 and now_msec - progress.since_msec > window_ms:
+			index = 0  # took too long since the last correct step -- start over
+
+		if action == steps[index]:
+			index += 1
+		elif action == steps[0]:
+			# Wrong next step, but this press is also a valid START -- treat
+			# it as a fresh attempt beginning here instead of losing it.
+			index = 1
+		else:
+			index = 0
+
+		if index >= steps.size():
 			matched.append(name)
-	if not matched.is_empty():
-		_recent_presses.clear()
+			index = 0
+
+		_sequence_progress[name] = {"index": index, "since_msec": now_msec}
 	return matched
 
 ## ---------------------------------------------------------------------

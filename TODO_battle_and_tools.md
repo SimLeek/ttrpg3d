@@ -248,6 +248,32 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       and firing the signals -- the command-queue channel calls
       `record_press_for_sequences()`/`was_double_tapped()` directly, it
       doesn't exercise the real `_input()` dispatch path itself.
+- [x] Live Konami-code attempt ("wwssadad" + right-click + left-click +
+      Enter) didn't trigger it -- found and fixed a real design flaw in
+      `record_press_for_sequences()`, not a timing issue (the reported
+      default window, 6600ms total, was already generous). The first
+      version shared ONE rolling buffer across all registered sequences,
+      capped to the longest one's step count -- so literally any OTHER
+      action press during an attempt (a stray scroll-wheel tick, "slow",
+      anything) evicted an earlier step and silently broke the match.
+      Rewrote it as independent per-sequence progress tracking instead:
+      each sequence has its own index into its own steps, a press that
+      isn't the next expected step resets ONLY that sequence's progress
+      (unless the press also happens to be a valid restart, i.e. equals
+      step 0), and window_ms is now the max gap between two CONSECUTIVE
+      correct steps (default 600ms) rather than a fixed budget for the
+      whole sequence, which would unfairly penalize slow early steps.
+      Also bumped the Konami sequence's own window to 1500ms/step, since
+      it makes you move a hand from keyboard to mouse and back (clicks,
+      then Enter) -- slower than a same-device combo. Verified live via
+      the command queue: a clean attempt matches; the exact bug scenario
+      (an unrelated "slow" press mid-combo) now correctly fails without
+      corrupting state, and an immediate clean retry right after still
+      succeeds; a >1500ms gap between two consecutive correct steps
+      correctly forces a restart, and completing cleanly from there still
+      works. **Still not independently confirmed** end-to-end with a real
+      keyboard/mouse -- please try the Konami code again when you get a
+      chance.
 
 - [ ] Stop using LMB/RMB for waypoint mark/undo in battle mode -- players
       need those free for items/spells/attacks. Move to **M** (mark

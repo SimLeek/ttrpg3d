@@ -95,10 +95,14 @@ func _ready() -> void:
 	var enter_event := InputEventKey.new()
 	enter_event.physical_keycode = KEY_ENTER
 	InputController.register_action(KONAMI_START_ACTION, [enter_event])
+	# 1500ms between steps, not InputController's 600ms default -- this
+	# sequence makes you move a hand from keyboard to mouse and back
+	# (clicks, then Enter), which takes real people longer between steps
+	# than a same-device combo would.
 	InputController.register_sequence(KONAMI_SEQUENCE_NAME, [
 		"up", "up", "down", "down", "left", "right", "left", "right",
 		"secondary_item_click", "primary_item_click", KONAMI_START_ACTION,
-	])
+	], 1500)
 	InputController.sequence_matched.connect(_on_sequence_matched)
 
 func _on_sequence_matched(sequence_name: String) -> void:
