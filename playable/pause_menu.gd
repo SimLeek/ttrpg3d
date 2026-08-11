@@ -40,8 +40,12 @@ func handle_pause():
 		# not wherever Settings happened to be left last time.
 		if new_pause_state:
 			_show_main_menu()
-		# Optional: Show/hide mouse cursor
-		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if new_pause_state else Input.MOUSE_MODE_CAPTURED)
+		# InputController owns Input.mouse_mode now, not individual menus --
+		# see input_controller.gd.
+		if new_pause_state:
+			InputController.request_capture("pause_menu")
+		else:
+			InputController.release_capture("pause_menu")
 
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.

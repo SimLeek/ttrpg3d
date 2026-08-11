@@ -105,6 +105,16 @@ func set_focused(value: bool) -> void:
 	if value == is_focused:
 		return
 	is_focused = value
+	# hide_mouse=false: the console deliberately never takes the mouse away
+	# from the player (see dev_console_ui.gd) -- InputController.is_captured()
+	# still becomes true while focused, though, so gameplay input
+	# (movement, ledge grab, item use, etc.) is gated through the one
+	# shared mechanism instead of every gameplay script importing
+	# DevConsole and checking is_focused itself.
+	if is_focused:
+		InputController.request_capture("dev_console", false)
+	else:
+		InputController.release_capture("dev_console")
 	focus_toggled.emit(is_focused)
 
 ## Runs a command line like "goto 10 64 10" or "hold wood_plank left".
@@ -327,6 +337,49 @@ func _cmd_unit_ui_alpha(_args: Array[String]) -> String:
 	if not ui:
 		return "no dev_console_ui node found"
 	return "alpha=%.4f focused=%s" % [ui.get_debug_alpha(), is_focused]
+
+## unit_input_captured: reports InputController's real, current capture
+## state -- confirms set_focused() above actually reaches it (and lets a
+## test check the SAME thing gameplay scripts now check).
+func _cmd_unit_input_captured(_args: Array[String]) -> String:
+	return "captured=%s mouse_mode=%s" % [InputController.is_captured(), Input.mouse_mode]
+
+## unit_input_double_tap <action> <window_ms> <now_msec>: drives
+## InputController.was_double_tapped() with a spoofed timestamp -- call
+## twice with the same action and hand-picked now_msec values to check the
+## exact window boundary without waiting real time or a real keypress.
+func _cmd_unit_input_double_tap(args: Array[String]) -> String:
+	if args.size() < 3:
+		return "usage: unit_input_double_tap <action> <window_ms> <now_msec>"
+	var result: bool = InputController.was_double_tapped(args[0], args[1].to_int(), args[2].to_int())
+	return "double_tapped=%s" % result
+
+## unit_input_sequence_register <name> <window_ms> <step1,step2,...>: wraps
+## InputController.register_sequence() for testing -- steps are a single
+## comma-separated arg since sequences can be longer than a normal command
+## line's word count comfortably allows.
+func _cmd_unit_input_sequence_register(args: Array[String]) -> String:
+	if args.size() < 3:
+		return "usage: unit_input_sequence_register <name> <window_ms> <step1,step2,...>"
+	var steps: Array = Array(args[2].split(","))
+	InputController.register_sequence(args[0], steps, args[1].to_int())
+	return "registered %s: %s" % [args[0], ", ".join(steps)]
+
+## unit_input_sequence_feed <action> <now_msec>: drives
+## InputController.record_press_for_sequences() with a spoofed timestamp --
+## call once per step of a sequence under test, in order, to check exact
+## matching/window-boundary behavior without a real keyboard or real
+## waiting. Also emits sequence_matched for anything that completes (which
+## record_press_for_sequences() alone does NOT do -- only the real _input()
+## path does that normally), so this exercises whatever's actually
+## connected to the signal too, not just the matching math in isolation.
+func _cmd_unit_input_sequence_feed(args: Array[String]) -> String:
+	if args.size() < 2:
+		return "usage: unit_input_sequence_feed <action> <now_msec>"
+	var matched: Array = InputController.record_press_for_sequences(args[0], args[1].to_int())
+	for matched_name in matched:
+		InputController.sequence_matched.emit(matched_name)
+	return "matched=%s" % (", ".join(matched) if not matched.is_empty() else "none")
 
 ## ---------------------------------------------------------------------
 ## Startup CLI args

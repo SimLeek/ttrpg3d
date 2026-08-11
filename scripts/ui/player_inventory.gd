@@ -101,7 +101,12 @@ func _select_slot(index: int) -> void:
 
 func _set_inventory_visible(show_it: bool) -> void:
 	_inventory_root.visible = show_it
-	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if show_it else Input.MOUSE_MODE_CAPTURED)
+	# InputController owns Input.mouse_mode now, not individual menus --
+	# see input_controller.gd.
+	if show_it:
+		InputController.request_capture("inventory")
+	else:
+		InputController.release_capture("inventory")
 
 # ---------------------------------------------------------------------
 # Equipping -- hotbar selection drives what's actually in the hand

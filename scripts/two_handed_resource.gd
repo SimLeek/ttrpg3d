@@ -10,12 +10,11 @@ func handle_immediate_input(event):
 	if not left_hand or not right_hand:
 		push_error("Assign the hands in the _ready function of the script that uses this.")
 
-	# Mouse is only released for UI (pause menu, voxel inventory); while it's
-	# visible, clicks are for that UI, not for using the held item.
-	# DevConsole.is_focused: the console never releases the mouse, so it
-	# needs its own check here too, or clicks while typing a command would
-	# still swing/place/mark a waypoint.
-	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED or DevConsole.is_focused:
+	# InputController.is_captured(): true while a menu has released the
+	# mouse for its own UI, or the dev console is focused (which doesn't
+	# release the mouse at all, hence not just checking mouse mode) --
+	# either way, clicks are for that UI, not for using the held item.
+	if InputController.is_captured():
 		return
 
 	# In battle mode, the same clicks mark/undo movement waypoints instead
@@ -38,10 +37,10 @@ func handle_immediate_input(event):
 func handle_physics_process_input():
 	if not left_hand or not right_hand:
 		push_error("Assign the hands in the _ready function of the script that uses this.")
-	if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED or DevConsole.is_focused:
+	if InputController.is_captured():
 		return
-	var right_trigger = Input.get_action_strength("primary_item_trigger")  # Primary hand
-	var left_trigger = Input.get_action_strength("secondary_item_trigger")    # Non-primary hand
+	var right_trigger = InputController.get_action_strength("primary_item_trigger")  # Primary hand
+	var left_trigger = InputController.get_action_strength("secondary_item_trigger")    # Non-primary hand
 	
 	if right_trigger > 0.0:
 		handle_primary_hand_input(right_trigger)

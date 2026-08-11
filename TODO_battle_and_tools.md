@@ -179,6 +179,76 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
 
 ## Phase 1 -- Battle mode controls & movement rework
 
+- [x] New `InputController` autoload (`scripts/input/input_controller.gd`),
+      built *before* starting the rest of this phase per your call ("these
+      if statements that reference each other across files is... gross...
+      we're getting into double tap and lmb/rmb stuff next, so I think
+      that's good to do first"). Replaces the pattern that had spread
+      across `player_blob_ctrl.gd`, `ledge_grabber.gd`,
+      `left_hand_gripper.gd`, and `two_handed_resource.gd`: each one
+      independently checking `Input.mouse_mode == CAPTURED` and/or
+      `DevConsole.is_focused` (combined slightly differently each time)
+      before trusting a raw `Input` call.
+    - `request_capture(owner)`/`release_capture(owner)`: same
+      reference-counted-by-key pattern as `UiPauseGate`, and now the ONE
+      place that owns `Input.mouse_mode` -- `pause_menu.gd`,
+      `player_inventory.gd`, `dm_world_menu.gd`, and `dev_console.gd`
+      (which requests capture without hiding the mouse, matching its
+      earlier redesign) all migrated off calling `Input.set_mouse_mode()`
+      directly.
+    - `is_action_pressed()`/`get_action_strength()`/`get_vector()`:
+      capture-aware wrappers -- gameplay scripts call these instead of
+      `Input`'s directly and the gating is automatic, nothing left for
+      each caller to check itself. `player_blob_ctrl.gd`,
+      `ledge_grabber.gd`, `left_hand_gripper.gd`, and
+      `two_handed_resource.gd` all migrated to these, dropping their
+      individual `DevConsole`/mouse-mode checks entirely.
+    - `was_double_tapped(action, window_ms, now_msec=-1)`: one shared
+      double-tap timer instead of `player_blob_ctrl.gd`'s fly/intangible
+      gestures and `movement_resource.gd`'s sprint gesture each keeping
+      their own last-press-time bookkeeping. `now_msec` takes the same
+      "pass time in explicitly" shape as `DevConsoleFadeState` for the
+      same reason -- spoofable via a new `unit_input_double_tap` console
+      command instead of needing real waiting/a real keypress to test.
+    - `register_sequence(name, steps, window_ms)`/`sequence_matched`: a
+      general ordered-sequence matcher (Konami-code style) for anything
+      with more shape than a same-action double-tap -- came out of "lmao,
+      I found a reason for a state machine: up up down down left right
+      left right 'b' 'a' 'start' should immediately kill and respawn the
+      player... state machine would also be used for double tapping tbh
+      and potentially some other stuff like item based usage, wall
+      jumping." Kept `was_double_tapped()` as its own lightweight
+      synchronous primitive rather than routing double-tap through this
+      too -- same-action-twice doesn't need the general matcher's
+      signal-based shape, and it was already working -- but built this as
+      the mechanism for actual multi-step gestures going forward. Wired
+      the literal Konami code into `player_blob_ctrl.gd` as both an
+      easter egg and the dogfood test of the new API: up/up/down/down/
+      left/right/left/right/secondary_item_click/primary_item_click/Enter
+      (a new `cheat_konami_start` action, registered via
+      `InputController.register_action()` since nothing existing binds
+      plain Enter) calls the existing `die()` respawn.
+    - `register_action(name, events)`: wraps `InputMap` so mods can define
+      new bindings at runtime and get the same capture-aware
+      polling/signals/sequence-matching as everything above for free,
+      purely by name -- no special-casing anywhere for mod- vs
+      built-in actions.
+    - Verified live via the command-queue channel: `unit_input_captured`
+      (mirrors `unit_set_focused`'s downstream effect on the real
+      autoload), `unit_input_double_tap` (exact window-boundary/consume-
+      on-trigger behavior, matches design), `unit_input_sequence_register`/
+      `unit_input_sequence_feed` (a custom 3-step test sequence correctly
+      ignored intervening noise and rejected a stale window; the real
+      11-step Konami sequence matched exactly on the 11th press and -- once
+      the test command was fixed to also emit `sequence_matched`, which
+      `record_press_for_sequences()` alone deliberately doesn't do -- drove
+      an actual `die()`/respawn end to end, confirmed via `pos` before/
+      after). Boot-checked clean. **Not yet independently confirmed**:
+      real physical keypresses actually reaching `InputController._input()`
+      and firing the signals -- the command-queue channel calls
+      `record_press_for_sequences()`/`was_double_tapped()` directly, it
+      doesn't exercise the real `_input()` dispatch path itself.
+
 - [ ] Stop using LMB/RMB for waypoint mark/undo in battle mode -- players
       need those free for items/spells/attacks. Move to **M** (mark
       current position / add node) and **N** (undo), via the input action

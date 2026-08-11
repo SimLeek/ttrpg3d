@@ -46,17 +46,19 @@ func _set_menu_visible(show_it: bool) -> void:
 	if show_it:
 		_refresh_worlds_list()
 		_refresh_voxel_pickers()
-	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE if show_it else Input.MOUSE_MODE_CAPTURED)
-	# Without this, WASD etc. kept moving the player while typing into the
-	# "Name" field -- player_blob_ctrl.gd reads movement input directly
-	# every physics frame regardless of mouse mode. get_tree().paused (via
+	# InputController owns Input.mouse_mode now, not individual menus --
+	# see input_controller.gd. player_blob_ctrl.gd reads movement through
+	# InputController too, so this alone is enough to stop WASD moving the
+	# player while typing into the "Name" field. get_tree().paused (via
 	# UiPauseGate, so this doesn't stomp on some other menu also wanting a
 	# pause) is the same mechanism pause_menu.gd already uses; this menu's
 	# own Control tree keeps working through it since it lives under HUD,
 	# which is process_mode ALWAYS.
 	if show_it:
+		InputController.request_capture("dm_world_menu")
 		UiPauseGate.request("dm_world_menu")
 	else:
+		InputController.release_capture("dm_world_menu")
 		UiPauseGate.release("dm_world_menu")
 
 

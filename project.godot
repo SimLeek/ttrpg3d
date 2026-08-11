@@ -30,6 +30,7 @@ BattleModeManager="*res://scripts/battle/battle_mode_manager.gd"
 TurnTracker="*res://scripts/battle/turn_tracker.gd"
 GameSettings="*res://scripts/game_settings.gd"
 UiPauseGate="*res://scripts/ui/ui_pause_gate.gd"
+InputController="*res://scripts/input/input_controller.gd"
 DevConsole="*res://scripts/dev/dev_console.gd"
 
 [debug_draw_3d]
