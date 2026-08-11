@@ -274,6 +274,33 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       works. **Still not independently confirmed** end-to-end with a real
       keyboard/mouse -- please try the Konami code again when you get a
       chance.
+- [x] Second live attempt still didn't trigger it. Added a temporary
+      diagnostic (`InputController.debug_log_input`, on by default right
+      now, prints every action press and how it moves each registered
+      sequence's progress -- also usable as its own dev-console command
+      surface later, not just for this) and asked you to try again with
+      the game window open so it'd get captured -- caught the real
+      attempt live. Root cause: right-click is bound to BOTH "slide" and
+      "secondary_item_click" in this project (crouch-slide + item-use on
+      the same button), and `record_press_for_sequences()` was called
+      once per action, one at a time -- "slide" happens to be defined
+      earlier in `project.godot` so it iterated first and reset the
+      Konami sequence's progress (right when it was 8/11 through) before
+      "secondary_item_click", the step actually needed, ever got checked.
+      Enter has the same issue less consequentially (also fires several
+      of Godot's built-in `ui_accept`/`ui_text_*` actions alongside the
+      custom `cheat_konami_start` action).
+    - Fixed at the root: `InputController._input()` now collects EVERY
+      action one physical event satisfies into a batch before touching
+      sequence state at all, and `record_press_for_sequences()` takes that
+      batch (not a single action) -- a sequence advances if its expected
+      next step is ANYWHERE in the batch, so which action Godot happens to
+      iterate first no longer matters. `unit_input_sequence_feed` now
+      takes comma-separated actions for testing this directly.
+    - Verified live via the command queue by replaying the EXACT
+      real-world batches ("slide,secondary_item_click" for the right-click
+      step; all five Enter-bound actions together for the start step) --
+      confirmed match + actual `die()`/respawn end to end.
 
 - [ ] Stop using LMB/RMB for waypoint mark/undo in battle mode -- players
       need those free for items/spells/attacks. Move to **M** (mark

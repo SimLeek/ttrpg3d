@@ -27,6 +27,14 @@ extends Node
 ## and register_action() so mods can define new bindings at runtime and get
 ## the same capture-aware polling/signals for free, purely by name.
 
+## Prints every action press and how it affects each registered sequence's
+## progress -- temporary diagnostic for the Konami-code sequence not
+## firing live despite matching correctly through the command queue.
+## Godot's own file log already captures print() output, so this also
+## shows up in DevConsole's tailed log without any extra plumbing. Flip
+## off (or delete this and the print calls below) once that's diagnosed.
+@export var debug_log_input: bool = true
+
 signal capture_changed(is_captured: bool)
 signal action_pressed(action: String, event: InputEvent)
 signal action_released(action: String, event: InputEvent)
@@ -92,16 +100,33 @@ func get_vector(neg_x: String, pos_x: String, neg_y: String, pos_y: String) -> V
 ## this) -- this is only for gameplay-facing actions.
 ## ---------------------------------------------------------------------
 
+## Collects every action this ONE event satisfies before touching sequence
+## state -- a single physical press routinely fires more than one action
+## (e.g. right-click is bound to both "slide" and "secondary_item_click"
+## in this project), and feeding them to record_press_for_sequences() one
+## at a time let whichever one iterates first (definition order in
+## project.godot, not anything meaningful) reset progress before the
+## actually-relevant one got its turn. This is exactly what broke the
+## live Konami-code attempt that the debug prints below caught: "slide"
+## fired before "secondary_item_click" for the same right-click.
 func _input(event: InputEvent) -> void:
 	if is_captured() or event.is_echo():
+		if debug_log_input and event is InputEventKey and event.pressed and not event.is_echo():
+			print("[InputController] key event ignored, is_captured()=%s: %s" % [is_captured(), event.as_text()])
 		return
+	var pressed_actions: Array = []
 	for action in InputMap.get_actions():
 		if event.is_action_pressed(action):
+			pressed_actions.append(action)
 			action_pressed.emit(action, event)
-			for matched_name in record_press_for_sequences(action, Time.get_ticks_msec()):
-				sequence_matched.emit(matched_name)
 		elif event.is_action_released(action):
 			action_released.emit(action, event)
+	if pressed_actions.is_empty():
+		return
+	if debug_log_input:
+		print("[InputController] actions_pressed: %s" % ", ".join(pressed_actions))
+	for matched_name in record_press_for_sequences(pressed_actions, Time.get_ticks_msec()):
+		sequence_matched.emit(matched_name)
 
 ## ---------------------------------------------------------------------
 ## Double-tap detection, generalized. Call from a fresh-press point (an
@@ -162,12 +187,15 @@ func unregister_sequence(name: String) -> void:
 	_sequences.erase(name)
 	_sequence_progress.erase(name)
 
-## Normally only called internally from _input() above with the real
-## clock -- exposed (not `_`-prefixed) specifically so DevConsole's
-## unit_input_sequence_feed command can drive it with spoofed timestamps,
-## same reasoning as was_double_tapped()'s now_msec parameter. Returns the
-## names of any sequences that completed on this press.
-func record_press_for_sequences(action: String, now_msec: int) -> Array:
+## actions: every action name ONE physical event satisfied (not just one --
+## see the doc comment on _input()'s pressed_actions collection above for
+## why this has to be a batch, not a single string). Normally only called
+## internally from _input() with the real clock -- exposed (not
+## `_`-prefixed) specifically so DevConsole's unit_input_sequence_feed
+## command can drive it with spoofed timestamps, same reasoning as
+## was_double_tapped()'s now_msec parameter. Returns the names of any
+## sequences that completed on this press.
+func record_press_for_sequences(actions: Array, now_msec: int) -> Array:
 	var matched: Array = []
 	for name in _sequences:
 		var steps: Array = _sequences[name].steps
@@ -175,17 +203,24 @@ func record_press_for_sequences(action: String, now_msec: int) -> Array:
 		var progress: Dictionary = _sequence_progress[name]
 		var index: int = progress.index
 
-		if index > 0 and now_msec - progress.since_msec > window_ms:
+		var timed_out: bool = index > 0 and now_msec - progress.since_msec > window_ms
+		if timed_out:
 			index = 0  # took too long since the last correct step -- start over
 
-		if action == steps[index]:
+		var expected: String = steps[index]
+		if expected in actions:
 			index += 1
-		elif action == steps[0]:
-			# Wrong next step, but this press is also a valid START -- treat
-			# it as a fresh attempt beginning here instead of losing it.
+		elif steps[0] in actions:
+			# Wrong next step, but one of this batch's actions is also a
+			# valid START -- treat it as a fresh attempt beginning here
+			# instead of losing it.
 			index = 1
 		else:
 			index = 0
+
+		if debug_log_input:
+			print("[InputController] sequence '%s': actions=%s expected=%s%s index %d -> %d" % [
+				name, ", ".join(actions), expected, " (timed out)" if timed_out else "", progress.index, index])
 
 		if index >= steps.size():
 			matched.append(name)

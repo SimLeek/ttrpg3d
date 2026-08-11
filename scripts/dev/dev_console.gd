@@ -365,18 +365,24 @@ func _cmd_unit_input_sequence_register(args: Array[String]) -> String:
 	InputController.register_sequence(args[0], steps, args[1].to_int())
 	return "registered %s: %s" % [args[0], ", ".join(steps)]
 
-## unit_input_sequence_feed <action> <now_msec>: drives
+## unit_input_sequence_feed <action1,action2,...> <now_msec>: drives
 ## InputController.record_press_for_sequences() with a spoofed timestamp --
 ## call once per step of a sequence under test, in order, to check exact
 ## matching/window-boundary behavior without a real keyboard or real
-## waiting. Also emits sequence_matched for anything that completes (which
-## record_press_for_sequences() alone does NOT do -- only the real _input()
-## path does that normally), so this exercises whatever's actually
-## connected to the signal too, not just the matching math in isolation.
+## waiting. Actions is comma-separated (usually just one) so a test can
+## reproduce a single physical press satisfying multiple actions at once --
+## e.g. "slide,secondary_item_click" for a real right-click in this
+## project -- which is exactly what broke the live Konami-code attempt
+## (record_press_for_sequences() takes a batch for this reason; see
+## _input()'s doc comment). Also emits sequence_matched for anything that
+## completes (which record_press_for_sequences() alone does NOT do -- only
+## the real _input() path does that normally), so this exercises whatever's
+## actually connected to the signal too, not just the matching math.
 func _cmd_unit_input_sequence_feed(args: Array[String]) -> String:
 	if args.size() < 2:
-		return "usage: unit_input_sequence_feed <action> <now_msec>"
-	var matched: Array = InputController.record_press_for_sequences(args[0], args[1].to_int())
+		return "usage: unit_input_sequence_feed <action1,action2,...> <now_msec>"
+	var actions: Array = Array(args[0].split(","))
+	var matched: Array = InputController.record_press_for_sequences(actions, args[1].to_int())
 	for matched_name in matched:
 		InputController.sequence_matched.emit(matched_name)
 	return "matched=%s" % (", ".join(matched) if not matched.is_empty() else "none")
