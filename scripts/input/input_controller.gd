@@ -28,12 +28,13 @@ extends Node
 ## the same capture-aware polling/signals for free, purely by name.
 
 ## Prints every action press and how it affects each registered sequence's
-## progress -- temporary diagnostic for the Konami-code sequence not
-## firing live despite matching correctly through the command queue.
-## Godot's own file log already captures print() output, so this also
-## shows up in DevConsole's tailed log without any extra plumbing. Flip
-## off (or delete this and the print calls below) once that's diagnosed.
-@export var debug_log_input: bool = true
+## progress -- diagnosed the Konami-code sequence not firing live despite
+## matching correctly through the command queue (turned out to be a real
+## bug in the matcher, since fixed) by catching a real attempt this way.
+## Off by default now that it did its job; flip on again (from the
+## Inspector, or a future dev-console command) for the same kind of
+## input-sequence debugging later rather than deleting this.
+@export var debug_log_input: bool = false
 
 signal capture_changed(is_captured: bool)
 signal action_pressed(action: String, event: InputEvent)
