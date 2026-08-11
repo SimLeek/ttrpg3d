@@ -17,11 +17,40 @@ class HitInfo:
 	var position: Vector3
 	var voxel_id: int
 	var metadata: Variant
-	
+
 	func _init(_position: Vector3, _voxel_id: int, _metadata: Variant) -> void:
 		position = _position
 		voxel_id = _voxel_id
 		metadata = _metadata
+
+## Aim origin+direction anchored near the character, not the camera --
+## exactly the same math update_target() uses to orient its own targeting
+## beam (first/third-person pitch, height offset, avoid-distance pull-back),
+## extracted here so other systems that need to know "what would this
+## character actually hit if they tried to place/break a block right now"
+## (hud.gd's battle-mode range check, DevConsole's `point` command) agree
+## with the real targeting tool instead of using plain camera-forward.
+## Camera-forward diverges from this as zoom changes: the camera itself
+## moves further from the character in third person, so a ray cast from
+## its position traces a different path through the world than one from
+## near the character's own body, even at the same look angle.
+## `raycast_distance`/`beam_height_offset`/etc. default to
+## VoxelInteractor's own @export defaults -- override only if a specific
+## tool's tuning actually differs. The distance you actually want to cast
+## the resulting ray is a separate, independent choice; pass it to
+## VoxelTool.raycast() yourself.
+static func get_aim_ray(character: CharacterBody3D, raycast_distance: float = 5.0,
+		beam_height_offset: float = 0.25, third_person_rotation_offset: float = 5.0 * PI / 8.0,
+		beam_character_avoid_dist: float = 0.1) -> Dictionary:
+	var rot_x: float = character.spring_arm.rotation.x
+	rot_x += (PI / 2.0) if character.spring_arm.is_first_person else third_person_rotation_offset
+	var dist := raycast_distance + beam_character_avoid_dist
+	var local_pos := Vector3(0, beam_height_offset - cos(rot_x) * dist / 2.0, -sin(rot_x) * dist / 2.0)
+	var local_basis := Basis(Vector3.RIGHT, rot_x)
+	var beam_transform: Transform3D = character.global_transform * Transform3D(local_basis, local_pos)
+	var forward: Vector3 = -beam_transform.basis.y.normalized()
+	var origin: Vector3 = beam_transform.origin - forward * beam_character_avoid_dist - forward * (raycast_distance / 2.0)
+	return {"origin": origin, "direction": forward}
 
 @export_group("Terrain")
 ## Size of each voxel in the terrain grid. Assumes cubic voxels.

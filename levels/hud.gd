@@ -111,10 +111,19 @@ func _build_range_check_label() -> void:
 	add_child(_range_check_label)
 
 
-## Battle-mode-only "range check": raycast along the camera's look
-## direction and, if it hits a voxel, show the distance from the player
-## (not the camera -- that's what actually matters for TTRPG range/spell
-## checks) to the hit point.
+## Battle-mode-only "range check": raycast from the same aim origin+
+## direction the actual voxel-targeting beam uses (VoxelInteractor.
+## get_aim_ray(), anchored near the character) and, if it hits a voxel,
+## show the distance from the player (not the camera/aim origin -- that's
+## what actually matters for TTRPG range/spell checks) to the hit point.
+##
+## Deliberately *not* plain camera-forward: the camera itself moves
+## further from the character as you zoom out in third person, so a ray
+## from the camera's position traces a different path through the world
+## than one from near the character's body, even at an identical look
+## angle -- meaning what this reported as "pointing at" would drift as
+## you zoomed, and disagree with what placing/breaking a block would
+## actually hit.
 ##
 ## Uses VoxelTool.raycast() -- the same underlying mechanism
 ## voxel_interactor.gd's place/delete targeting uses -- rather than a
@@ -129,13 +138,12 @@ func _update_range_check() -> void:
 	if not BattleModeManager.active:
 		_range_check_label.visible = false
 		return
-	var camera := get_viewport().get_camera_3d()
 	var player := get_tree().get_first_node_in_group("player")
-	if not camera or not player or not ("vt" in player) or not player.vt or not player.voxel_terrain:
+	if not player or not ("vt" in player) or not player.vt or not player.voxel_terrain or not ("spring_arm" in player):
 		_range_check_label.visible = false
 		return
-	var forward: Vector3 = -camera.global_transform.basis.z
-	var hit = player.vt.raycast(camera.global_position, forward, RANGE_CHECK_MAX_DIST)
+	var aim := VoxelInteractor.get_aim_ray(player)
+	var hit = player.vt.raycast(aim.origin, aim.direction, RANGE_CHECK_MAX_DIST)
 	if not hit:
 		_range_check_label.visible = false
 		return
