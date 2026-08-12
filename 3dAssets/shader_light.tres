@@ -1,0 +1,27 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_cutout.gdshader" id="1_light"]
+[ext_resource type="Texture2D" path="res://3dAssets/blocks/light/16xlight.png" id="2_light"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_light")
+shader_parameter/cutout_radius = 1.5
+shader_parameter/cutout_pow = 3.0
+shader_parameter/below_pow = 0.2
+shader_parameter/forward_pow = 0.05
+shader_parameter/cone_extra = 1.0
+shader_parameter/floor_fade_start = 0.0
+shader_parameter/floor_fade_length = 0.25
+shader_parameter/alpha_min = 0.2
+shader_parameter/camera_min_dist = 0.5
+shader_parameter/albedo_texture = ExtResource("2_light")
+shader_parameter/albedo_color = Color(1, 1, 1, 1)
+shader_parameter/normal_scale = 1.0
+shader_parameter/roughness = 1.0
+shader_parameter/metallic = 0.0
+shader_parameter/rim = 0.0
+shader_parameter/rim_tint = 0.5
+shader_parameter/emission_texture = ExtResource("2_light")
+shader_parameter/emission = Color(1, 1, 1, 1)
+shader_parameter/emission_energy_multiplier = 4.0

@@ -22,6 +22,7 @@
 [ext_resource type="Material" uid="uid://5unrmrqq6ycx" path="res://3dAssets/quartz.tres" id="20_y6ui6"]
 [ext_resource type="Material" uid="uid://comtv8n1qot3d" path="res://3dAssets/magnetite.tres" id="21_ilt7a"]
 [ext_resource type="Material" path="res://3dAssets/shader_glass.tres" id="22_glass"]
+[ext_resource type="Material" path="res://3dAssets/shader_light.tres" id="23_light"]
 
 [sub_resource type="VoxelBlockyModelEmpty" id="VoxelBlockyModelEmpty_mk2sr"]
 resource_name = "air"
@@ -222,5 +223,11 @@ collision_aabbs = Array[AABB]([AABB(0, 0, 0, 1, 1, 1)])
 material_override_0 = ExtResource("22_glass")
 collision_enabled_0 = true
 
+[sub_resource type="VoxelBlockyModelMesh" id="VoxelBlockyModelMesh_light"]
+mesh = ExtResource("2_bxrbp")
+collision_aabbs = Array[AABB]([AABB(0, 0, 0, 1, 1, 1)])
+material_override_0 = ExtResource("23_light")
+collision_enabled_0 = true
+
 [resource]
-models = Array[VoxelBlockyModel]([SubResource("VoxelBlockyModelEmpty_mk2sr"), SubResource("VoxelBlockyModelMesh_7h3nj"), SubResource("VoxelBlockyModelEmpty_ycjxf"), SubResource("VoxelBlockyModelEmpty_vrciv"), SubResource("VoxelBlockyModelEmpty_dgggl"), SubResource("VoxelBlockyModelEmpty_ef33e"), SubResource("VoxelBlockyModelMesh_gfesh"), SubResource("VoxelBlockyModelMesh_dgggl"), SubResource("VoxelBlockyModelMesh_ef33e"), SubResource("VoxelBlockyModelMesh_ektaf"), SubResource("VoxelBlockyModelMesh_6cby0"), SubResource("VoxelBlockyModelMesh_kjgg7"), SubResource("VoxelBlockyModelMesh_ilt7a"), SubResource("VoxelBlockyModelFluid_oxc0q"), SubResource("VoxelBlockyModelMesh_cdj8w"), SubResource("VoxelBlockyModelMesh_txers"), SubResource("VoxelBlockyModelMesh_ojqck"), SubResource("VoxelBlockyModelMesh_80i00"), SubResource("VoxelBlockyModelMesh_orlah"), SubResource("VoxelBlockyModelMesh_166nj"), SubResource("VoxelBlockyModelMesh_d88jw"), SubResource("VoxelBlockyModelMesh_d16vn"), SubResource("VoxelBlockyModelMesh_1rfhr"), SubResource("VoxelBlockyModelMesh_265et"), SubResource("VoxelBlockyModelMesh_glass")])
+models = Array[VoxelBlockyModel]([SubResource("VoxelBlockyModelEmpty_mk2sr"), SubResource("VoxelBlockyModelMesh_7h3nj"), SubResource("VoxelBlockyModelEmpty_ycjxf"), SubResource("VoxelBlockyModelEmpty_vrciv"), SubResource("VoxelBlockyModelEmpty_dgggl"), SubResource("VoxelBlockyModelEmpty_ef33e"), SubResource("VoxelBlockyModelMesh_gfesh"), SubResource("VoxelBlockyModelMesh_dgggl"), SubResource("VoxelBlockyModelMesh_ef33e"), SubResource("VoxelBlockyModelMesh_ektaf"), SubResource("VoxelBlockyModelMesh_6cby0"), SubResource("VoxelBlockyModelMesh_kjgg7"), SubResource("VoxelBlockyModelMesh_ilt7a"), SubResource("VoxelBlockyModelFluid_oxc0q"), SubResource("VoxelBlockyModelMesh_cdj8w"), SubResource("VoxelBlockyModelMesh_txers"), SubResource("VoxelBlockyModelMesh_ojqck"), SubResource("VoxelBlockyModelMesh_80i00"), SubResource("VoxelBlockyModelMesh_orlah"), SubResource("VoxelBlockyModelMesh_166nj"), SubResource("VoxelBlockyModelMesh_d88jw"), SubResource("VoxelBlockyModelMesh_d16vn"), SubResource("VoxelBlockyModelMesh_1rfhr"), SubResource("VoxelBlockyModelMesh_265et"), SubResource("VoxelBlockyModelMesh_glass"), SubResource("VoxelBlockyModelMesh_light")])

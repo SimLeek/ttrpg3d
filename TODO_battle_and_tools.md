@@ -763,19 +763,127 @@ execution order:
 
 ## Phase 7 -- Lighting
 
-- [ ] Voxels get a "light level" property; when set, the material's
+- [x] Voxels get a "light level" property; when set, the material's
       emission increases accordingly.
-- [ ] Whether light-level blocks also act as **actual point-light
+    - `VoxelTypes.LIGHT_LEVELS` (voxel id -> 0.0-1.0) is the property;
+      `VoxelTypes.LIGHT` (id 25) is the one block registered in it so far.
+- [x] Test/demo light block: "just make a simple white light cube not a
+      torch" -- no fancy mesh needed, a plain emissive white voxel is
+      enough to prove it out.
+    - `scripts_dev/generate_light_texture.py` writes a plain opaque-white
+      `3dAssets/blocks/light/16xlight.png` (matches the 3x2-of-16x16
+      sheet convention). `3dAssets/shader_light.tres` mirrors
+      `shader_dirt.tres`'s cutout material but sets `emission`/
+      `emission_texture`/`emission_energy_multiplier` -- note
+      `emission_texture` has to be explicitly set to something non-black,
+      since `xray_if_behind_cutout.gdshader`'s `emission_texture` uniform
+      defaults `hint_default_black`, which would silently zero out
+      `EMISSION` regardless of the `emission` color parameter otherwise.
+      Registered in `voxel_library.tres` as a normal opaque full-cube
+      block (id 25) the same way `dirt`/ores are. Confirmed visible live
+      (screenshot sent to you).
+- [x] Whether light-level blocks also act as **actual point-light
       sources** (not just emissive-looking) is a graphics setting, not
-      automatic (real dynamic lights are expensive) --
-      `settings -> graphics -> light-blocks-are-point-light-sources`.
-- [ ] New settings **submenu structure** needed for this:
+      automatic (real dynamic lights are expensive) -- landed as
+      `settings -> graphics -> light blocks affect surroundings`, with
+      `Off`/`Real: shadow-casting dynamic lights` options (see below for
+      why there's no cheap third option yet).
+    - `GameSettings.light_block_mode` (`LightBlockMode.OFF`/`REAL_LIGHTS`)
+      + `GameSettings.active_light_count` (1-32, SpinBox in the Graphics
+      screen, only shown for REAL_LIGHTS) -- both persisted like the
+      existing settings. New `LightRegistry` autoload
+      (`scripts/light_registry.gd`) tracks every placed light block's
+      world position (append-only -- no working break mechanic exists in
+      this codebase yet, see below) and, every 0.5s, repositions a pool
+      of real shadow-casting `OmniLight3D`s onto the `active_light_count`
+      nearest ones to the player -- correct occlusion (blocked by walls),
+      cost bounded by the count. `voxelitem.gd`'s `use_item()` calls
+      `LightRegistry.register_light_block()` when placing a
+      `LIGHT_LEVELS` block and the mode is REAL_LIGHTS. Confirmed live:
+      places and pools with no runtime errors.
+    - New `set_light_mode off|glow|real` dev-console command for testing
+      this without going through the (event-driven, untestable-via-
+      command-queue) pause menu UI, matching `unit_toggle_fly`'s pattern.
+- [x] New settings **submenu structure** needed for this:
       `settings -> graphics -> ...`, `settings -> ttrpg -> meter vs 5
       feet` (moves the existing distance-unit toggle under a "ttrpg"
       category rather than flat in the root settings screen).
-- [ ] Test/demo light block: "just make a simple white light cube not a
-      torch" -- no fancy mesh needed, a plain emissive white voxel is
-      enough to prove it out.
+    - `pause_menu.gd`'s settings screen is now a category picker
+      (Graphics / TTRPG) rather than one flat list; everything that was
+      already there (distance display, battle-mode waypoints, distance
+      measurement) moved under TTRPG, matching your framing that none of
+      it is graphics-related.
+- [ ] **Attempted and reverted**: a cheap "GLOW" mode -- paint a light
+      falloff into nearby placed voxels' *own* per-voxel `CHANNEL_COLOR`
+      data (a real per-voxel-instance channel the plugin supports, same
+      category of thing as per-voxel metadata for chests/toggles), baked
+      into vertex colors via `VoxelMesherBlocky.tint_mode =
+      TINT_RAW_COLOR`, read by the shared cutout shader to boost
+      `EMISSION` -- as opposed to real dynamic lights (expensive) or a
+      shader-side distance-to-light computation (which you correctly
+      flagged as not actually "modifying the block," and would've had no
+      occlusion either). This is a real, intended feature of
+      github.com/Zylann/godot_voxel, not a hack -- but hit real problems
+      live-testing that go deeper than this session had room to safely
+      chase down:
+        - `TINT_RAW_COLOR` only supports `CHANNEL_COLOR` at
+          `DEPTH_16_BIT` (4 bits/component) or `DEPTH_32_BIT` (8
+          bits/component) per the actual plugin docs -- the channel's
+          default depth when never explicitly configured is
+          `DEPTH_8_BIT`, which isn't supported at all ("Color channel
+          depth not supported", from `blocky_tint_sampler.cpp`).
+        - Declaring the channel "used" (`get_used_channels_mask()`) and
+          forcing a supported depth in the generator fixed that error,
+          but surfaced a worse one live: `CHANNEL_COLOR`'s
+          default/unwritten value bakes into vertex `COLOR` as
+          effectively full white, not black, so *every* voxel in view
+          (not just ones actually painted) picked up the emission boost
+          -- confirmed live, the whole visible world went white the
+          moment `tint_mode` went live, before `VoxelLighting` had
+          painted anything.
+        - Zero-filling the channel at generation time
+          (`buffer.fill(0, CHANNEL_COLOR)`) was the fix for *that*, but
+          then chunks generated *before* this fix (already on disk in
+          existing saved worlds, including ones used for testing this
+          session) have a different/no depth than chunks generated
+          *after* -- surfaced as
+          `Assertion failed: "other_channel.depth == channel.depth"`
+          spamming on basically every chunk-mesh operation once both old
+          and new chunks were in view together. This is a real migration
+          problem (old saved chunks predate the channel), not something
+          fixable by just tweaking the generator further.
+        - Given the risk of this leaking into your *actual* saved worlds
+          (not just disposable test ones) if left half-working, fully
+          reverted: `tint_mode` back off `voxel_main_world_mesher.tres`,
+          `get_used_channels_mask()`/`generate_block()` back to not
+          touching `CHANNEL_COLOR` at all in
+          `hilly_terrain_region_generator.gd`, the shader's
+          `light_paint_boost` uniform/`EMISSION` line removed from
+          `xray_if_behind_cutout.gdshader`. Confirmed live: terrain
+          rendering is back to normal, no more white-out, no more
+          assertion spam, including on the world that got visibly broken
+          mid-session.
+        - `scripts/pcg/voxel_lighting.gd` (the CPU-side falloff-painting
+          logic) is left in place, unused, as a starting point if this
+          gets picked up again -- `voxelitem.gd`'s `_maybe_apply_light()`
+          no longer calls it, and the GLOW option isn't offered in the
+          Graphics settings screen (`LightBlockMode.GLOW` still exists in
+          the enum, just unreachable from the UI, so `set_light_mode
+          glow` still round-trips through `GameSettings` for whenever
+          this is revisited).
+        - If/when revisited: probably needs either a proper per-world
+          data migration (detect old chunks missing a valid `CHANNEL_COLOR`
+          depth, force-remesh/re-tag them) or a different mechanism
+          entirely that doesn't depend on chunk generation history
+          (e.g. the "lit variant" voxel-type-swap idea from the earlier
+          discussion, which sidesteps the channel-depth problem
+          completely at the cost of needing registered "lit" counterpart
+          block types).
+    - Not tracked for removal if a light block is later broken, for
+      either mode -- there's no working break mechanic in this codebase
+      yet (`scripts/items/del_vox_item.gd` is an unregistered stub, never
+      wired into `ItemCatalog`), so nothing can remove a placed light
+      block to begin with.
 
 ## Phase 8 -- Movement items (mod items, replacing double-tap gestures)
 

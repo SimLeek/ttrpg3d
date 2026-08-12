@@ -155,6 +155,22 @@ const MAGNETITE: int = 23
 # interior, no true alpha blending (avoids the sorting/flicker issues true
 # blending has for many simultaneous transparent cutouts).
 const GLASS: int = 24
+# Phase 7 demo light block: "just make a simple white light cube not a
+# torch." Fully opaque, glows via shader_light.tres's emission params
+# (see voxel_catalog.gd/voxel_library.tres) -- LIGHT_LEVELS below is the
+# "light level" property the block registers, read by voxelitem.gd to
+# decide how much it lights up its surroundings when
+# GameSettings.light_block_mode isn't OFF (see scripts/pcg/voxel_lighting.gd
+# and scripts/light_registry.gd for the two modes).
+const LIGHT: int = 25
+
+## Maps a voxel id to its light level (0.0-1.0, arbitrary -- scales either
+## mode's effect, not the material's own emission, which is hand-tuned per
+## block like every other block's material already is). Blocks not in
+## this dict aren't light sources.
+const LIGHT_LEVELS: Dictionary = {
+	LIGHT: 1.0,
+}
 # Occur: Tube cracks. Appear: Fluffy white "wool." PCG: Breath hazard; slows stamina regen if mined.
 const ASBESTOS: int = 74
 # Occur: Deep tube pockets. Appear: Translucent lime green. PCG: High value; found in "pockets" in walls.

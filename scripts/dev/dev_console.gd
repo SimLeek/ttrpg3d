@@ -278,6 +278,22 @@ func _cmd_hold(args: Array[String]) -> String:
 	hand.equip_item(ItemCatalog.instantiate_item(entry))
 	return "equipped %s to %s hand" % [item_id, hand_name]
 
+## Phase 7 testing: the Graphics settings screen's light-mode buttons are
+## only reachable through the (event-driven, untestable-via-command-queue)
+## pause menu UI -- this calls the same GameSettings method those buttons
+## call, same pattern as unit_toggle_fly/unit_toggle_intangible.
+func _cmd_set_light_mode(args: Array[String]) -> String:
+	if args.is_empty():
+		return "usage: set_light_mode off|glow|real"
+	var mode: int
+	match args[0].to_lower():
+		"off": mode = GameSettings.LightBlockMode.OFF
+		"glow": mode = GameSettings.LightBlockMode.GLOW
+		"real": mode = GameSettings.LightBlockMode.REAL_LIGHTS
+		_: return "unknown mode: %s (off|glow|real)" % args[0]
+	GameSettings.set_light_block_mode(mode)
+	return "light_block_mode=%d" % GameSettings.light_block_mode
+
 ## Grabs whatever the main viewport rendered this frame and writes it to
 ## user://<name>.png -- the only way to visually inspect a running headless
 ## game instance from outside (no GUI to look at directly).
@@ -307,6 +323,18 @@ func _cmd_world(args: Array[String]) -> String:
 			WorldManager.switch_to_world(w)
 			return "switching to %s (matched generator %s)" % [w.get("id", "?"), target]
 	return "no such world: %s" % target
+
+## Testing-only: creates and switches to a brand-new world, never touching
+## any existing saved world's data. Needed while verifying Phase 7's
+## voxel-color-channel lighting -- an already-cached world's chunks
+## predate the terrain generator now zero-filling CHANNEL_COLOR, and
+## re-testing against that stale cache produces misleading/corrupted
+## results that have nothing to do with the actual feature.
+func _cmd_new_world(args: Array[String]) -> String:
+	var generator_id: String = args[0] if not args.is_empty() else "hilly"
+	var world := WorldManager.create_world("dev-test-%d" % Time.get_ticks_msec(), generator_id, {})
+	WorldManager.switch_to_world(world)
+	return "created and switching to %s" % world.get("id", "?")
 
 ## ---------------------------------------------------------------------
 ## Testing back door for the console's OWN ui/focus state -- live/visual

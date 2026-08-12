@@ -5,6 +5,12 @@ extends CanvasLayer
 @onready var _main_box: Control = $Control/MarginContainer
 
 var _settings_screen: Control
+var _graphics_screen: Control
+var _ttrpg_screen: Control
+var _light_off_btn: Button
+var _light_real_btn: Button
+var _light_count_row: HBoxContainer
+var _light_count_spin: SpinBox
 var _meters_btn: Button
 var _feet_btn: Button
 var _snap_btn: Button
@@ -74,6 +80,8 @@ func _on_config_pressed() -> void:
 
 func _show_main_menu() -> void:
 	_settings_screen.visible = false
+	_graphics_screen.visible = false
+	_ttrpg_screen.visible = false
 	_main_box.visible = true
 
 
@@ -84,6 +92,16 @@ func _show_main_menu() -> void:
 ## real pause menu does." Replaces the main pause list entirely while
 ## open; Back returns to it, matching PauseMenu's existing
 ## show-one-screen-at-a-time pattern rather than stacking on top.
+##
+## Phase 7: settings is now a category picker (Graphics / TTRPG) rather
+## than one flat list -- "settings -> graphics -> ...", "settings -> ttrpg
+## -> meter vs 5 feet (moves the existing distance-unit toggle under a
+## 'ttrpg' category rather than flat in the root settings screen)."
+## Everything that was already here (distance display, battle-mode
+## waypoints, distance measurement) moved into _build_ttrpg_screen() --
+## none of it is graphics-related, all of it is TTRPG-flavored display
+## preference, so "ttrpg" is where all of it landed rather than splitting
+## it further.
 func _build_settings_screen() -> void:
 	_settings_screen = Control.new()
 	_settings_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -109,6 +127,128 @@ func _build_settings_screen() -> void:
 
 	var title := Label.new()
 	title.text = "Settings"
+	title.theme = title_theme
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	var graphics_btn := Button.new()
+	graphics_btn.text = "Graphics"
+	graphics_btn.theme = button_theme
+	graphics_btn.pressed.connect(func():
+		_settings_screen.visible = false
+		_graphics_screen.visible = true)
+	vbox.add_child(graphics_btn)
+
+	var ttrpg_btn := Button.new()
+	ttrpg_btn.text = "TTRPG"
+	ttrpg_btn.theme = button_theme
+	ttrpg_btn.pressed.connect(func():
+		_settings_screen.visible = false
+		_ttrpg_screen.visible = true)
+	vbox.add_child(ttrpg_btn)
+
+	var back_btn := Button.new()
+	back_btn.text = "Back"
+	back_btn.theme = button_theme
+	back_btn.pressed.connect(_show_main_menu)
+	vbox.add_child(back_btn)
+
+	_build_graphics_screen(title_theme, button_theme)
+	_build_ttrpg_screen(title_theme, button_theme)
+
+
+## "settings -> graphics -> light-blocks-are-point-light-sources" -- whether
+## light-level voxels (VoxelTypes.LIGHT_LEVELS) also spawn a real
+## OmniLight3D on placement, not just their own emissive material glow
+## (which always shows regardless of this toggle). See
+## scripts/items/voxelitem.gd for where this gets read.
+func _build_graphics_screen(title_theme: Theme, button_theme: Theme) -> void:
+	_graphics_screen = Control.new()
+	_graphics_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_graphics_screen.visible = false
+	add_child(_graphics_screen)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.28485027, 0.28485027, 0.28485027, 0.5019608)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_graphics_screen.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_graphics_screen.add_child(center)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 24)
+	vbox.custom_minimum_size = Vector2(360, 0)
+	center.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "Graphics"
+	title.theme = title_theme
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	vbox.add_child(title)
+
+	vbox.add_child(_make_section_label("Light blocks affect surroundings:"))
+
+	# GLOW mode isn't offered here yet -- the cheap per-voxel-color
+	# approach it needed hit real, deeper-than-this-session problems live
+	# (see voxelitem.gd's _maybe_apply_light doc comment / the Phase 7 TODO
+	# entry). Only Off/Real for now.
+	_light_off_btn = _make_option_button(button_theme, "Off",
+		func(): GameSettings.set_light_block_mode(GameSettings.LightBlockMode.OFF); _refresh_settings_buttons())
+	vbox.add_child(_light_off_btn)
+
+	_light_real_btn = _make_option_button(button_theme, "Real: shadow-casting dynamic lights",
+		func(): GameSettings.set_light_block_mode(GameSettings.LightBlockMode.REAL_LIGHTS); _refresh_settings_buttons())
+	vbox.add_child(_light_real_btn)
+
+	_light_count_row = HBoxContainer.new()
+	_light_count_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(_light_count_row)
+	var count_label := Label.new()
+	count_label.text = "Nearest lights active: "
+	_light_count_row.add_child(count_label)
+	_light_count_spin = SpinBox.new()
+	_light_count_spin.min_value = 1
+	_light_count_spin.max_value = 32
+	_light_count_spin.step = 1
+	_light_count_spin.value = GameSettings.active_light_count
+	_light_count_spin.value_changed.connect(func(v): GameSettings.set_active_light_count(int(v)))
+	_light_count_row.add_child(_light_count_spin)
+
+	var back_btn := Button.new()
+	back_btn.text = "Back"
+	back_btn.theme = button_theme
+	back_btn.pressed.connect(func():
+		_graphics_screen.visible = false
+		_settings_screen.visible = true)
+	vbox.add_child(back_btn)
+
+
+func _build_ttrpg_screen(title_theme: Theme, button_theme: Theme) -> void:
+	_ttrpg_screen = Control.new()
+	_ttrpg_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ttrpg_screen.visible = false
+	add_child(_ttrpg_screen)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0.28485027, 0.28485027, 0.28485027, 0.5019608)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ttrpg_screen.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_ttrpg_screen.add_child(center)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 24)
+	vbox.custom_minimum_size = Vector2(360, 0)
+	center.add_child(vbox)
+
+	var title := Label.new()
+	title.text = "TTRPG"
 	title.theme = title_theme
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -169,7 +309,9 @@ func _build_settings_screen() -> void:
 	var back_btn := Button.new()
 	back_btn.text = "Back"
 	back_btn.theme = button_theme
-	back_btn.pressed.connect(_show_main_menu)
+	back_btn.pressed.connect(func():
+		_ttrpg_screen.visible = false
+		_settings_screen.visible = true)
 	vbox.add_child(back_btn)
 
 	_refresh_settings_buttons()
@@ -192,6 +334,9 @@ func _make_option_button(theme: Theme, text: String, on_pressed: Callable) -> Bu
 
 
 func _refresh_settings_buttons() -> void:
+	_light_off_btn.button_pressed = GameSettings.light_block_mode == GameSettings.LightBlockMode.OFF
+	_light_real_btn.button_pressed = GameSettings.light_block_mode == GameSettings.LightBlockMode.REAL_LIGHTS
+	_light_count_row.visible = GameSettings.light_block_mode == GameSettings.LightBlockMode.REAL_LIGHTS
 	_meters_btn.button_pressed = GameSettings.distance_unit == GameSettings.DistanceUnit.METERS
 	_feet_btn.button_pressed = GameSettings.distance_unit == GameSettings.DistanceUnit.FEET_5_PER_BLOCK
 	_snap_btn.button_pressed = GameSettings.snap_waypoints_to_grid
