@@ -12,9 +12,19 @@ extends Node
 ## flight/dig-speed are meant to move to equippable mod items eventually,
 ## at which point *those* should determine movement speed while in battle
 ## mode -- not this script silently overriding whatever's equipped).
-## primary/secondary item clicks are repurposed while active (see
-## two_handed_resource.gd) to mark a waypoint / undo the last one, instead
-## of using the currently-held item. Distance uses whichever single metric
+## Waypoints are marked/undone with M/N (battle_mark_waypoint/
+## battle_undo_waypoint) rather than LMB/RMB now -- those need to stay free
+## for items/spells/attacks even while planning a move, which primary/
+## secondary-click-for-waypoints previously prevented.
+##
+## N isn't a plain "remove the last waypoint" undo -- see undo_last_waypoint()
+## for the walk-back-through-history behavior: if you've moved off the last
+## waypoint since marking/undoing, N returns you to it first (no removal);
+## only pressing N again *while standing on it* actually removes it. This
+## lets one key both walk you back through history and let you reconsider
+## whichever waypoint you're currently on.
+##
+## Distance uses whichever single metric
 ## GameSettings.distance_norm_mode selects (Manhattan / Euclidean / a
 ## custom Minkowski n-norm) -- a game usually sticks to one, so this
 ## reports one number, not every metric at once.
@@ -58,6 +68,20 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_battle_mode"):
 		toggle()
 		get_viewport().set_input_as_handled()
+		return
+	# InputController.is_captured(): a menu/the dev console having
+	# exclusive input still lets an event reach _unhandled_input() if
+	# nothing's focused to consume it as text (e.g. the DM world menu open
+	# but no field focused) -- without this, M/N could mark/undo waypoints
+	# while you're just looking at a menu, not planning a move.
+	if InputController.is_captured():
+		return
+	if event.is_action_pressed("battle_mark_waypoint"):
+		mark_current_position()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("battle_undo_waypoint"):
+		undo_last_waypoint()
+		get_viewport().set_input_as_handled()
 
 func _physics_process(_delta: float) -> void:
 	if active:
@@ -99,9 +123,32 @@ func mark_current_position() -> void:
 	_refresh_markers()
 	waypoints_changed.emit(waypoints)
 
+## Not a plain "pop the last waypoint" undo -- see the doc comment at the
+## top of this file. If the player isn't standing on the last waypoint,
+## this moves them back onto it (no removal, so a single N always returns
+## you to "where you currently are, planning-wise"). Only once they're
+## actually standing on it does N remove it -- which then makes them "not
+## standing on" the new last waypoint, so N walks back one more step next
+## press. Standing-on check is horizontal (XZ) only distance, within half
+## a voxel: comparing full 3D position would need the player's exact
+## vertical resting height to match the marked position's Y (itself
+## possibly voxel-center-snapped, not the player's actual foot height) --
+## fragile for something meant to feel like "same spot", not "same pixel".
 func undo_last_waypoint() -> void:
-	if not active or waypoints.size() <= 1:
+	if not active or waypoints.is_empty():
 		return
+	var player := _get_player()
+	if not player:
+		return
+	var last: Vector3 = waypoints[waypoints.size() - 1]
+	var player_pos: Vector3 = player.global_position
+	var horizontal_dist := Vector2(player_pos.x, player_pos.z).distance_to(Vector2(last.x, last.z))
+	if horizontal_dist > VOXEL_SIZE * 0.5:
+		player.global_position = last
+		player.velocity = Vector3.ZERO
+		return
+	if waypoints.size() <= 1:
+		return  # never remove the starting anchor
 	waypoints.remove_at(waypoints.size() - 1)
 	_refresh_markers()
 	waypoints_changed.emit(waypoints)

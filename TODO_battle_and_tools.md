@@ -302,11 +302,19 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       step; all five Enter-bound actions together for the start step) --
       confirmed match + actual `die()`/respawn end to end.
 
-- [ ] Stop using LMB/RMB for waypoint mark/undo in battle mode -- players
-      need those free for items/spells/attacks. Move to **M** (mark
-      current position / add node) and **N** (undo), via the input action
-      map (not fixed keys -- audit this generally, see Phase 9).
-- [ ] N's exact behavior (this is the "make moving and undoing much
+- [x] Stopped using LMB/RMB for waypoint mark/undo in battle mode --
+      players need those free for items/spells/attacks. Moved to **M**
+      (`battle_mark_waypoint`) and **N** (`battle_undo_waypoint`), new
+      input-map actions (not fixed keys) added to `project.godot`, handled
+      in `battle_mode_manager.gd`'s own `_unhandled_input()` alongside its
+      existing `toggle_battle_mode` handling, gated on
+      `InputController.is_captured()` so they don't fire while a menu's
+      open with nothing focused to otherwise consume the keys.
+      `two_handed_resource.gd`'s battle-mode LMB/RMB branch removed
+      entirely -- items/attacks now work normally even while battle mode
+      is active. HUD label text updated (`levels/hud.gd`) from "LMB mark,
+      RMB undo" to "M mark, N undo".
+- [x] N's exact behavior (this is the "make moving and undoing much
       easier" part, not simple undo): if the player is **not** standing
       on the last marked waypoint, N moves them **back onto it** (no
       undo). If they **are** standing on it, N undoes it like normal
@@ -315,6 +323,29 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       returns them to *that* one, then undoes on the press after, and so
       on. One key walks you back through history AND lets you jump back
       onto whichever waypoint you're currently reasoning about.
+    - "Standing on" is a horizontal-only (XZ) distance check within half a
+      voxel, not full 3D -- comparing Y too would need the player's exact
+      resting height to match the marked waypoint's Y (itself possibly
+      voxel-center-snapped, not the player's actual foot height), which
+      would rarely line up closely enough to feel like "same spot" rather
+      than "same pixel."
+    - The very first (starting) waypoint, marked automatically on
+      entering battle mode, can never be removed by N -- walking back onto
+      it is still allowed (lets you return to start any time), just not
+      undoing past it.
+    - `_cmd_mark`/`_cmd_undo` (dev console) now report waypoint
+      count/last-waypoint position instead of a fixed "marked"/"undone"
+      string, so which of "walked back" vs. "actually removed" happened
+      is visible from the result. Verified live via the command queue:
+      marked a waypoint, moved away, first `undo` teleported back without
+      changing the waypoint count, second `undo` (now standing on it)
+      actually removed it and dropped the count, a third `undo` correctly
+      walked back to the remaining starting anchor, and a fourth `undo`
+      (standing on that anchor) correctly refused to remove it. Boot-
+      checked clean. **Not yet independently confirmed**: the real M/N
+      keypresses themselves reaching `battle_mode_manager.gd`'s
+      `_unhandled_input()` -- the command queue calls `mark_current_position()`/
+      `undo_last_waypoint()` directly.
 - [x] Battle mode no longer force-enables flying/intangible on entry or
       clears them on exit -- whatever movement type was already active
       (walking, or manually double-tapped flying/intangible) stays

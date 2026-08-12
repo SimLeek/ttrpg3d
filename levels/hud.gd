@@ -90,7 +90,7 @@ func _on_waypoints_changed(_waypoints: Array) -> void:
 func _refresh_battle_label() -> void:
 	if not BattleModeManager.active:
 		return
-	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  %s (%s)  (LMB mark, RMB undo, B to end)" % [
+	_battle_label.text = "BATTLE MODE  --  waypoints: %d  |  %s (%s)  (M mark, N undo, B to end)" % [
 		BattleModeManager.waypoints.size(),
 		GameSettings.format_distance(BattleModeManager.get_total_distance()),
 		GameSettings.distance_norm_label(),
