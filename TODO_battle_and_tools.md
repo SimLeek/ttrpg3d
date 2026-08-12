@@ -712,6 +712,28 @@ simpler statement in the same message -- this is the one to build):
       holds rock-solid at the confirmed-safe height (9.256) across ten+
       consecutive corrective frames, only changing once Shift is released
       and normal physics resumes. Boot-checked clean.
+- [x] "One more issue: releasing shift allows us to move out of safe xz
+      space and then if we hit it again we might fall off despite being
+      on the edge. I think an easy fix for that is to move within bounds
+      by a slight margin" -- clarified as "push the character back in
+      bounds if they're on the edge or out of it once shift is released."
+      The margin deliberately lets you overhang past the cell's real
+      (solid) bounds while Shift is held ("stand right at the edge to
+      look over"), but that overhang position isn't necessarily fully
+      supported (same capsule-at-a-boundary flakiness noted elsewhere in
+      this file) -- so releasing Shift right there and immediately
+      re-pressing it would just register that shaky spot as the new safe
+      cell with nothing having actually re-verified it.
+    - Added `_snap_within_bounds()`, called the moment protection ends
+      (Shift released): pushes the player `release_inset` (0.1) inside
+      the last safe cell's real bounds, not just back to the raw
+      boundary -- a no-op for the overwhelmingly common case of releasing
+      Shift away from any edge, since it only does anything if the
+      player is currently past that inset. Verified live on real Hilly
+      World terrain: pushed into an edge until clamped at the margin
+      overhang `(-32.125, ..., 8.000)`, released Shift, confirmed snapped
+      to solidly-safe `(-31.9, ..., 8.1)` in the same frame, with a
+      normal resting Y. Boot-checked clean.
 - [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
       but same key) -- turned out to already be done: the pre-existing

@@ -63,6 +63,7 @@ class_name LedgeSafetyResource
 @export var probe_down_distance: float = 0.4  ## just past the character's own vertical extent -- NOT enough to reach a full voxel drop, which should count as an edge
 @export var probe_up_offset: float = 0.1  ## raycast starts this far above the query position
 @export var jump_velocity_threshold: float = 0.1  ## velocity.y above this counts as "deliberately jumping," not "just walking" -- don't fight it
+@export var release_inset: float = 0.1  ## how far inside the safe cell's actual (non-margin) bounds to push the player back to when Shift is released while overhanging -- see _snap_within_bounds()
 
 ## Diagnostic -- flip on (Inspector, or a future dev-console command) to
 ## trace activation/cell-change/clamp decisions per frame, same pattern as
@@ -98,8 +99,22 @@ var _safe_y: float = 0.0
 ## touch both position and velocity depending on the case.
 func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_origin: Vector3, is_held: bool, was_grounded: bool) -> void:
 	if not is_held or not vt:
-		if debug_log and _active:
-			print("[LedgeSafety] deactivating: is_held=%s vt=%s" % [is_held, vt != null])
+		if _active:
+			# "Releasing shift allows us to move out of safe xz space and
+			# then if we hit it again we might fall off despite being on
+			# the edge." The margin deliberately lets you overhang past the
+			# cell's real (solid) bounds while Shift is held ("stand right
+			# at the edge to look over") -- but that overhang position
+			# isn't necessarily fully supported (the same capsule-at-a-
+			# boundary flakiness noted in the class doc comment above), so
+			# releasing Shift right there and immediately re-pressing it
+			# would just register that shaky spot as the new safe cell.
+			# Push back to solidly within the actual cell bounds (not just
+			# the margin edge) the moment protection ends, so there's
+			# nothing precarious left for a fresh activation to trust.
+			_snap_within_bounds(character, terrain_origin)
+			if debug_log:
+				print("[LedgeSafety] deactivating: is_held=%s vt=%s" % [is_held, vt != null])
 		_active = false
 		return
 
@@ -162,6 +177,23 @@ func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_o
 func _cell_of(pos: Vector3, terrain_origin: Vector3) -> Vector2i:
 	var local := pos - terrain_origin
 	return Vector2i(floori(local.x / VOXEL_SIZE), floori(local.z / VOXEL_SIZE))
+
+## Pushes the player back to `release_inset` inside the last safe cell's
+## real (non-margin) bounds -- only does anything if they're currently
+## past that inset (i.e. in the margin-overhang zone or beyond), so this
+## is a no-op for the overwhelmingly common case of releasing Shift well
+## away from any edge.
+func _snap_within_bounds(character: CharacterBody3D, terrain_origin: Vector3) -> void:
+	var cell_min := Vector2(_safe_cell.x, _safe_cell.y) * VOXEL_SIZE + Vector2(terrain_origin.x, terrain_origin.z)
+	var cell_max := cell_min + Vector2(VOXEL_SIZE, VOXEL_SIZE)
+	var pos: Vector3 = character.global_position
+	var inset_x: float = clamp(pos.x, cell_min.x + release_inset, cell_max.x - release_inset)
+	var inset_z: float = clamp(pos.z, cell_min.y + release_inset, cell_max.y - release_inset)
+	if inset_x == pos.x and inset_z == pos.z:
+		return
+	if debug_log:
+		print("[LedgeSafety] snapping back within bounds on release: (%.3f, %.3f) -> (%.3f, %.3f)" % [pos.x, pos.z, inset_x, inset_z])
+	character.global_position = Vector3(inset_x, pos.y, inset_z)
 
 ## VoxelTypes.is_player_collidable(): a raycast hit alone isn't enough --
 ## it hits anything with collision_aabbs (needed for targeting), which
