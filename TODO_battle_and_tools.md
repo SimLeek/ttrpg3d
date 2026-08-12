@@ -625,6 +625,43 @@ simpler statement in the same message -- this is the one to build):
       what the menu would leave behind), switched worlds, confirmed
       `is_captured()` and `Input.mouse_mode` both correctly reset
       afterward (previously would have stayed stuck). Boot-checked clean.
+- [x] "Close! Bug found: If I jump while holding shift and moving any
+      direction with wasd I may float close to the ground once I'm near a
+      block." Root cause: the jump-detection escape hatch
+      (`velocity.y > jump_velocity_threshold`) only matches during a
+      jump's ASCENT (positive Y velocity). Once it peaks and starts
+      falling back down, that check stops matching -- and the previous
+      code let the SAME frame's jump-detected branch re-register whatever
+      cell they were passing through as "safe" without checking for an
+      actual floor there, then on later descending frames (no longer
+      "jumping" by this check) tried to protect against a "no floor
+      within the short probe distance yet" reading that was really just
+      normal jump descent, not an edge -- clamping position and zeroing
+      velocity mid-air near the ground instead of letting them land.
+    - Fixed by suspending protection for the WHOLE jump arc, not just the
+      ascending half: detecting `velocity.y > threshold` now fully
+      deactivates tracking (same as releasing Shift) instead of letting
+      that one frame through -- it only resumes once `was_grounded`
+      is true again (a real landing), at which point it registers a
+      fresh, correct safe cell wherever they actually came down.
+    - Needed a new test hook to verify this one specifically: jump is
+      entirely event-driven (`basic_jump_resource.gd`'s
+      `handle_immediate_input()`, wired from `player_blob_ctrl.gd`'s
+      `_input()`), so `unit_input_press`/`release` (which only affect
+      `Input.is_action_pressed()` polling, no real `InputEvent`) couldn't
+      trigger a jump at all -- confirmed live via `debug_log`, which
+      never showed a "jump detected" line no matter how the press/release
+      was timed. Added `unit_jump` (calls
+      `player.basic_jumper.request_jump()` directly) to actually exercise
+      this path. With a real jump in hand, verified live: jumping off a
+      small isolated test platform (with nothing else below) correctly
+      falls into the void uninterrupted, matching "jumping off a ledge
+      deliberately still works"; jumping-and-landing well within a large
+      platform (nothing to fall into) shows the debug trace suspend on
+      takeoff and cleanly re-activate on landing, with the resting height
+      essentially unchanged before and after (8.2555 -> 8.2560) across
+      three consecutive `pos` checks, confirming no floating/freezing.
+      Boot-checked clean.
 - [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
       but same key) -- turned out to already be done: the pre-existing

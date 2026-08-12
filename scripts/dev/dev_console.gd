@@ -368,6 +368,22 @@ func _cmd_unit_input_request_capture(args: Array[String]) -> String:
 	InputController.request_capture(args[0] if not args.is_empty() else "unit_test")
 	return "captured=%s" % InputController.is_captured()
 
+## unit_jump: calls player.basic_jumper.request_jump() directly -- jump is
+## handled entirely through a real InputEvent
+## (basic_jump_resource.gd::handle_immediate_input(), wired from
+## player_blob_ctrl.gd's _input()), so unlike held-action mechanics
+## (unit_input_press/release, which only affect Input.is_action_pressed()
+## polling) there's no way to simulate a jump through the command queue
+## without this -- confirmed live while testing the ledge-safety
+## jump-arc fix: unit_input_press("jump") produced no vertical velocity
+## at all, since nothing in the jump path polls Input directly.
+func _cmd_unit_jump(_args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not ("basic_jumper" in player) or not player.basic_jumper:
+		return "no player/basic_jumper"
+	player.basic_jumper.request_jump()
+	return "jump requested"
+
 ## unit_input_press/unit_input_release <action>: Godot's own
 ## Input.action_press()/action_release() -- a software-held action state,
 ## not a single event, so is_action_pressed() reads it as held across

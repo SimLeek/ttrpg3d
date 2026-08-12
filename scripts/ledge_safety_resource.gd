@@ -37,19 +37,23 @@ class_name LedgeSafetyResource
 ## tracking (so it doesn't kick in mid-jump/mid-fall) -- once active, it
 ## keeps correcting every frame Shift is held, regardless of what
 ## is_on_floor() says that frame, only backing off for an actual deliberate
-## jump (velocity.y meaningfully positive) rather than an edge-adjacent
-## floor-contact flicker.
+## jump (velocity.y meaningfully positive), which suspends protection for
+## the WHOLE jump arc (not just the ascending frames) until landing --
+## see the jump-detection branch below for why the descent half matters
+## too (a real live bug: floating near the ground after jump+Shift+WASD
+## near a block).
 ##
 ## Mechanic: register the voxel cell the player is standing on the moment
 ## Shift goes down (grounded); each physics frame after that, if they've
 ## moved to a different cell: a deliberate jump (velocity.y > threshold)
-## is let through untouched; otherwise, solid floor at the new position
-## (a SHORT probe, just past the character's own vertical size -- NOT a
-## generous "any floor below" check, or every ordinary step down would
-## count as "safe") updates the registered cell; no floor at all snaps
-## the player back to the old cell's footprint plus `margin` and zeroes
-## velocity entirely (not just horizontal -- otherwise gravity keeps
-## compounding a fall move_and_slide() already started this frame).
+## suspends protection until they land again; otherwise, solid floor at
+## the new position (a SHORT probe, just past the character's own
+## vertical size -- NOT a generous "any floor below" check, or every
+## ordinary step down would count as "safe") updates the registered cell;
+## no floor at all snaps the player back to the old cell's footprint plus
+## `margin` and zeroes velocity entirely (not just horizontal -- otherwise
+## gravity keeps compounding a fall move_and_slide() already started this
+## frame).
 ##
 ## Horizontal (XZ) cell tracking only, matching the same reasoning as
 ## BattleModeManager's waypoint "standing on" check -- vertical precision
@@ -102,11 +106,22 @@ func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_o
 		return  # still over the registered cell -- nothing to check
 
 	if character.velocity.y > jump_velocity_threshold:
-		# Deliberately jumping -- don't fight it, just re-register wherever
-		# they end up (same as landing on solid new ground normally).
+		# Deliberately jumping -- suspend protection entirely rather than
+		# just letting this one frame through. A jump's velocity.y only
+		# reads positive during the ASCENT; once it peaks and starts
+		# falling back down, this check stops matching, and if protection
+		# were still active it would see "moved to a new cell, no floor
+		# within the short probe distance yet (still a bit above the
+		# ground, mid-fall)" and clamp+zero-velocity the player mid-air --
+		# a real bug found live: "if I jump while holding shift and moving
+		# any direction with wasd I may float close to the ground once I'm
+		# near a block." Deactivating for the WHOLE arc instead means
+		# was_grounded's own check (above) naturally re-activates fresh
+		# only once they've actually landed, with no ambiguity between
+		# "still descending from a jump" and "walked off an edge."
 		if debug_log:
-			print("[LedgeSafety] jump detected (velocity.y=%.2f), letting through: %s -> %s" % [character.velocity.y, _safe_cell, cell])
-		_safe_cell = cell
+			print("[LedgeSafety] jump detected (velocity.y=%.2f), suspending until landed" % character.velocity.y)
+		_active = false
 		return
 
 	if _has_floor_below(vt, pos):
