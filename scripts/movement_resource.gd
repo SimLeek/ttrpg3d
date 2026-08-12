@@ -18,21 +18,18 @@ var sprinting: bool = false
 var sprint_elapsed: float = 0.0
 var sprint_exhausted: bool = false
 var sprint_progress: float = 0.0
-var last_key: String = ""
-var tap_timer: float = 0.0
 
+## Double-tapping any movement direction sprints -- InputController.was_double_tapped()
+## tracks the per-action timing now (shared with player_blob_ctrl.gd's
+## fly/intangible gestures), instead of this resource keeping its own
+## last-key/timer bookkeeping.
 func handle_immediate_input(event: InputEvent, left="left", right="right", up="up", down="down") -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		var current_key: String = event.as_text()
-
-		if current_key == last_key and tap_timer > 0.0:
-			for action in [left, right, up, down]:
-				if event.is_action_pressed(action):
-					sprinting = true
-					break
-		else:
-			tap_timer = double_tap_time
-			last_key = current_key
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	for action in [left, right, up, down]:
+		if event.is_action_pressed(action) and InputController.was_double_tapped(action, int(double_tap_time * 1000.0)):
+			sprinting = true
+			break
 
 func handle_physics_process_input(
 	input_dir: Vector2,
@@ -42,9 +39,6 @@ func handle_physics_process_input(
 	delta: float,
 	transform: Transform3D
 )-> Vector3:
-	if tap_timer > 0.0:
-		tap_timer -= delta
-	
 	if is_sprint:
 		sprinting = true
 

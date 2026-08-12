@@ -175,7 +175,7 @@ func _process(delta: float) -> void:
 				global_position = target_position
 				is_lerping = false
 	else:
-		if ledge_grabber and not DevConsole.is_focused and Input.is_action_pressed(ledge_grabber.ledge_grab_key):
+		if ledge_grabber and InputController.is_action_pressed(ledge_grabber.ledge_grab_key):
 			var base_pos = ledge_grabber.dir + ledge_grabber.character.global_position
 			if hand_side == HandSide.LEFT:
 				base_pos += ledge_grabber.left_perp / 2
