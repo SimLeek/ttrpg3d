@@ -48,17 +48,17 @@ func _build_flight_label() -> void:
 	add_child(_flight_label)
 
 ## Called from player_blob_ctrl.gd whenever flying/intangible are toggled --
-## both exit on a double-tap (double-Space, double-Ctrl respectively) that's
-## easy to forget which is which, so name it explicitly on screen.
+## flying is a single F press, intangible a double-tap of Shift (formerly
+## Ctrl) -- easy to forget which is which, so name it explicitly on screen.
 func update_flight_status(is_flying: bool, is_intangible: bool) -> void:
 	if not is_flying and not is_intangible:
 		_flight_label.visible = false
 		return
 	var parts: Array[String] = []
 	if is_flying:
-		parts.append("FLYING (double-Space to stop)")
+		parts.append("FLYING (F to stop)")
 	if is_intangible:
-		parts.append("INTANGIBLE (double-Ctrl to stop)")
+		parts.append("INTANGIBLE (double-Shift to stop)")
 	_flight_label.text = "   |   ".join(parts)
 	_flight_label.add_theme_color_override("font_color", Color(1.0, 0.5, 1.0) if is_intangible else Color(0.3, 1.0, 1.0))
 	_flight_label.visible = true

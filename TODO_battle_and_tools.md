@@ -325,12 +325,24 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       full rework. Boot-checked; live-tested enough to confirm the player
       stays grounded/walking normally on entering battle mode rather than
       lifting off.
-- [ ] Double-tap-jump-to-fly interferes with wall jumping -- remove the
-      built-in double-tap gesture detection from `player_blob_ctrl.gd`
-      entirely. Fly and "dig"/intangible move to mod items instead (see
-      Phase 8), not built-in double-tap keys. ("Right the double ctrl and
-      double space things were a bad idea it seems" -- confirmed worth
-      doing, not done yet.)
+- [x] Double-tap-jump-to-fly interferes with wall jumping ("Right the
+      double ctrl and double space things were a bad idea it seems") --
+      quick fix per your ask ("change flight to f real quick instead of
+      double space so I can do wall jumps again") rather than waiting for
+      the full Phase 8 mod-item rework: flying now toggles on a single
+      press of a new `toggle_fly` action (F), not a double-tap of `jump`
+      at all, so rapid jump-jump-jump wall-jump chaining can no longer
+      accidentally toggle flight. Intangible is untouched for now -- still
+      double-tap `fly_descend` (Shift) -- since only flying/wall-jumping
+      was asked about here; moving both fully to mod items is still
+      Phase 8. Updated the HUD flight-status hint text (F to stop /
+      double-Shift to stop) to match -- also caught it was still saying
+      "double-Ctrl" for intangible from before the Shift rebind, missed
+      when that landed. Boot-checked clean. **Not independently
+      confirmed**: the real F keypress itself -- this one can't be
+      exercised through the command-queue channel at all (it's a bare
+      single-action check, nothing stateful to inspect), so it needs your
+      live test more than usual.
 - [x] Battle-mode waypoint lines were using true alpha-blend transparency
       -- same underlying flicker issue as everything else layered on the
       xray cutout system (Godot doesn't depth-sort overlapping alpha-

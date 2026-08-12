@@ -16,17 +16,20 @@ extends CharacterBody3D
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
-## DM-mode movement, both toggled by double-tapping within
-## DOUBLE_TAP_WINDOW_MS. Two separate things: flying (double-jump) just
-## disables gravity/normal jump for direct vertical control; intangible
-## (double-fly_descend, i.e. double-Shift) separately disables collision
-## entirely so you can pass through terrain. Either can be on without the
-## other, though intangible without flying would just free-fall through
-## everything with no way to stop, so intangible also uses the same direct
-## vertical control flying does. fly_descend shares its key with "slow"
-## (both Shift) -- while flying that means "descend", while grounded it
-## means "slow walk + ledge safety" (ledge_safety below), context-
-## dependent the same way "jump" already means ground-jump vs. fly-ascend.
+## DM-mode movement. Flying toggles on a single press of "toggle_fly" (F);
+## intangible still toggles on double-tapping "fly_descend" (Shift) --
+## double-tap-jump-to-fly was removed because it fought with wall jumping
+## (rapidly double-tapping jump to chain wall jumps kept accidentally
+## toggling flight instead/as well). Flying just disables gravity/normal
+## jump for direct vertical control; intangible separately disables
+## collision entirely so you can pass through terrain. Either can be on
+## without the other, though intangible without flying would just
+## free-fall through everything with no way to stop, so intangible also
+## uses the same direct vertical control flying does. fly_descend shares
+## its key with "slow" (both Shift) -- while flying that means "descend",
+## while grounded it means "slow walk + ledge safety" (ledge_safety
+## below), context-dependent the same way "jump" already means ground-jump
+## vs. fly-ascend.
 @export var FLY_SPEED: float = 6.0
 const DOUBLE_TAP_WINDOW_MS := 350
 var is_flying: bool = false
@@ -120,10 +123,9 @@ func _input(event: InputEvent) -> void:
 	# of this script knowing about DevConsole (or any other UI) directly.
 	if InputController.is_captured():
 		return
-	if event.is_action_pressed("jump") and not event.is_echo():
-		if InputController.was_double_tapped("jump", DOUBLE_TAP_WINDOW_MS):
-			is_flying = not is_flying
-			if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
+	if event.is_action_pressed("toggle_fly") and not event.is_echo():
+		is_flying = not is_flying
+		if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
 
 	if event.is_action_pressed("fly_descend") and not event.is_echo():
 		if InputController.was_double_tapped("fly_descend", DOUBLE_TAP_WINDOW_MS):
