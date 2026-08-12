@@ -779,12 +779,36 @@ execution order:
 
 ## Phase 8 -- Movement items (mod items, replacing double-tap gestures)
 
-- [ ] Move flight and "dig"/intangible movement out of built-in
-      double-tap key detection entirely and into **mod items** (e.g. a
-      "Wings" item, a "Phasing Gloves" item) with their own speed stats.
-      Equipping/activating one grants that movement mode; switching which
-      one's active switches movement mode and speed. Directly enables the
-      Phase 1 battle-mode-movement-uses-equipped-item-speed behavior.
+- [x] Moved flight and "dig"/intangible movement out of built-in key
+      detection entirely (the F-key/double-tap-Shift toggles from earlier
+      this session are GONE, not just the original double-tap-jump) and
+      into **mod items** -- `WingsItem`/`PhasingGlovesItem`
+      (`scripts/items/wings_item.gd`/`phasing_gloves_item.gd`), each with
+      their own `movement_speed` stat. Added `movement_mode`/
+      `movement_speed` to `BaseItem` itself (`""`/`0.0` by default, not a
+      hardcoded enum -- any string works, so mod-provided items can grant
+      new modes too) since nothing like this existed on it before.
+      `player_blob_ctrl.gd` now computes `is_flying`/`is_intangible` fresh
+      every physics frame from `_movement_item(mode)`, checking both
+      hands' `held_item.movement_mode` -- equipping grants the mode for as
+      long as it stays equipped, switching which one's equipped (in
+      either hand) switches mode and speed automatically, no explicit
+      "switch" logic needed since it's just whatever's currently held.
+      Directly enables the Phase 1 note about battle-mode movement speed
+      coming from whatever's equipped. Registered both as built-in tools
+      in `ItemCatalog._tool_items()` (placeholder flat-color icons, no
+      dedicated 3D model yet). Removed the now-dead `toggle_fly` input
+      action from `project.godot`; `fly_descend` (Shift) stays, still
+      needed for the hold-to-descend vertical control.
+    - Verified live via the command queue (`hold wings`/`hold
+      phasing_gloves`): holding Jump with Wings equipped climbs steadily
+      (9.26 -> 20.56 over 2s); with Phasing Gloves equipped, walking
+      toward the known wall near spawn (which every earlier test this
+      session stopped at ~x=-32.75) instead passes straight through it to
+      x=-46; switching Wings back in mid-air while still airborne
+      immediately restores climb control; unequipping (holding a plain
+      block item instead) immediately restores normal gravity. Boot-
+      checked clean.
 - [ ] Enemy spawn eggs: "we do have the enemy slime AI so we can add in
       enemy spawn eggs with not too much effort" -- a DM item that spawns
       a `blob_ai_resource.gd`-driven enemy on use.

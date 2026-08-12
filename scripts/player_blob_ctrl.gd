@@ -16,24 +16,24 @@ extends CharacterBody3D
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
-## DM-mode movement. Flying toggles on a single press of "toggle_fly" (F);
-## intangible still toggles on double-tapping "fly_descend" (Shift) --
-## double-tap-jump-to-fly was removed because it fought with wall jumping
-## (rapidly double-tapping jump to chain wall jumps kept accidentally
-## toggling flight instead/as well). Flying just disables gravity/normal
-## jump for direct vertical control; intangible separately disables
-## collision entirely so you can pass through terrain. Either can be on
-## without the other, though intangible without flying would just
-## free-fall through everything with no way to stop, so intangible also
-## uses the same direct vertical control flying does. fly_descend shares
-## its key with "slow" (both Shift) -- while flying that means "descend",
-## while grounded it means "slow walk + ledge safety" (ledge_safety
-## below), context-dependent the same way "jump" already means ground-jump
-## vs. fly-ascend.
-@export var FLY_SPEED: float = 6.0
-const DOUBLE_TAP_WINDOW_MS := 350
-var is_flying: bool = false
-var is_intangible: bool = false
+## DM-mode movement (Phase 8): flying/intangible are no longer built-in
+## key toggles at all -- they're granted by equipping a movement item
+## (WingsItem/PhasingGlovesItem, scripts/items/) in either hand, for as
+## long as it stays equipped. Replaced the earlier F-key/double-tap-Shift
+## toggles entirely (see _movement_item() below) -- also directly enables
+## the Phase 1 note about battle-mode movement speed coming from whatever
+## item's equipped, since each movement item carries its own
+## movement_speed stat now instead of one shared constant. Flying disables
+## gravity/normal jump for direct vertical control; intangible separately
+## disables collision entirely so you can pass through terrain. Either can
+## be on without the other (equip both at once, one per hand), though
+## intangible without flying would just free-fall through everything with
+## no way to stop, so intangible also uses the same direct vertical
+## control flying does. fly_descend (Shift) shares its key with "slow" --
+## while flying/intangible that means "descend", while grounded it means
+## "slow walk + ledge safety" (ledge_safety below), context-dependent the
+## same way "jump" already means ground-jump vs. fly-ascend.
+@export var FLY_SPEED: float = 6.0  ## fallback only, used if a movement item somehow has no speed of its own
 
 ## Easter egg / dogfood test of InputController.register_sequence(): up up
 ## down down left right left right (secondary-click, "B") (primary-click,
@@ -117,21 +117,24 @@ func _on_sequence_matched(sequence_name: String) -> void:
 	if sequence_name == KONAMI_SEQUENCE_NAME:
 		die()
 
+## Whichever hand currently holds an item granting `mode` ("flying" or
+## "intangible"), or null if neither does -- see the class doc comment
+## above for why this replaced the old key-toggle flags entirely.
+func _movement_item(mode: String) -> BaseItem:
+	var right = two_handed.right_hand.held_item if two_handed.right_hand else null
+	if right and right.movement_mode == mode:
+		return right
+	var left = two_handed.left_hand.held_item if two_handed.left_hand else null
+	if left and left.movement_mode == mode:
+		return left
+	return null
+
 func _input(event: InputEvent) -> void:
 	# InputController.is_captured(): true while the dev console, an
 	# inventory/menu, etc. has exclusive input -- one shared check instead
 	# of this script knowing about DevConsole (or any other UI) directly.
 	if InputController.is_captured():
 		return
-	if event.is_action_pressed("toggle_fly") and not event.is_echo():
-		is_flying = not is_flying
-		if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
-
-	if event.is_action_pressed("fly_descend") and not event.is_echo():
-		if InputController.was_double_tapped("fly_descend", DOUBLE_TAP_WINDOW_MS):
-			is_intangible = not is_intangible
-			if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
-
 	mover.handle_immediate_input(event)
 	basic_jumper.handle_immediate_input(event)
 	#wall_jump.handle_immediate_input(event)
@@ -155,15 +158,27 @@ func _physics_process(delta: float) -> void:
 	if should_fall:
 		friction = SPEED_DECAY_AIR
 
+	var flying_item := _movement_item("flying")
+	var intangible_item := _movement_item("intangible")
+	var is_flying := flying_item != null
+	var is_intangible := intangible_item != null
 	var no_gravity := is_flying or is_intangible
 	if no_gravity:
+		# Whichever item actually grants the current movement mode supplies
+		# its own speed; FLY_SPEED is only a fallback for a movement item
+		# that somehow has speed 0.
+		var fly_speed: float = FLY_SPEED
+		if flying_item and flying_item.movement_speed > 0.0:
+			fly_speed = flying_item.movement_speed
+		elif intangible_item and intangible_item.movement_speed > 0.0:
+			fly_speed = intangible_item.movement_speed
 		friction = SPEED_DECAY_AIR
 		var vertical := 0.0
 		if InputController.is_action_pressed("jump"):
-			vertical += FLY_SPEED
+			vertical += fly_speed
 		if InputController.is_action_pressed("fly_descend"):
-			vertical -= FLY_SPEED
-		sv_xyz.y = move_toward(sv_xyz.y, vertical, FLY_SPEED * 4.0 * delta)
+			vertical -= fly_speed
+		sv_xyz.y = move_toward(sv_xyz.y, vertical, fly_speed * 4.0 * delta)
 	else:
 		sv_xyz = faller.apply_gravity(sv_xyz, self, delta)
 
@@ -214,6 +229,11 @@ func _physics_process(delta: float) -> void:
 
 	if hud_node:
 		hud_node.update_stamina_ui(mover.sprint_time_limit-mover.sprint_elapsed, mover.sprint_time_limit)
+		# Every frame, not just on change -- no_gravity is now computed
+		# fresh each frame from equipped items rather than a toggled flag,
+		# so there's no discrete "just changed" moment to hook; matches how
+		# update_stamina_ui above already runs unconditionally every frame.
+		hud_node.update_flight_status(is_flying, is_intangible)
 
 	if is_intangible:
 		# No collision at all -- pass straight through terrain.

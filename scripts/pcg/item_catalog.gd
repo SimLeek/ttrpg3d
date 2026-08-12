@@ -19,6 +19,8 @@ const BLOCK_PLACER_SCRIPT := preload("res://scripts/items/voxelitem.gd")
 const STRUCTURE_SAVER_SCRIPT := preload("res://scripts/items/structure_saver_item.gd")
 const STRUCTURE_PLACER_SCRIPT := preload("res://scripts/items/structure_placer_item.gd")
 const PLANE_SELECTOR_SCRIPT := preload("res://scripts/items/plane_selector_item.gd")
+const WINGS_SCRIPT := preload("res://scripts/items/wings_item.gd")
+const PHASING_GLOVES_SCRIPT := preload("res://scripts/items/phasing_gloves_item.gd")
 
 static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary]:
 	# Mod-registered voxels get appended to the library (assigning them an
@@ -74,6 +76,22 @@ static func _tool_items() -> Array[Dictionary]:
 			"icon": _solid_icon(Color(1.0, 0.85, 0.2)),
 			"item_script": PLANE_SELECTOR_SCRIPT,
 			"hint": "Click 3 points (not in a line) to define a build plane",
+		},
+		{
+			"kind": "tool",
+			"id": "tool_wings",
+			"name": "Wings",
+			"icon": _solid_icon(Color(0.6, 0.9, 1.0)),
+			"item_script": WINGS_SCRIPT,
+			"hint": "Equip: fly (Jump ascends, Shift descends). Unequip to stop.",
+		},
+		{
+			"kind": "tool",
+			"id": "tool_phasing_gloves",
+			"name": "Phasing Gloves",
+			"icon": _solid_icon(Color(0.9, 0.4, 0.9)),
+			"item_script": PHASING_GLOVES_SCRIPT,
+			"hint": "Equip: pass through terrain (Jump/Shift move vertically). Unequip to stop.",
 		},
 	]
 

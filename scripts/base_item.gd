@@ -9,6 +9,18 @@ signal item_used(pressure: float)
 @export var item_name: String = "Base Item"
 @export var can_use: bool = true
 
+## Phase 8: movement mode this item grants for as long as it's equipped in
+## either hand -- "" (default) means none. player_blob_ctrl.gd checks both
+## hands' held_item.movement_mode each physics frame rather than a
+## built-in double-tap/key toggle (see WingsItem/PhasingGlovesItem for the
+## two current values, "flying"/"intangible" -- any string works, this
+## isn't a hardcoded enum, so mods can add new movement items too).
+## movement_speed is that item's own vertical-control speed for the mode
+## it grants (each movement item has its own stat rather than sharing one
+## constant).
+@export var movement_mode: String = ""
+@export var movement_speed: float = 0.0
+
 ## Control hint (e.g. structure save/place's P/G/R keys), set by
 ## ItemCatalog.instantiate_item() from the catalog entry's "hint". Shown as
 ## a 2D hover tooltip in the inventory menu (scripts/ui/player_inventory.gd)
