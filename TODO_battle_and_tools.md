@@ -941,6 +941,61 @@ execution order:
       `_physics_process()` tick to have a valid target at all. Neither
       is a real bug -- just needs a beat between `hold` and
       `unit_use_item`, and a target that isn't underfoot.
+- [x] **Found live, fixed**: "if I place them then it works, but if I
+      save the world and come back to it, then the lights no longer turn
+      on -- might need some sort of discovery somehow." `LightRegistry`'s
+      tracked-position list was pure runtime state, never itself saved --
+      a light placed one session was simply never in the list again after
+      a relaunch/world reload.
+    - First attempt: listen to `VoxelTerrain.block_loaded` and scan each
+      loaded chunk's voxels for `LIGHT_LEVELS` matches. Worked, but
+      caused noticeable movement pauses (checking
+      `get_data_block_size()^3` voxels per loaded chunk is real cost),
+      and surfaced a separate, more serious bug live: mod-registered
+      voxel ids are assigned `library.models.size()` at registration
+      time (`scripts/modding/mod_manager.gd`), so this session's Glass
+      (24)/Light (25) built-in additions shifted what those ids mean in
+      any older saved world that had a mod voxel occupying those exact
+      slots -- the scan found dozens of what used to be the `wood_plank`
+      mod's block in an existing saved world, now misread as "Light"
+      purely from the id collision, about to spawn real point-lights at
+      each one. Confirmed with you as low-impact (only wood planks
+      affected, not many placed) and OK to leave for now, but not
+      something to build more voxel-id-based discovery on top of --
+      matches the already-known, still-unfixed "Missing-mod-blocks
+      warning" issue further down in Phase 9's list, just newly
+      triggered by adding built-in blocks rather than only by
+      disabling/reordering mods.
+    - Replaced with your own suggested approach: an explicit per-world
+      save file (`user://world_saves/<world_id>_lights.json`,
+      `LightRegistry._save_lights_for_world()`/`_load_lights_for_world()`)
+      -- `register_light_block()` and `_prune_removed_lights()` both
+      write it; switching worlds (polling `WorldManager.current_world`'s
+      id, same pattern `WorldManager` itself already uses) loads it. No
+      voxel scanning at all, so no id-collision risk and no per-chunk
+      cost.
+    - **Second bug found mid-testing this fix**: `_prune_removed_lights()`
+      re-validates every tracked position against live terrain data each
+      refresh, but `VoxelTool.get_voxel()` on a position whose chunk
+      isn't currently *loaded* (out of streaming range, or mid-world-switch
+      while the old terrain is tearing down) just reads back a
+      default/empty value rather than erroring -- was wrongly concluding
+      "not a light anymore" and persisting that (empty) result,
+      corrupting the very save file this exists to protect, confirmed
+      live when a light placed in a fresh world vanished from the
+      registry the moment I switched away and back. Fixed by gating each
+      check on `VoxelTerrain.has_data_block(voxel_to_data_block(pos))`
+      first -- an unloaded position is left alone (assumed still valid)
+      rather than treated as proof the block is gone. Also means this
+      same bug would have silently lost track of lights just from a
+      player walking far enough away for their chunk to stream out
+      normally, not only on world switch -- worth remembering if lights
+      seem to "reset" in other circumstances later.
+    - Live-verified full round trip: placed a light in a fresh world
+      (`tracked=1`, confirmed written to the world's `_lights.json`),
+      switched to a different world (`tracked=0`, correct isolation, no
+      cross-world leakage), switched back (`tracked=1` again, loaded
+      from the save file, file still intact).
 
 ## Phase 8 -- Movement items (mod items, replacing double-tap gestures)
 

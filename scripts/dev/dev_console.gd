@@ -294,6 +294,23 @@ func _cmd_set_light_mode(args: Array[String]) -> String:
 	GameSettings.set_light_block_mode(mode)
 	return "light_block_mode=%d" % GameSettings.light_block_mode
 
+## Testing: reads the raw voxel id at an exact WORLD-space coordinate
+## (same space "point"'s world_pos reports), no raycast/aim involved --
+## for verifying exactly what's at a specific reported position.
+func _cmd_get_voxel_at(args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not ("voxel_terrain" in player) or not player.voxel_terrain:
+		return "no player/voxel_terrain"
+	if args.size() < 3:
+		return "usage: get_voxel_at x y z"
+	var terrain: VoxelTerrain = player.voxel_terrain
+	var vt := terrain.get_voxel_tool()
+	var world := Vector3(args[0].to_float(), args[1].to_float(), args[2].to_float())
+	var local: Vector3 = world - terrain.global_position
+	var pos := Vector3i(floori(local.x), floori(local.y), floori(local.z))
+	vt.set_channel(VoxelBuffer.CHANNEL_TYPE)
+	return "voxel at local=%s (world=%s) = %d" % [pos, world, vt.get_voxel(pos)]
+
 ## Testing: overwrites whatever voxel the player's currently aiming at
 ## with `voxel_id` -- unlike unit_use_item/hold's placer flow (which
 ## always targets the *adjacent empty* cell next to a hit, never the hit
