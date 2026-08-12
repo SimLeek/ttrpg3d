@@ -49,18 +49,19 @@ func _build_flight_label() -> void:
 
 ## Called from player_blob_ctrl.gd every physics frame (like
 ## update_stamina_ui above) -- flying/intangible (Phase 8) are granted by
-## equipping WingsItem/PhasingGlovesItem rather than a key toggle now, so
-## there's no discrete "just toggled" moment, just whatever's currently
-## equipped.
+## having Wings/Phasing Gloves anywhere in the hotbar (not equipped in a
+## hand -- both hands stay free for other items), toggled by F/double-Ctrl.
+## Called every frame rather than only on toggle since the mode can also
+## turn itself off if the granting item leaves the hotbar.
 func update_flight_status(is_flying: bool, is_intangible: bool) -> void:
 	if not is_flying and not is_intangible:
 		_flight_label.visible = false
 		return
 	var parts: Array[String] = []
 	if is_flying:
-		parts.append("FLYING (unequip Wings to stop)")
+		parts.append("FLYING (F to stop)")
 	if is_intangible:
-		parts.append("INTANGIBLE (unequip Phasing Gloves to stop)")
+		parts.append("INTANGIBLE (double-Ctrl to stop)")
 	_flight_label.text = "   |   ".join(parts)
 	_flight_label.add_theme_color_override("font_color", Color(1.0, 0.5, 1.0) if is_intangible else Color(0.3, 1.0, 1.0))
 	_flight_label.visible = true

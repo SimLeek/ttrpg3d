@@ -61,6 +61,18 @@ func _refresh_items() -> void:
 	_rebuild_inventory_grid()
 	_equip_selected_item()
 
+## _input(), not _unhandled_input(): needs to run in the same early phase
+## pause_menu.gd's own Escape check does (Node._input(), before GUI
+## dispatch/_unhandled_input()), or pause_menu.gd would already have
+## reacted to Escape before this ever saw it -- same reasoning as
+## dev_console_ui.gd's Escape handling. "Esc should exit the tab menu (and
+## f1 and every other menu) to get back to playing, not just pause."
+func _input(event: InputEvent) -> void:
+	if _inventory_root.visible and event is InputEventKey and event.pressed \
+			and event.keycode == KEY_ESCAPE and not event.is_echo():
+		_set_inventory_visible(false)
+		get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_inventory"):
 		_set_inventory_visible(not _inventory_root.visible)
@@ -239,6 +251,22 @@ func _find_item_entry(id: String):
 			return entry
 	return null
 
+## Phase 8: "if you have it in your inventory (hot bar now or later
+## inventory) you can press f to fly... you shouldn't have to put it in
+## your main or off hand. That allows players to use spellbooks or other
+## items while flying." player_blob_ctrl.gd calls this instead of
+## checking a held item -- scans the hotbar (the closest thing to a real
+## "inventory" that exists before Phase 5's DM/player stock split; will
+## extend to the fuller inventory once that lands) for an item whose
+## catalog entry's "movement_mode" matches. Returns the catalog entry
+## (for its "movement_speed") or {} if nothing in the hotbar grants it.
+func find_movement_item_entry(mode: String) -> Dictionary:
+	for id in _hotbar_item_ids:
+		var entry = _find_item_entry(id)
+		if entry and entry.get("movement_mode", "") == mode:
+			return entry
+	return {}
+
 ## Native Control tooltip (built-in engine popup, positioned near the mouse
 ## automatically on hover) -- name plus the item's control hint, if any.
 ## Used for both hotbar slots and the full inventory grid so players can
@@ -321,9 +349,20 @@ func _rebuild_inventory_grid() -> void:
 
 func _on_inventory_slot_input(event: InputEvent, id: String) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		while _hotbar_item_ids.size() <= _selected_slot:
-			_hotbar_item_ids.append(_items[0].id)
-		_hotbar_item_ids[_selected_slot] = id
-		_rebuild_hotbar_icons()
+		set_hotbar_slot(_selected_slot, id)
+
+## Assigns `id` into hotbar slot `index` -- same effect as clicking an
+## item in the full inventory grid while that slot's selected. Public (not
+## `_`-prefixed) specifically so DevConsole's unit_set_hotbar_slot command
+## can drive it directly -- there'd be no other way to test hotbar-
+## possession-gated behavior (Phase 8 movement items) through the command
+## queue, since `hold <item>` equips a hand directly and never touches the
+## hotbar array at all.
+func set_hotbar_slot(index: int, id: String) -> void:
+	while _hotbar_item_ids.size() <= index:
+		_hotbar_item_ids.append(_items[0].id)
+	_hotbar_item_ids[index] = id
+	_rebuild_hotbar_icons()
+	if index == _selected_slot:
 		_show_selected_name()
 		_equip_selected_item()

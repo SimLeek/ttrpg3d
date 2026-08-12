@@ -384,6 +384,59 @@ func _cmd_unit_jump(_args: Array[String]) -> String:
 	player.basic_jumper.request_jump()
 	return "jump requested"
 
+## unit_toggle_fly/unit_toggle_intangible: F/double-Ctrl are ALSO real
+## InputEvents (player_blob_ctrl.gd's _input()), same event-vs-polling gap
+## as unit_jump above. Call try_toggle_flying()/try_toggle_intangible()
+## directly -- the same methods _input() calls -- rather than just setting
+## is_flying/is_intangible, so this exercises the real hotbar-possession
+## gate too, not a bypass of it.
+func _cmd_unit_toggle_fly(_args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not player.has_method("try_toggle_flying"):
+		return "no player"
+	player.try_toggle_flying()
+	return "is_flying=%s" % player.is_flying
+
+func _cmd_unit_toggle_intangible(_args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not player.has_method("try_toggle_intangible"):
+		return "no player"
+	player.try_toggle_intangible()
+	return "is_intangible=%s" % player.is_intangible
+
+## unit_set_hotbar_slot <index> <item_id>: puts `item_id` into hotbar slot
+## `index` -- same effect as clicking an item in the inventory grid while
+## that slot's selected. `hold <item>` (existing command) equips a hand
+## directly and never touches the hotbar array, so it can't test Phase 8's
+## hotbar-possession-gated movement items at all -- this is the only way
+## to get an item into the hotbar through the command queue.
+func _cmd_unit_set_hotbar_slot(args: Array[String]) -> String:
+	if args.size() < 2:
+		return "usage: unit_set_hotbar_slot <index> <item_id>"
+	var inv := get_tree().get_first_node_in_group("player_inventory")
+	if not inv:
+		return "no player_inventory"
+	inv.set_hotbar_slot(args[0].to_int(), args[1])
+	return "set hotbar slot %s to %s" % [args[0], args[1]]
+
+## unit_use_item [left|right]: calls HandController.use_hand(1.0) directly
+## -- primary_item_click/secondary_item_click are ALSO real InputEvents
+## (two_handed_resource.gd::handle_immediate_input(), from
+## player_blob_ctrl.gd's _input()), same event-vs-polling gap as
+## unit_jump above, so there'd be no way to test click-triggered items
+## (the enemy spawn egg, block placement, punching, ...) through the
+## command queue without this.
+func _cmd_unit_use_item(args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not ("two_handed" in player) or not player.two_handed:
+		return "no player/two_handed"
+	var hand_name: String = args[0] if not args.is_empty() else "right"
+	var hand = player.two_handed.left_hand if hand_name == "left" else player.two_handed.right_hand
+	if not hand:
+		return "no such hand: %s" % hand_name
+	hand.use_hand(1.0)
+	return "used %s hand's item" % hand_name
+
 ## unit_input_press/unit_input_release <action>: Godot's own
 ## Input.action_press()/action_release() -- a software-held action state,
 ## not a single event, so is_action_pressed() reads it as held across

@@ -20,15 +20,25 @@ func _ready() -> void:
 	_build_settings_screen()
 
 func _input(event):
-	# Both checks matter, not just DevConsole.is_focused: Node._input() order
-	# between separate nodes isn't guaranteed, and set_input_as_handled()
-	# doesn't stop other nodes' _input() from still running this frame --
-	# if dev_console_ui.gd's _input() happens to run before this one, it
-	# already flipped is_focused to false by the time we get here even
-	# though IT owned this exact keypress. is_input_handled() catches that
-	# case regardless of ordering; is_focused alone catches the (also
-	# possible) reverse ordering.
-	if event.is_action_pressed("pause") and not DevConsole.is_focused and not get_viewport().is_input_handled():
+	if not event.is_action_pressed("pause") or DevConsole.is_focused:
+		return
+	# Escape always closes the pause menu once it's open, regardless of
+	# InputController.is_captured() below -- that'll read true here purely
+	# because handle_pause() itself requested capture ("pause_menu") while
+	# open, not because anything ELSE is blocking it.
+	if get_tree().paused:
+		handle_pause()
+		return
+	# Not paused yet: don't steal Escape from whatever else currently has
+	# exclusive input (inventory, DM world menu, dev console, ...) -- "esc
+	# should exit the tab menu (and f1 and every other menu) to get back
+	# to playing, not just pause." Those menus each handle their own
+	# Escape-to-close (see player_inventory.gd/dm_world_menu.gd); this
+	# just needs to not race them for it. is_input_handled() is still the
+	# belt-and-suspenders check for whichever of us happens to run first
+	# in Node._input() order this frame (not guaranteed, same reasoning as
+	# the dev-console case this replaced).
+	if not InputController.is_captured() and not get_viewport().is_input_handled():
 		handle_pause()
 
 func handle_pause():

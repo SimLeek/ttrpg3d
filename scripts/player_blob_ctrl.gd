@@ -16,24 +16,31 @@ extends CharacterBody3D
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
-## DM-mode movement (Phase 8): flying/intangible are no longer built-in
-## key toggles at all -- they're granted by equipping a movement item
-## (WingsItem/PhasingGlovesItem, scripts/items/) in either hand, for as
-## long as it stays equipped. Replaced the earlier F-key/double-tap-Shift
-## toggles entirely (see _movement_item() below) -- also directly enables
-## the Phase 1 note about battle-mode movement speed coming from whatever
-## item's equipped, since each movement item carries its own
-## movement_speed stat now instead of one shared constant. Flying disables
-## gravity/normal jump for direct vertical control; intangible separately
-## disables collision entirely so you can pass through terrain. Either can
-## be on without the other (equip both at once, one per hand), though
+## DM-mode movement (Phase 8): flying/intangible are granted by having a
+## movement item (WingsItem/PhasingGlovesItem, scripts/items/) anywhere in
+## the hotbar -- NOT equipped in a hand. "You shouldn't have to put it in
+## your main or off hand. That allows players to use spellbooks or other
+## items while flying (and it allows me to place blocks while flying)."
+## F (single press) toggles flying; double-tapping Ctrl toggles intangible
+## -- both no-op if the matching item isn't currently in the hotbar (see
+## _input()), and both force back off if the item leaves the hotbar while
+## active (see _physics_process()). Each movement item carries its own
+## movement_speed stat (found via player_inventory.gd's catalog lookup,
+## not a live item instance -- there's no instance to read from anymore
+## since nothing needs to be equipped), directly enabling the Phase 1 note
+## about battle-mode movement speed coming from whatever's granting the
+## mode instead of one shared constant. Flying disables gravity/normal
+## jump for direct vertical control; intangible separately disables
+## collision entirely so you can pass through terrain. Either can be on
+## without the other (have both items in the hotbar at once), though
 ## intangible without flying would just free-fall through everything with
 ## no way to stop, so intangible also uses the same direct vertical
-## control flying does. fly_descend (Shift) shares its key with "slow" --
-## while flying/intangible that means "descend", while grounded it means
-## "slow walk + ledge safety" (ledge_safety below), context-dependent the
-## same way "jump" already means ground-jump vs. fly-ascend.
+## control flying does. fly_descend (Shift) still means "descend" while
+## either mode is active, same key "slow"/ledge_safety use while grounded.
 @export var FLY_SPEED: float = 6.0  ## fallback only, used if a movement item somehow has no speed of its own
+const DOUBLE_TAP_WINDOW_MS := 350
+var is_flying: bool = false
+var is_intangible: bool = false
 
 ## Easter egg / dogfood test of InputController.register_sequence(): up up
 ## down down left right left right (secondary-click, "B") (primary-click,
@@ -117,17 +124,31 @@ func _on_sequence_matched(sequence_name: String) -> void:
 	if sequence_name == KONAMI_SEQUENCE_NAME:
 		die()
 
-## Whichever hand currently holds an item granting `mode` ("flying" or
-## "intangible"), or null if neither does -- see the class doc comment
-## above for why this replaced the old key-toggle flags entirely.
-func _movement_item(mode: String) -> BaseItem:
-	var right = two_handed.right_hand.held_item if two_handed.right_hand else null
-	if right and right.movement_mode == mode:
-		return right
-	var left = two_handed.left_hand.held_item if two_handed.left_hand else null
-	if left and left.movement_mode == mode:
-		return left
-	return null
+## The hotbar's catalog entry for a movement item granting `mode`
+## ("flying" or "intangible"), or {} if nothing in the hotbar grants it --
+## see the class doc comment above for why this checks the hotbar rather
+## than a held item. player_inventory.gd, not two_handed_resource.gd, is
+## the source of truth now.
+func _movement_entry(mode: String) -> Dictionary:
+	var inv := get_tree().get_first_node_in_group("player_inventory")
+	if not inv:
+		return {}
+	return inv.find_movement_item_entry(mode)
+
+## No-op if the hotbar doesn't currently have a flight item -- shared by
+## _input() and DevConsole's unit_toggle_fly test command, so the test
+## exercises the exact same possession-gating logic rather than a
+## reimplementation of it.
+func try_toggle_flying() -> void:
+	if not _movement_entry("flying").is_empty():
+		is_flying = not is_flying
+
+## Same as try_toggle_flying() but for intangible -- callers are
+## responsible for their own double-tap check (see _input() below); this
+## just does the possession-gated toggle itself.
+func try_toggle_intangible() -> void:
+	if not _movement_entry("intangible").is_empty():
+		is_intangible = not is_intangible
 
 func _input(event: InputEvent) -> void:
 	# InputController.is_captured(): true while the dev console, an
@@ -135,6 +156,13 @@ func _input(event: InputEvent) -> void:
 	# of this script knowing about DevConsole (or any other UI) directly.
 	if InputController.is_captured():
 		return
+	if event.is_action_pressed("toggle_fly") and not event.is_echo():
+		try_toggle_flying()
+
+	if event.is_action_pressed("toggle_intangible") and not event.is_echo():
+		if InputController.was_double_tapped("toggle_intangible", DOUBLE_TAP_WINDOW_MS):
+			try_toggle_intangible()
+
 	mover.handle_immediate_input(event)
 	basic_jumper.handle_immediate_input(event)
 	#wall_jump.handle_immediate_input(event)
@@ -158,20 +186,27 @@ func _physics_process(delta: float) -> void:
 	if should_fall:
 		friction = SPEED_DECAY_AIR
 
-	var flying_item := _movement_item("flying")
-	var intangible_item := _movement_item("intangible")
-	var is_flying := flying_item != null
-	var is_intangible := intangible_item != null
+	# Force back off if the granting item left the hotbar while active --
+	# e.g. dragged it out, or it was consumed/dropped by some future
+	# system -- rather than leaving flight/intangibility stuck on with
+	# nothing backing it.
+	var flying_entry := _movement_entry("flying") if is_flying else {}
+	if is_flying and flying_entry.is_empty():
+		is_flying = false
+	var intangible_entry := _movement_entry("intangible") if is_intangible else {}
+	if is_intangible and intangible_entry.is_empty():
+		is_intangible = false
+
 	var no_gravity := is_flying or is_intangible
 	if no_gravity:
 		# Whichever item actually grants the current movement mode supplies
 		# its own speed; FLY_SPEED is only a fallback for a movement item
 		# that somehow has speed 0.
 		var fly_speed: float = FLY_SPEED
-		if flying_item and flying_item.movement_speed > 0.0:
-			fly_speed = flying_item.movement_speed
-		elif intangible_item and intangible_item.movement_speed > 0.0:
-			fly_speed = intangible_item.movement_speed
+		if is_flying and flying_entry.get("movement_speed", 0.0) > 0.0:
+			fly_speed = flying_entry.movement_speed
+		elif is_intangible and intangible_entry.get("movement_speed", 0.0) > 0.0:
+			fly_speed = intangible_entry.movement_speed
 		friction = SPEED_DECAY_AIR
 		var vertical := 0.0
 		if InputController.is_action_pressed("jump"):

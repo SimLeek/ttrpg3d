@@ -21,6 +21,7 @@ const STRUCTURE_PLACER_SCRIPT := preload("res://scripts/items/structure_placer_i
 const PLANE_SELECTOR_SCRIPT := preload("res://scripts/items/plane_selector_item.gd")
 const WINGS_SCRIPT := preload("res://scripts/items/wings_item.gd")
 const PHASING_GLOVES_SCRIPT := preload("res://scripts/items/phasing_gloves_item.gd")
+const ENEMY_SPAWN_EGG_SCRIPT := preload("res://scripts/items/enemy_spawn_egg_item.gd")
 
 static func get_available_items(library: VoxelBlockyLibrary) -> Array[Dictionary]:
 	# Mod-registered voxels get appended to the library (assigning them an
@@ -83,7 +84,16 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Wings",
 			"icon": _solid_icon(Color(0.6, 0.9, 1.0)),
 			"item_script": WINGS_SCRIPT,
-			"hint": "Equip: fly (Jump ascends, Shift descends). Unequip to stop.",
+			# Mirrors WingsItem's own defaults (set in _ready() once
+			# actually instantiated) -- duplicated here too so
+			# player_inventory.gd can check "do I have a flight item in
+			# my hotbar" from catalog data alone, without instantiating
+			# anything just to ask. Not equip-gated (see
+			# player_blob_ctrl.gd) -- having it anywhere in the hotbar
+			# is enough, F toggles flying on/off.
+			"movement_mode": "flying",
+			"movement_speed": 6.0,
+			"hint": "In hotbar: F toggles flying (Jump ascends, Shift descends)",
 		},
 		{
 			"kind": "tool",
@@ -91,7 +101,17 @@ static func _tool_items() -> Array[Dictionary]:
 			"name": "Phasing Gloves",
 			"icon": _solid_icon(Color(0.9, 0.4, 0.9)),
 			"item_script": PHASING_GLOVES_SCRIPT,
-			"hint": "Equip: pass through terrain (Jump/Shift move vertically). Unequip to stop.",
+			"movement_mode": "intangible",
+			"movement_speed": 6.0,
+			"hint": "In hotbar: double-Ctrl toggles passing through terrain (Jump/Shift move vertically)",
+		},
+		{
+			"kind": "tool",
+			"id": "tool_enemy_spawn_egg",
+			"name": "Enemy Spawn Egg",
+			"icon": _solid_icon(Color(0.85, 0.2, 0.2)),
+			"item_script": ENEMY_SPAWN_EGG_SCRIPT,
+			"hint": "Click to spawn a hostile enemy where you're aiming",
 		},
 	]
 

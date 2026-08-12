@@ -30,6 +30,18 @@ func _ready() -> void:
 	_root.visible = false
 
 
+## _input(), not _unhandled_input(): needs to run in the same early phase
+## pause_menu.gd's own Escape check does, or pause_menu.gd would already
+## have reacted to Escape before this ever saw it -- same reasoning as
+## dev_console_ui.gd/player_inventory.gd's Escape handling. "Esc should
+## exit the tab menu (and f1 and every other menu) to get back to
+## playing, not just pause."
+func _input(event: InputEvent) -> void:
+	if _root.visible and event is InputEventKey and event.pressed \
+			and event.keycode == KEY_ESCAPE and not event.is_echo():
+		_set_menu_visible(false)
+		get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_dm_menu"):
 		_set_menu_visible(not _root.visible)

@@ -780,41 +780,125 @@ execution order:
 ## Phase 8 -- Movement items (mod items, replacing double-tap gestures)
 
 - [x] Moved flight and "dig"/intangible movement out of built-in key
-      detection entirely (the F-key/double-tap-Shift toggles from earlier
-      this session are GONE, not just the original double-tap-jump) and
-      into **mod items** -- `WingsItem`/`PhasingGlovesItem`
-      (`scripts/items/wings_item.gd`/`phasing_gloves_item.gd`), each with
-      their own `movement_speed` stat. Added `movement_mode`/
-      `movement_speed` to `BaseItem` itself (`""`/`0.0` by default, not a
-      hardcoded enum -- any string works, so mod-provided items can grant
-      new modes too) since nothing like this existed on it before.
-      `player_blob_ctrl.gd` now computes `is_flying`/`is_intangible` fresh
-      every physics frame from `_movement_item(mode)`, checking both
-      hands' `held_item.movement_mode` -- equipping grants the mode for as
-      long as it stays equipped, switching which one's equipped (in
-      either hand) switches mode and speed automatically, no explicit
-      "switch" logic needed since it's just whatever's currently held.
-      Directly enables the Phase 1 note about battle-mode movement speed
-      coming from whatever's equipped. Registered both as built-in tools
-      in `ItemCatalog._tool_items()` (placeholder flat-color icons, no
-      dedicated 3D model yet). Removed the now-dead `toggle_fly` input
-      action from `project.godot`; `fly_descend` (Shift) stays, still
-      needed for the hold-to-descend vertical control.
-    - Verified live via the command queue (`hold wings`/`hold
-      phasing_gloves`): holding Jump with Wings equipped climbs steadily
-      (9.26 -> 20.56 over 2s); with Phasing Gloves equipped, walking
-      toward the known wall near spawn (which every earlier test this
-      session stopped at ~x=-32.75) instead passes straight through it to
-      x=-46; switching Wings back in mid-air while still airborne
-      immediately restores climb control; unequipping (holding a plain
-      block item instead) immediately restores normal gravity. Boot-
-      checked clean.
-- [ ] Enemy spawn eggs: "we do have the enemy slime AI so we can add in
-      enemy spawn eggs with not too much effort" -- a DM item that spawns
-      a `blob_ai_resource.gd`-driven enemy on use.
+      detection entirely into **mod items** -- `WingsItem`/
+      `PhasingGlovesItem` (`scripts/items/wings_item.gd`/
+      `phasing_gloves_item.gd`), each with their own `movement_speed`
+      stat, `movement_mode`/`movement_speed` added to `BaseItem` itself
+      (`""`/`0.0` by default, any string works -- not a hardcoded enum, so
+      mod items can grant new modes too). **First version equip-gated
+      (hand-equip required), superseded same session** -- see the next
+      entry for why and what actually shipped.
+- [x] "For flying, if you have it in your inventory (hot bar now or later
+      inventory) you can press f to fly, and for phasing you can press
+      double control. You shouldn't have to put it in your main or off
+      hand. That allows players to use spellbooks or other items while
+      flying (and it allows me to place blocks while flying)." Reworked
+      the version above: flying/intangible are no longer granted by
+      *equipping* a movement item at all -- just having it **anywhere in
+      the hotbar** is enough, toggled by **F** (single press, flying) or
+      **double-tap Ctrl** (intangible), both new `project.godot` actions
+      (`toggle_fly`/`toggle_intangible`). Both hands stay completely free
+      for other items the whole time.
+    - `item_catalog.gd`'s Wings/Phasing Gloves entries now also carry
+      `movement_mode`/`movement_speed` (mirroring the item scripts'
+      defaults) so `player_inventory.gd` can answer "do I have a flight
+      item in my hotbar" from catalog data alone --
+      `find_movement_item_entry(mode)` scans `_hotbar_item_ids` (the
+      closest thing to a real "inventory" before Phase 5's stock split
+      lands; will extend to the fuller inventory then). `player_blob_ctrl.gd`
+      no longer reads a held-item instance at all -- `try_toggle_flying()`/
+      `try_toggle_intangible()` (now public, shared between `_input()` and
+      a new `unit_toggle_fly`/`unit_toggle_intangible` dev-console test
+      pair) toggle `is_flying`/`is_intangible` gated on that lookup, and
+      `_physics_process()` force-turns either back off if its item leaves
+      the hotbar while active, rather than leaving it stuck on with
+      nothing backing it.
+    - New test infrastructure needed, twice over: jump and item-use clicks
+      turned out to be event-only too (same event-vs-polling gap
+      `unit_jump`/`unit_input_double_tap` already existed for) --
+      `unit_use_item [left|right]` (calls `HandController.use_hand(1.0)`
+      directly) confirmed the spawn egg below, and
+      `unit_set_hotbar_slot <index> <item_id>` was needed since `hold
+      <item>` equips a hand directly and never touches the hotbar array
+      at all, so it couldn't test hotbar-possession-gated behavior.
+    - Verified live via the command queue: `unit_toggle_fly` with no Wings
+      anywhere stays `is_flying=false`; put Wings in hotbar slot 5
+      (deliberately *not* the selected/equipped slot, to prove hand-equip
+      isn't needed) -- `unit_toggle_fly` now flips on, holding Jump climbs
+      steadily (9.26 -> 20.56 over 2s), toggling again turns it back off
+      and the player falls normally again. Boot-checked clean.
+- [x] Enemy spawn eggs: "we do have the enemy slime AI so we can add in
+      enemy spawn eggs with not too much effort." `EnemySpawnEggItem`
+      (`scripts/items/enemy_spawn_egg_item.gd`) instantiates
+      `NPCs/evil_blob.tscn` wholesale at wherever the player's aiming
+      (`VoxelInteractor.get_placement_position()`, centered in that empty
+      voxel cell; falls back to just in front of the player if nothing's
+      targeted, same reasoning `plane_selector_item.gd`'s own fallback
+      uses) -- the scene's own `evil_blob_ai.gd::_ready()` already does
+      all AI setup itself (finds players via the `"player"` group, calls
+      `blob_ai.setup()`/`set_spawn_position()`) the moment it enters the
+      tree, so the item just needs to instantiate + position + add it to
+      `current_scene`. This is a genuinely new pattern for the codebase --
+      confirmed via research first that nothing previously spawned an NPC
+      scene at runtime at all (`evil_blob.tscn` only ever appeared
+      hand-placed in the training/gym levels).
+    - Registered as a DM-flavored tool in `ItemCatalog` -- no actual DM
+      permission/role gate exists anywhere in this codebase (confirmed via
+      research), "DM item" is convention-only, same as the structure
+      saver/placer/plane selector already are.
+    - **Confirmed live and it's "legit as terrifying as I remember which
+      is awesome"** -- getting hit currently insta-respawns the player
+      (existing death/respawn flow, unrelated to this item) rather than
+      starting a fight; per your own note ("that's for later") this is
+      Phase 11's job, not blocking here.
+    - **Fixed**: my `use_item()` was setting `enemy.global_position`
+      *before* `add_child()`, which errored (`"!is_inside_tree()"`) since
+      `global_position` needs tree membership to resolve. Swapped to local
+      `position` instead -- settable pre-tree, and equivalent to
+      `global_position` here since `current_scene`'s root
+      (`JumpTestLvl` in `voxel_main_world.tscn`) has an identity
+      transform (confirmed by grepping the `.tscn` for a `transform =`
+      line on that node -- there isn't one), so setting it before
+      `add_child()` still means `evil_blob_ai.gd`'s `_ready()`-time
+      `set_spawn_position()` sees the right spot. Re-verified via the
+      command queue (`hold enemy_spawn_egg` -> `unit_use_item right`):
+      the `"!is_inside_tree()"` error is gone, and the spawned enemy's
+      own AI perception loop started firing every physics frame
+      (repeated `"player block hit"` prints from its line-of-sight
+      raycast), confirming it landed in the tree at a valid, in-view
+      position.
+    - **Known rough edge, still not fixed (pre-existing, lower
+      priority)**: `evil_blob.tscn`'s hand nodes
+      (`LeftHandMesh`/`RightHandMesh`) throw `"Node not found: ''"` --
+      `left_hand_gripper.gd`'s `_ready()` calls `get_node(ledge_grabber_path)`
+      with an apparently-unset `ledge_grabber_path` export on those nodes,
+      a pre-existing scene-configuration gap that's simply never been
+      exercised before (nothing ever instantiated this scene at runtime
+      until now). Confirmed again this pass (same backtrace, now sourced
+      from the *spawned* enemy's own hand nodes rather than any player
+      code). Doesn't stop the enemy from working -- worth a follow-up
+      pass but not blocking.
 
 ## Phase 9 -- Misc fixes and polish
 
+- [x] "Esc should exit the tab menu (and f1 and every other menu) to get
+      back to playing, not just pause." Neither `player_inventory.gd`
+      (Tab) nor `dm_world_menu.gd` (F1) had any Escape-handling at all --
+      pressing Escape while either was open did nothing to close it and
+      fell through to `pause_menu.gd`'s own Escape handler instead,
+      opening the pause menu *behind*/*on top of* the still-open menu.
+      Added `_input()` Escape-to-close to both (same reasoning as
+      `dev_console_ui.gd`'s existing Escape handling -- has to be
+      `_input()`, not `_unhandled_input()`, to run in the same early phase
+      `pause_menu.gd`'s own check does).
+    - `pause_menu.gd`'s guard is now `InputController.is_captured()`
+      instead of a per-menu check -- already goes true whenever any of
+      these menus (or the dev console) requests capture, so this needed
+      no new plumbing. The one subtlety: `is_captured()` also reads true
+      while the pause menu itself is open (since `handle_pause()` requests
+      its own capture reason), so the guard only applies while *opening*
+      -- Escape always closes the pause menu once it's already open,
+      regardless of that.
 - [ ] Audit: confirm everything actually uses the Godot input action map
       (`Input.is_action_pressed("...")`) rather than hardcoded
       `event.keycode == KEY_X` checks, so keys stay rebindable. "Haven't
