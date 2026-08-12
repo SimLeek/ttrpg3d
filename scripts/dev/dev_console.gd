@@ -184,11 +184,24 @@ func _cmd_battle(_args: Array[String]) -> String:
 
 func _cmd_mark(_args: Array[String]) -> String:
 	BattleModeManager.mark_current_position()
-	return "marked"
+	return _waypoints_summary()
 
+## Not a plain undo -- see battle_mode_manager.gd's doc comment for the
+## walk-back-then-undo behavior. Reports player position too since which
+## of those two things happened isn't otherwise visible from "undone"
+## alone -- position changing (with waypoint count unchanged) means it
+## walked back; count decreasing means it actually removed one.
 func _cmd_undo(_args: Array[String]) -> String:
 	BattleModeManager.undo_last_waypoint()
-	return "undone"
+	var player := _get_player()
+	var pos_str: String = str(player.global_position) if player else "no player"
+	return "%s pos=%s" % [_waypoints_summary(), pos_str]
+
+func _waypoints_summary() -> String:
+	return "waypoints=%d last=%s" % [
+		BattleModeManager.waypoints.size(),
+		BattleModeManager.waypoints[-1] if not BattleModeManager.waypoints.is_empty() else "none",
+	]
 
 func _cmd_quit(_args: Array[String]) -> String:
 	get_tree().quit()
