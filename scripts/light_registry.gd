@@ -11,9 +11,17 @@ extends Node
 ## Only matters when GameSettings.light_block_mode == REAL_LIGHTS; GLOW
 ## mode doesn't use this at all (see scripts/pcg/voxel_lighting.gd -- a
 ## one-shot CPU paint at placement time, no ongoing tracking needed).
-## Not tracked for removal if a light block is later broken -- see
-## voxelitem.gd's own note: no working break mechanic exists in this
-## codebase yet, so nothing can remove a placed light block to begin with.
+##
+## Registered positions are re-validated every refresh (see
+## _prune_removed_lights()) -- confirmed live that blocks CAN be removed
+## (contrary to this file's earlier assumption that nothing could), and a
+## removed light block's OmniLight3D was staying lit with nothing backing
+## it. Rather than hook into whichever specific removal path did it (there
+## may be more than one), this just re-checks each tracked position's
+## actual current voxel id against VoxelTypes.LIGHT_LEVELS and drops it if
+## it no longer qualifies -- self-heals regardless of *how* a block
+## stopped being a light source (broken, overwritten by a structure
+## paste, whatever).
 
 const REFRESH_INTERVAL := 0.5
 const LIGHT_ENERGY := 2.0
@@ -41,10 +49,11 @@ func _process(delta: float) -> void:
 func _refresh() -> void:
 	if GameSettings.light_block_mode != GameSettings.LightBlockMode.REAL_LIGHTS:
 		return
+	var player := get_tree().get_first_node_in_group("player")
+	_prune_removed_lights(player)
 	if _light_block_positions.is_empty():
 		_clear_pool()
 		return
-	var player := get_tree().get_first_node_in_group("player")
 	var origin: Vector3 = player.global_position if player else Vector3.ZERO
 	var sorted := _light_block_positions.duplicate()
 	sorted.sort_custom(func(a, b): return a.distance_squared_to(origin) < b.distance_squared_to(origin))
@@ -63,6 +72,26 @@ func _refresh() -> void:
 			_pool[i].visible = true
 		else:
 			_pool[i].visible = false
+
+## Drops any tracked position whose voxel no longer has a registered light
+## level -- broken, overwritten, whatever. Needs the player purely to
+## reach voxel_terrain/get_voxel_tool(); if there's no player yet, skip
+## pruning this cycle rather than guess.
+func _prune_removed_lights(player: Node) -> void:
+	if not player or not ("voxel_terrain" in player) or not player.voxel_terrain:
+		return
+	var terrain: VoxelTerrain = player.voxel_terrain
+	var vt := terrain.get_voxel_tool()
+	if not vt:
+		return
+	vt.set_channel(VoxelBuffer.CHANNEL_TYPE)
+	var still_lit: Array[Vector3] = []
+	for world_pos in _light_block_positions:
+		var local: Vector3 = world_pos - terrain.global_position
+		var pos := Vector3i(floori(local.x), floori(local.y), floori(local.z))
+		if VoxelTypes.LIGHT_LEVELS.has(vt.get_voxel(pos)):
+			still_lit.append(world_pos)
+	_light_block_positions = still_lit
 
 func _clear_pool() -> void:
 	for light in _pool:

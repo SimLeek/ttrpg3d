@@ -58,10 +58,14 @@ func use_item(pressure: float) -> void:
 ## to chase down safely -- see TODO_battle_and_tools.md's Phase 7 entry.
 ## voxel_lighting.gd is left in place, unused, as a starting point.
 ##
-## Not tracked for removal if a light block is later broken -- there's no
-## working break mechanic in this codebase yet (scripts/items/del_vox_item.gd
-## is an unregistered stub, never wired into ItemCatalog), so nothing can
-## remove this block to begin with.
+## No dedicated break tool exists (scripts/items/del_vox_item.gd is an
+## unregistered stub), but a placed light block CAN still be removed --
+## structure_placer_item.gd's full-overwrite placement clears any cell a
+## saved structure has air at, confirmed live. LightRegistry doesn't need
+## a matching "unregister" call wired in here for that though -- it
+## re-validates every registered position each refresh and drops any that
+## no longer hold a LIGHT_LEVELS voxel, so it self-heals regardless of
+## which of possibly several removal paths did it.
 func _maybe_apply_light(local_pos: Vector3i) -> void:
 	if not VoxelTypes.LIGHT_LEVELS.has(voxel_id):
 		return

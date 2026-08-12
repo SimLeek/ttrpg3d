@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" format=3]
 
-[ext_resource type="Shader" uid="uid://fdg07vits0n2" path="res://3dAssets/shaders/xray_if_behind_cutout.gdshader" id="1_light"]
+[ext_resource type="Shader" path="res://3dAssets/shaders/xray_if_behind_cutout_light_source.gdshader" id="1_light"]
 [ext_resource type="Texture2D" path="res://3dAssets/blocks/light/16xlight.png" id="2_light"]
 
 [resource]

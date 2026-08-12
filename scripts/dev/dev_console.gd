@@ -294,6 +294,36 @@ func _cmd_set_light_mode(args: Array[String]) -> String:
 	GameSettings.set_light_block_mode(mode)
 	return "light_block_mode=%d" % GameSettings.light_block_mode
 
+## Testing: overwrites whatever voxel the player's currently aiming at
+## with `voxel_id` -- unlike unit_use_item/hold's placer flow (which
+## always targets the *adjacent empty* cell next to a hit, never the hit
+## cell itself), this replicates "the aimed-at block gets removed/replaced
+## by something else," the same effective outcome structure_placer_item.gd's
+## full-overwrite placement has on light blocks caught in a saved
+## structure's footprint (see LightRegistry's auto-pruning).
+func _cmd_set_voxel_at_target(args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not ("vt" in player) or not player.vt or not player.voxel_terrain:
+		return "no player/voxel tool"
+	if args.is_empty():
+		return "usage: set_voxel_at_target <voxel_id>"
+	var aim := VoxelInteractor.get_aim_ray(player)
+	var hit = player.vt.raycast(aim.origin, aim.direction, 500.0)
+	if not hit:
+		return "pointing at: nothing within range"
+	player.vt.set_voxel(hit.position, args[0].to_int())
+	return "set voxel at %s to %s" % [hit.position, args[0]]
+
+## Testing: reports LightRegistry's current tracked-position/pool counts
+## without needing a screenshot -- lets a test confirm a removed light
+## block actually got pruned rather than eyeballing whether it's still lit.
+func _cmd_light_registry_status(_args: Array[String]) -> String:
+	return "tracked=%d pool=%d mode=%d" % [
+		LightRegistry._light_block_positions.size(),
+		LightRegistry._pool.size(),
+		GameSettings.light_block_mode,
+	]
+
 ## Grabs whatever the main viewport rendered this frame and writes it to
 ## user://<name>.png -- the only way to visually inspect a running headless
 ## game instance from outside (no GUI to look at directly).

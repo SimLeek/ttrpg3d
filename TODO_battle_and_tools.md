@@ -879,11 +879,68 @@ execution order:
           discussion, which sidesteps the channel-depth problem
           completely at the cost of needing registered "lit" counterpart
           block types).
-    - Not tracked for removal if a light block is later broken, for
-      either mode -- there's no working break mechanic in this codebase
-      yet (`scripts/items/del_vox_item.gd` is an unregistered stub, never
-      wired into `ItemCatalog`), so nothing can remove a placed light
-      block to begin with.
+- [x] **Found live, fixed**: a light placed with REAL_LIGHTS mode was
+      being blocked by its own emitting block's mesh -- "I think the
+      light is blocked by the mesh inside since iirc we don't have cull
+      backface on." Correct diagnosis: every block's shared cutout
+      shader (`xray_if_behind_cutout.gdshader`) sets `cull_disabled` in
+      its `render_mode` (needed for the xray-behind-player effect not to
+      show one-sided holes), which also applies to shadow-map rendering
+      -- a shadow-casting light positioned at a solid cube's own center
+      (exactly where `LightRegistry` puts it) sees that same cube's own
+      outward-facing faces as occluders in every direction, since
+      `cull_disabled` makes them render/shadow-cast even when viewed
+      from behind (i.e. from inside the cube, the light's own vantage
+      point), trapping the light inside its own body. New
+      `3dAssets/shaders/xray_if_behind_cutout_light_source.gdshader` --
+      identical to the shared cutout shader except `cull_back` instead
+      of `cull_disabled` (render_mode is shader-file-scoped in Godot, no
+      way to override per-material, hence the near-duplicate file) --
+      `shader_light.tres` now points at this one instead. Only affects
+      the light block's own material; every other block keeps
+      `cull_disabled` since nothing else has a light positioned inside
+      its own geometry. Confirmed live by you: "tested it while you were
+      there. Works!"
+- [x] **Found live, fixed**: "once I remove the blocks the light is
+      still there" -- a removed light block's pooled `OmniLight3D`
+      wasn't going away. Root cause wasn't quite what the old note above
+      said ("no working break mechanic exists") -- confirmed via
+      research that there IS a way to clear a placed block:
+      `structure_placer_item.gd`'s placement is a full overwrite (by
+      design, so leftover terrain doesn't poke into a placed structure),
+      so pasting a saved structure that has air anywhere in its
+      bounding box clears whatever was there, including a light block.
+      Rather than hook a matching "unregister" call into that one
+      specific code path (there could be others), `LightRegistry`
+      (`scripts/light_registry.gd`) now re-validates every tracked
+      position each refresh cycle (`_prune_removed_lights()`) -- checks
+      the voxel actually still there against `VoxelTypes.LIGHT_LEVELS`
+      and drops it if not. Self-heals regardless of *how* a block
+      stopped being a light source. Live-verified via the command queue:
+      placed two lights (`tracked=2`), overwrote one with dirt via a new
+      `set_voxel_at_target <voxel_id>` dev command (replicates "the
+      aimed-at block gets removed," the same effective outcome the
+      structure placer has), confirmed `tracked` dropped to 1 after the
+      next 0.5s refresh, then to 0 (pool cleared) after removing the
+      second.
+    - New dev-console commands for this pass: `set_voxel_at_target
+      <voxel_id>` (overwrites whatever's aimed at, unlike the normal
+      placer flow which only ever targets the adjacent *empty* cell) and
+      `light_registry_status` (reports tracked/pool counts without
+      needing a screenshot).
+    - Diagnosing this also surfaced a pure test-harness gotcha worth
+      noting for future sessions: `goto`-ing the player then immediately
+      queuing `hold`+`unit_use_item` in the same instant can fail
+      placement two different ways that look like bugs but aren't --
+      (1) if gravity has pulled the player down onto/near the exact spot
+      being aimed at, `VoxelInteractor` correctly refuses to place
+      inside the player's own body (`get_placement_position()` returns
+      null, "Can't place. Can delete."); (2) equipping and using in the
+      same batch can leave zero physics frames between them, and a
+      freshly-equipped item's own `VoxelInteractor` needs at least one
+      `_physics_process()` tick to have a valid target at all. Neither
+      is a real bug -- just needs a beat between `hold` and
+      `unit_use_item`, and a target that isn't underfoot.
 
 ## Phase 8 -- Movement items (mod items, replacing double-tap gestures)
 
