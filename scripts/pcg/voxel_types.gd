@@ -149,7 +149,12 @@ const SHALE_STALAGMITE: int = 72
 
 # Lava tube caves (Navigation/Maze logic)
 # Occur: Inside Basalt/Andesite. Appear: Metallic black. PCG: Disorients player HUD/Compass.
-const MAGNETITE: int = 23  
+const MAGNETITE: int = 23
+# Phase 10: full-cube cutout shader (see xray_if_behind_cutout.gdshader) --
+# white opaque border per texture cell, fully transparent (discarded)
+# interior, no true alpha blending (avoids the sorting/flicker issues true
+# blending has for many simultaneous transparent cutouts).
+const GLASS: int = 24
 # Occur: Tube cracks. Appear: Fluffy white "wool." PCG: Breath hazard; slows stamina regen if mined.
 const ASBESTOS: int = 74
 # Occur: Deep tube pockets. Appear: Translucent lime green. PCG: High value; found in "pockets" in walls.

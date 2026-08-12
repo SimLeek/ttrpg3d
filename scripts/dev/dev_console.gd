@@ -278,6 +278,16 @@ func _cmd_hold(args: Array[String]) -> String:
 	hand.equip_item(ItemCatalog.instantiate_item(entry))
 	return "equipped %s to %s hand" % [item_id, hand_name]
 
+## Grabs whatever the main viewport rendered this frame and writes it to
+## user://<name>.png -- the only way to visually inspect a running headless
+## game instance from outside (no GUI to look at directly).
+func _cmd_screenshot(args: Array[String]) -> String:
+	var name: String = args[0] if not args.is_empty() else "screenshot"
+	var img := get_viewport().get_texture().get_image()
+	var path := "user://%s.png" % name
+	img.save_png(path)
+	return "saved %s" % ProjectSettings.globalize_path(path)
+
 func _cmd_world(args: Array[String]) -> String:
 	if args.is_empty():
 		var ids: Array[String] = []

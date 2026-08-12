@@ -25,6 +25,7 @@ const DISPLAY_NAMES: Dictionary = {
 	VoxelTypes.COPPER_ORE: "Copper Ore",
 	VoxelTypes.QUARTZ: "Quartz",
 	VoxelTypes.MAGNETITE: "Magnetite",
+	VoxelTypes.GLASS: "Glass",
 }
 
 ## Returns [{id, name, icon}] for every model in the library that has a real

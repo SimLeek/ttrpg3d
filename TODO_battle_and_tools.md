@@ -954,13 +954,13 @@ execution order:
 
 ## Phase 10 -- Glass voxel (simplified scope)
 
-- [ ] Dropped the neighbor-aware border-texture-merging requirement from
+- [x] Dropped the neighbor-aware border-texture-merging requirement from
       the original ask (still logged in `TODO_modding_and_worlds.md` as a
       future idea) -- for now, glass is just: edges white and mostly
       (not fully) transparent, face centers **fully** transparent,
       otherwise a normal voxel (solid collision etc.). Much simpler,
       tractable now.
-- [ ] Per your clarification on the transparent-rendering-order issue:
+- [x] Per your clarification on the transparent-rendering-order issue:
       Godot's shader system here is "not a blender level thing" -- it
       can't handle many simultaneous true alpha-blended transparent
       cutouts well. The **cutout** variant (alpha-scissor/discard, binary
@@ -975,7 +975,10 @@ execution order:
       "edges white-transparent, center pure transparent" look -- would
       sidestep the sorting problem entirely rather than needing to fix
       Godot's transparent rendering/sorting order.
-- [ ] Texture: generate the bitmap with a **Python script** (not
+      Used `xray_if_behind_cutout.gdshader` (same shader dirt/grass/ores
+      already use) rather than the true-blend `xray_if_behind_transparent.gdshader`
+      quartz/water use, per this reasoning.
+- [x] Texture: generate the bitmap with a **Python script** (not
       hand-drawn) -- a 3-wide x 2-tall sprite sheet, each of the 6 cells:
       white border, alpha-transparent inside. Check the existing block
       texture convention (`16xdirt.png` etc.) for cell sizing/layout
@@ -985,6 +988,21 @@ execution order:
       like `dirt`'s entry in `voxel_library.tres` -- just pointed at this
       texture through the alpha-scissor/cutout shader (see above) instead
       of an opaque material.
+      `scripts_dev/generate_glass_texture.py` writes
+      `3dAssets/blocks/transparent/16xglass.png` (48x32, matching
+      `16xdirt.png`/`16xquartz.png`'s 3x2-of-16x16 layout exactly): a
+      2px opaque-white border per cell, alpha-0 interior otherwise.
+      `3dAssets/shader_glass.tres` mirrors `shader_dirt.tres`'s cutout
+      params, pointed at the new texture. Registered in
+      `voxel_library.tres` as a new full-cube `VoxelBlockyModelMesh`
+      (id 24, `transparency_index = 1` like water/quartz/tall grass,
+      `collision_enabled_0 = true` -- solid per spec) with a matching
+      `VoxelTypes.GLASS` constant and `voxel_catalog.gd` display-name
+      entry; shows up as a placeable hotbar item automatically (no
+      `item_catalog.gd` changes needed -- blocks are auto-discovered
+      from the library). Live-verified via the command queue (place +
+      screenshot): renders and confirmed see-through by you live, no
+      boot/runtime errors.
 
 ## Phase 11 -- Turn-based enemy encounters (new, provisional numbering --
 ## "so I guess phase 11? idk")
