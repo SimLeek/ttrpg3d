@@ -211,7 +211,25 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, friction)
 		velocity.z = move_toward(velocity.z, 0.0, friction)
-		
+
+	# Ledge safety (Phase 6) -- BEFORE move_and_slide(), not after: it
+	# predicts where this frame's velocity would land and clamps it so
+	# move_and_slide() never actually carries the player past the edge,
+	# rather than correcting position afterward (which was one frame too
+	# late -- see ledge_safety_resource.gd). Grounded only (not while
+	# flying, even if incidentally hovering at floor level); no_gravity
+	# here only ever means "flying", since the intangible case already
+	# returned above. is_on_floor()/_is_on_voxel_floor here still reflect
+	# LAST frame's result (this frame's _handle_voxel_collisions()/
+	# move_and_slide() haven't run yet) -- a stable "was I grounded a
+	# moment ago" signal, which is what deciding whether to even attempt
+	# this wants.
+	velocity = ledge_safety.handle_physics_process(
+		self, vt, voxel_terrain.global_position,
+		InputController.is_action_pressed("slow"),
+		not no_gravity and (is_on_floor() or _is_on_voxel_floor),
+		velocity, delta)
+
 	if hud_node:
 		hud_node.update_stamina_ui(mover.sprint_time_limit-mover.sprint_elapsed, mover.sprint_time_limit)
 
@@ -239,14 +257,6 @@ func _physics_process(delta: float) -> void:
 		stuck_count = 0
 
 	move_and_slide()
-
-	# Ledge safety (Phase 6) -- grounded only (not while flying, even if
-	# incidentally hovering at floor level); no_gravity here only ever
-	# means "flying", since the intangible case already returned above.
-	ledge_safety.handle_physics_process(
-		self, vt, voxel_terrain.global_position,
-		InputController.is_action_pressed("slow"),
-		not no_gravity and (is_on_floor() or _is_on_voxel_floor))
 
 func _get_unloaded_normal(current_pos: Vector3, target_voxel_pos: Vector3i) -> Vector3:
 	# The AABB of the unloaded voxel in world space

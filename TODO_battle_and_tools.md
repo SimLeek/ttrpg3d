@@ -534,6 +534,38 @@ simpler statement in the same message -- this is the one to build):
       spawn), and this is a movement-*feel* mechanic anyway, where your
       own play is the fastest way to tell if it's right. Please try
       standing at a real ledge and see how it feels.
+- [x] Live testing confirmed everything else works but this ("everything
+      but holding shift and not falling off ledges works") -- found two
+      real bugs on rereading the implementation:
+    - `probe_down_distance` (1.5) reached a full 1.5 voxels below the
+      player, so it happily found "floor" even a full voxel down and
+      treated an entirely ordinary single-block step -- a completely
+      normal, common terrain feature -- as still-safe ground. Only much
+      deeper drops than what "ledge" actually means here ever triggered
+      it. Dropped to 0.4 (just past the character's own ~0.255 vertical
+      half-extent, well short of a full voxel).
+    - Bigger structural issue: the check ran *after* `move_and_slide()`
+      had already moved the player, gated on `is_grounded`
+      (`is_on_floor()`/`_is_on_voxel_floor`) -- but crossing an edge in
+      that same move can already flip those false, so the grounded gate
+      would skip the correction entirely, one frame too late. Rewrote it
+      to run *before* `move_and_slide()` instead (Minecraft's actual
+      sneak-edge mechanic works the same way): predicts where this
+      frame's velocity would land, checks *that* position for a floor,
+      and clamps velocity so `move_and_slide()` can never actually carry
+      the player past the edge in the first place -- rather than
+      correcting position after the fact. Only ever touches horizontal
+      velocity, so jumping off a ledge deliberately still works normally.
+    - Regression-tested via the command queue: walking into the same
+      known wall near spawn with "slow" held reaches the identical stop
+      position as before the rewrite, confirming normal
+      walking/collision is unaffected. Still couldn't locate an actual
+      open ledge near spawn to test the fix directly against (tried a
+      second direction this round, hit another wall -- spawn appears to
+      be a small enclosed area) -- **still needs your live confirmation**,
+      but the two bugs found account for exactly the reported symptom and
+      the fix now matches how the reference mechanic (Minecraft sneaking)
+      actually works.
 - [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
       but same key) -- turned out to already be done: the pre-existing
