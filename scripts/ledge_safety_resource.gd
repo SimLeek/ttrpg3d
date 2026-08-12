@@ -76,6 +76,19 @@ const VOXEL_SIZE := 1.0
 
 var _active: bool = false
 var _safe_cell: Vector2i = Vector2i.ZERO
+## The player's Y at the moment _safe_cell was last confirmed good --
+## restored on every clamp (not just X/Z) so repeatedly re-clamping while
+## pushed into an edge can't slowly bleed height away. See the clamp
+## branch below for why this was needed: a real live bug ("I slowly float
+## down if I shift on grass") turned out to have nothing to do with grass
+## specifically -- it reproduced identically pushing into any edge for
+## long enough. Each re-clamp zeroed velocity but left Y wherever gravity
+## had already pulled it that one frame; gravity re-accumulates a little
+## from rest before being zeroed again next frame, so height bled away a
+## tiny bit every single corrective frame, invisible over a few frames but
+## a visible slow sink over the many frames of continuously pushing into
+## an edge.
+var _safe_y: float = 0.0
 
 ## terrain_origin: voxel_terrain.global_position, same relative-to-terrain
 ## approach player_blob_ctrl.gd/battle_mode_manager.gd already use so this
@@ -98,6 +111,7 @@ func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_o
 			return  # only start tracking from solid ground, not mid-air
 		_active = true
 		_safe_cell = cell
+		_safe_y = pos.y
 		if debug_log:
 			print("[LedgeSafety] activated: pos=%s safe_cell=%s" % [pos, _safe_cell])
 		return
@@ -128,29 +142,37 @@ func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_o
 		if debug_log:
 			print("[LedgeSafety] cell change OK: %s -> %s (floor found)" % [_safe_cell, cell])
 		_safe_cell = cell
+		_safe_y = pos.y
 		return
 
 	# No floor here, not jumping -- push back to the old cell's footprint
-	# plus margin, and zero velocity entirely (not just horizontal) so
-	# gravity can't keep compounding whatever fall this frame's
-	# move_and_slide() already started.
+	# plus margin, restore Y to the last confirmed-safe height (not
+	# whatever gravity left it at this frame -- see _safe_y's doc comment
+	# above for why), and zero velocity entirely so gravity can't keep
+	# compounding whatever fall this frame's move_and_slide() started.
 	var cell_min := Vector2(_safe_cell.x, _safe_cell.y) * VOXEL_SIZE + Vector2(terrain_origin.x, terrain_origin.z)
 	var cell_max := cell_min + Vector2(VOXEL_SIZE, VOXEL_SIZE)
 	var clamped_x: float = clamp(pos.x, cell_min.x - margin, cell_max.x + margin)
 	var clamped_z: float = clamp(pos.z, cell_min.y - margin, cell_max.y + margin)
 	if debug_log:
-		print("[LedgeSafety] CLAMPING: safe_cell=%s pos=%s -> (%.3f, %.3f)" % [_safe_cell, pos, clamped_x, clamped_z])
-	character.global_position = Vector3(clamped_x, pos.y, clamped_z)
+		print("[LedgeSafety] CLAMPING: safe_cell=%s pos=%s -> (%.3f, %.3f, y=%.3f)" % [_safe_cell, pos, clamped_x, clamped_z, _safe_y])
+	character.global_position = Vector3(clamped_x, _safe_y, clamped_z)
 	character.velocity = Vector3.ZERO
 
 func _cell_of(pos: Vector3, terrain_origin: Vector3) -> Vector2i:
 	var local := pos - terrain_origin
 	return Vector2i(floori(local.x / VOXEL_SIZE), floori(local.z / VOXEL_SIZE))
 
+## VoxelTypes.is_player_collidable(): a raycast hit alone isn't enough --
+## it hits anything with collision_aabbs (needed for targeting), which
+## includes walk-through decorative voxels like tall grass/dead shrub
+## (collision_enabled_0 = false in voxel_library.tres). Without this,
+## ledge safety would treat standing on a tall-grass tuft as solid footing
+## even though the player actually falls straight through it.
 func _has_floor_below(vt: VoxelTool, pos: Vector3) -> bool:
 	var origin: Vector3 = pos + Vector3.UP * probe_up_offset
 	var hit = vt.raycast(origin, Vector3.DOWN, probe_down_distance + probe_up_offset)
-	return hit != null
+	return hit != null and VoxelTypes.is_player_collidable(vt.get_voxel(hit.position))
 
 func reset() -> void:
 	_active = false

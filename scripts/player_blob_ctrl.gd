@@ -285,14 +285,19 @@ func _handle_voxel_collisions(delta: float) -> void:
 	#	var boundary_normal = _get_unloaded_normal(true_position, target_voxel_pos)
 	#	velocity = velocity.slide(boundary_normal)
 	#	return
+	# VoxelTypes.is_player_collidable(): this raycast hits ANYTHING with
+	# collision_aabbs set (needed for item targeting -- see
+	# voxel_interactor.gd), regardless of collision_enabled_0, so without
+	# this check tall grass/dead shrub (configured walk-through in
+	# voxel_library.tres) would still act as solid walls here.
 	var hit = vt.raycast(global_position, world_dir, ray_dist)
-	if hit:
+	if hit and VoxelTypes.is_player_collidable(vt.get_voxel(hit.position)):
 		if hit.normal.angle_to(Vector3.UP) <= floor_max_angle:
 			_is_on_voxel_floor = true
 		velocity = velocity.slide(hit.normal)
 	if not _is_on_voxel_floor:
 		var down_hit = vt.raycast(global_position, Vector3.DOWN, 0.1) # Short margin
-		if down_hit:
+		if down_hit and VoxelTypes.is_player_collidable(vt.get_voxel(down_hit.position)):
 			if down_hit.normal.angle_to(Vector3.UP) <= floor_max_angle:
 				_is_on_voxel_floor = true
 

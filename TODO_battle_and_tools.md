@@ -662,6 +662,56 @@ simpler statement in the same message -- this is the one to build):
       essentially unchanged before and after (8.2555 -> 8.2560) across
       three consecutive `pos` checks, confirming no floating/freezing.
       Boot-checked clean.
+- [x] "Huh, now I slowly float down if I shift on grass -- can we remove
+      player collision for grass though tbh?" Turned into two real, distinct
+      fixes once the actual root causes were found (neither was "remove
+      grass's own collision" -- your clarification, "I meant tall grass and
+      shrubs," pointed at the real one):
+    - **The actual pre-existing bug**: `voxel_library.tres` already
+      configures tall grass/dead shrub as non-collidable
+      (`collision_enabled_0 = false`, same as water) -- correctly keeping
+      Godot's own physics/`move_and_slide()` from colliding with them. But
+      `player_blob_ctrl.gd`'s `_handle_voxel_collisions()` implements a
+      SECOND, separate collision system on `VoxelTool.raycast()` (needed
+      because voxel terrain collision shapes aren't always reliably
+      queryable through normal physics), and that raycast hits ANYTHING
+      with `collision_aabbs` set (needed for item targeting) regardless of
+      `collision_enabled_0` -- so tall grass/dead shrub were still acting
+      as solid walls in practice, contradicting how they're actually
+      configured. Confirmed you were right that "player collision and tile
+      ray-selection are currently tied together" for this specific path,
+      even though the two underlying library properties
+      (`collision_enabled_0` vs `collision_aabbs`) are themselves
+      independent -- water was already fine since it has no
+      `collision_aabbs` at all, so this second system never hit it either.
+      Added `VoxelTypes.is_player_collidable()` (explicit type list,
+      matching the existing `is_stone_voxel()`-style pattern already in
+      `hilly_terrain_region_generator.gd` rather than querying the
+      library's runtime collision API, which isn't used anywhere else in
+      the codebase yet) and gated both of `_handle_voxel_collisions()`'s
+      raycasts on it.
+    - **The actual "slowly float down" cause -- nothing to do with grass
+      specifically**: reproduced identically pushing into any real edge on
+      real Hilly World terrain for long enough (a diagonal push at spawn,
+      not a flat test platform this time). Every time the clamp re-fires
+      (continuous while pushing into an edge), it zeroed velocity but left
+      Y wherever gravity had already pulled it that one frame -- gravity
+      re-accumulates a little from rest before being zeroed again next
+      frame, so height bled away a tiny amount every single corrective
+      frame. Invisible over the few frames my earlier flat-platform tests
+      happened to run, but a visible slow sink over the many frames of
+      continuously holding into a real edge. Fixed by tracking `_safe_y`
+      (the height at the moment the current safe cell was last confirmed
+      good) and restoring it on every clamp, not just X/Z.
+    - Also applied `VoxelTypes.is_player_collidable()` to
+      `LedgeSafetyResource._has_floor_below()` -- without it, standing on
+      a tall-grass tuft would have read as solid footing even though the
+      player actually falls straight through it.
+    - Verified live on real Hilly World terrain (not just the flat test
+      platform): repeating the exact push-into-a-real-edge scenario, Y now
+      holds rock-solid at the confirmed-safe height (9.256) across ten+
+      consecutive corrective frames, only changing once Shift is released
+      and normal physics resumes. Boot-checked clean.
 - [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
       but same key) -- turned out to already be done: the pre-existing
