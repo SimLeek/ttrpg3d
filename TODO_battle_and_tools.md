@@ -361,10 +361,19 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       synthetic Ctrl key-hold accidentally also triggering the unrelated
       double-tap-Ctrl-for-intangible gesture. Code review looks correct
       (`event.ctrl_pressed` gate); worth a real check.
-- [ ] "Change ctrl-down to shift": rebind `fly_descend` from Ctrl to
-      Shift. The same Shift key, when grounded (not flying), triggers
-      ledge-safety instead (Phase 6) -- context-dependent like `jump`
-      already is (ground jump vs. fly ascend).
+- [x] "Change ctrl-down to shift": rebound `fly_descend`'s key in
+      `project.godot` from Ctrl to Shift (a literal keybind change, no
+      code touched -- the action name `fly_descend` still means what it
+      always meant, both for the descend-while-flying check and the
+      double-tap-to-toggle-intangible gesture, exactly like the TODO
+      wording asked for). Shift already belonged to the pre-existing
+      "slow" action, so this makes them share a key, same shape as `jump`
+      already being reused for both ground-jump and fly-ascend. Now
+      InputController's batch-fires-every-co-bound-action-per-event fix
+      (from the Konami-code bug) is what makes this safe -- holding Shift
+      correctly fires both `slow` and `fly_descend` from the same press.
+      See Phase 6 below for the "grounded means ledge-safety instead"
+      half.
 
 ## Phase 2 -- Character size system
 
@@ -446,17 +455,49 @@ simpler statement in the same message -- this is the one to build):
 
 ## Phase 6 -- Ledge safety / crouch (Shift)
 
-- [ ] Holding Shift while grounded should prevent walking off the edge of
+- [x] Holding Shift while grounded should prevent walking off the edge of
       the current voxel, with a small (~1/8 voxel) horizontal margin
-      allowed beyond it before treating it as a collision. Mechanic as
-      described: register the voxel below on shift-down; when moving (no
-      longer directly above that voxel), query for a new voxel below the
-      new position -- if there isn't one and the player is beyond the
-      ~1/8 margin, push them back to stay within voxel+margin; otherwise
-      collide normally.
-- [ ] Moving while holding Shift (grounded) = **half speed** (the
+      allowed beyond it before treating it as a collision. New
+      `LedgeSafetyResource` (`scripts/ledge_safety_resource.gd`), matching
+      the codebase's existing MoverResource/WallJumperResource/etc. "stat-
+      carrying resource with its own handle_* method" pattern, wired into
+      `player_blob_ctrl.gd` right after `move_and_slide()` each physics
+      frame it's held+grounded (not while flying, even if incidentally
+      hovering at floor level).
+    - Tracks by horizontal (XZ) voxel CELL, not exact position -- same
+      reasoning as `battle_mode_manager.gd`'s waypoint "standing on"
+      check: registers the cell the player's over the moment Shift goes
+      down (grounded); each frame after that, if they've moved to a
+      different cell, raycasts down from the new position -- solid floor
+      there means that becomes the new registered "safe" cell (so walking
+      across normal ground while holding Shift keeps working, not just
+      protecting wherever you started); no floor means clamp the player's
+      XZ back to the old cell's footprint + margin instead of letting
+      move_and_slide() carry them off it.
+    - Added `unit_input_press`/`unit_input_release` dev-console commands
+      (wrapping Godot's own `Input.action_press()`/`action_release()`) for
+      testing HELD-button mechanics specifically -- the existing
+      sequence-matcher test commands simulate discrete events, not a
+      continuous held state, so they couldn't drive this. Live-tested:
+      holding "slow" via this and walking behaves identically to walking
+      without it on normal solid ground (found and ruled out a real wall
+      near spawn as the cause of the player stopping, not a false-positive
+      ledge-safety clamp -- same stop happened with "slow" not held at
+      all). Boot-checked clean. **Not independently confirmed**: the
+      actual "don't fall off a real edge" behavior specifically -- finding
+      or constructing a verifiable cliff through the command-queue channel
+      alone wasn't a good use of further time here (Hilly World's terrain
+      is organic/sloped, not obviously full of sharp vertical edges near
+      spawn), and this is a movement-*feel* mechanic anyway, where your
+      own play is the fastest way to tell if it's right. Please try
+      standing at a real ledge and see how it feels.
+- [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
-      but same key).
+      but same key) -- turned out to already be done: the pre-existing
+      "slow" action/`MoverResource.slow_speed` (3.75) is already exactly
+      half of `normal_speed` (7.5), and Shift already triggered it before
+      any of this session's changes. Nothing to build here, just noting
+      it's covered.
 
 ## Phase 7 -- Lighting
 

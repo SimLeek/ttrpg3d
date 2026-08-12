@@ -344,6 +344,26 @@ func _cmd_unit_ui_alpha(_args: Array[String]) -> String:
 func _cmd_unit_input_captured(_args: Array[String]) -> String:
 	return "captured=%s mouse_mode=%s" % [InputController.is_captured(), Input.mouse_mode]
 
+## unit_input_press/unit_input_release <action>: Godot's own
+## Input.action_press()/action_release() -- a software-held action state,
+## not a single event, so is_action_pressed() reads it as held across
+## multiple physics frames the same way a real held key would. The
+## sequence-matcher commands above simulate discrete *events*; this is for
+## testing HELD-button mechanics instead (ledge safety, anything else that
+## reads InputController.is_action_pressed() continuously) without a real
+## keyboard.
+func _cmd_unit_input_press(args: Array[String]) -> String:
+	if args.is_empty():
+		return "usage: unit_input_press <action>"
+	Input.action_press(args[0])
+	return "pressed %s" % args[0]
+
+func _cmd_unit_input_release(args: Array[String]) -> String:
+	if args.is_empty():
+		return "usage: unit_input_release <action>"
+	Input.action_release(args[0])
+	return "released %s" % args[0]
+
 ## unit_input_double_tap <action> <window_ms> <now_msec>: drives
 ## InputController.was_double_tapped() with a spoofed timestamp -- call
 ## twice with the same action and hand-picked now_msec values to check the
