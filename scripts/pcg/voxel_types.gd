@@ -22,6 +22,28 @@ const LEAVES: int = 10
 const TALL_GRASS: int = 11
 const DEAD_SHRUB: int = 12
 
+## Voxel types the player should walk straight through -- still hittable by
+## VoxelTool.raycast() for targeting/interaction (voxel_library.tres keeps
+## collision_aabbs set on these so items can still be placed/aimed against
+## them), but not solid for player movement. A long pre-existing bug:
+## voxel_library.tres already configures tall grass/dead shrub as non-
+## collidable (collision_enabled_0 = false, same as water), which correctly
+## keeps Godot's own physics/move_and_slide() from colliding with them --
+## but player_blob_ctrl.gd's _handle_voxel_collisions() implements a SECOND,
+## separate collision system on top of VoxelTool.raycast() (needed because
+## voxel terrain collision shapes aren't always reliably queryable through
+## normal physics -- see hud.gd's range-check doc comment for the same
+## reliability reasoning), and that raycast hits ANYTHING with
+## collision_aabbs regardless of collision_enabled_0 -- so tall grass and
+## dead shrub were still acting as solid walls in practice, contradicting
+## how they're actually configured. Water was fine already: it has no
+## collision_aabbs at all, so this second raycast-based system never hit it
+## either.
+const NON_COLLIDABLE: Array[int] = [AIR, WATER_FULL, WATER_TOP, TALL_GRASS, DEAD_SHRUB]
+
+static func is_player_collidable(voxel_id: int) -> bool:
+	return voxel_id not in NON_COLLIDABLE
+
 # Wall jump mountains - hard mode platforming
 # (higher in ores at top, harder to get to, wall height higher than max jump height of 3)
 

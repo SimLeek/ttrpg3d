@@ -11,18 +11,25 @@ extends CharacterBody3D
 @export var faller: FallerResource
 @export var two_handed: TwoHandedResource
 @export var stair_stepper: StairStepperResource
+@export var ledge_safety: LedgeSafetyResource
 
 @export var SPEED_DECAY_AIR: float = 0.5
 @export var SPEED_DECAY_GROUND: float = 2.5
 
-## DM-mode movement, both toggled by double-tapping within
-## DOUBLE_TAP_WINDOW_MS. Two separate things: flying (double-jump) just
-## disables gravity/normal jump for direct vertical control; intangible
-## (double-fly_descend, i.e. double-Ctrl) separately disables collision
-## entirely so you can pass through terrain. Either can be on without the
-## other, though intangible without flying would just free-fall through
-## everything with no way to stop, so intangible also uses the same direct
-## vertical control flying does.
+## DM-mode movement. Flying toggles on a single press of "toggle_fly" (F);
+## intangible still toggles on double-tapping "fly_descend" (Shift) --
+## double-tap-jump-to-fly was removed because it fought with wall jumping
+## (rapidly double-tapping jump to chain wall jumps kept accidentally
+## toggling flight instead/as well). Flying just disables gravity/normal
+## jump for direct vertical control; intangible separately disables
+## collision entirely so you can pass through terrain. Either can be on
+## without the other, though intangible without flying would just
+## free-fall through everything with no way to stop, so intangible also
+## uses the same direct vertical control flying does. fly_descend shares
+## its key with "slow" (both Shift) -- while flying that means "descend",
+## while grounded it means "slow walk + ledge safety" (ledge_safety
+## below), context-dependent the same way "jump" already means ground-jump
+## vs. fly-ascend.
 @export var FLY_SPEED: float = 6.0
 const DOUBLE_TAP_WINDOW_MS := 350
 var is_flying: bool = false
@@ -76,6 +83,7 @@ func _ready() -> void:
 	stair_stepper.step_cast = $StepCast
 	stair_stepper.step_cast.add_exception_rid(hardy.shape.get_rid())
 	stair_stepper.step_cast.add_exception_rid(softy.get_physics_rid())
+	if not ledge_safety: ledge_safety = LedgeSafetyResource.new()
 	
 	if health_node and hud_node:
 		health_node.health_changed.connect(hud_node.update_health_ui)
@@ -115,10 +123,9 @@ func _input(event: InputEvent) -> void:
 	# of this script knowing about DevConsole (or any other UI) directly.
 	if InputController.is_captured():
 		return
-	if event.is_action_pressed("jump") and not event.is_echo():
-		if InputController.was_double_tapped("jump", DOUBLE_TAP_WINDOW_MS):
-			is_flying = not is_flying
-			if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
+	if event.is_action_pressed("toggle_fly") and not event.is_echo():
+		is_flying = not is_flying
+		if hud_node: hud_node.update_flight_status(is_flying, is_intangible)
 
 	if event.is_action_pressed("fly_descend") and not event.is_echo():
 		if InputController.was_double_tapped("fly_descend", DOUBLE_TAP_WINDOW_MS):
@@ -204,7 +211,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		velocity.x = move_toward(velocity.x, 0.0, friction)
 		velocity.z = move_toward(velocity.z, 0.0, friction)
-		
+
 	if hud_node:
 		hud_node.update_stamina_ui(mover.sprint_time_limit-mover.sprint_elapsed, mover.sprint_time_limit)
 
@@ -232,6 +239,14 @@ func _physics_process(delta: float) -> void:
 		stuck_count = 0
 
 	move_and_slide()
+
+	# Ledge safety (Phase 6) -- grounded only (not while flying, even if
+	# incidentally hovering at floor level); no_gravity here only ever
+	# means "flying", since the intangible case already returned above.
+	ledge_safety.handle_physics_process(
+		self, vt, voxel_terrain.global_position,
+		InputController.is_action_pressed("slow"),
+		not no_gravity and (is_on_floor() or _is_on_voxel_floor))
 
 func _get_unloaded_normal(current_pos: Vector3, target_voxel_pos: Vector3i) -> Vector3:
 	# The AABB of the unloaded voxel in world space
@@ -270,14 +285,19 @@ func _handle_voxel_collisions(delta: float) -> void:
 	#	var boundary_normal = _get_unloaded_normal(true_position, target_voxel_pos)
 	#	velocity = velocity.slide(boundary_normal)
 	#	return
+	# VoxelTypes.is_player_collidable(): this raycast hits ANYTHING with
+	# collision_aabbs set (needed for item targeting -- see
+	# voxel_interactor.gd), regardless of collision_enabled_0, so without
+	# this check tall grass/dead shrub (configured walk-through in
+	# voxel_library.tres) would still act as solid walls here.
 	var hit = vt.raycast(global_position, world_dir, ray_dist)
-	if hit:
+	if hit and VoxelTypes.is_player_collidable(vt.get_voxel(hit.position)):
 		if hit.normal.angle_to(Vector3.UP) <= floor_max_angle:
 			_is_on_voxel_floor = true
 		velocity = velocity.slide(hit.normal)
 	if not _is_on_voxel_floor:
 		var down_hit = vt.raycast(global_position, Vector3.DOWN, 0.1) # Short margin
-		if down_hit:
+		if down_hit and VoxelTypes.is_player_collidable(vt.get_voxel(down_hit.position)):
 			if down_hit.normal.angle_to(Vector3.UP) <= floor_max_angle:
 				_is_on_voxel_floor = true
 

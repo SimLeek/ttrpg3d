@@ -17,15 +17,9 @@ func handle_immediate_input(event):
 	if InputController.is_captured():
 		return
 
-	# In battle mode, the same clicks mark/undo movement waypoints instead
-	# of using the held item -- you're flying as a ghost to plan a move,
-	# not placing/breaking blocks.
-	if BattleModeManager.active:
-		if event.is_action_pressed("primary_item_click"):
-			BattleModeManager.mark_current_position()
-		elif event.is_action_pressed("secondary_item_click"):
-			BattleModeManager.undo_last_waypoint()
-		return
+	# Battle mode used to repurpose these same clicks for mark/undo instead
+	# of the held item -- moved to M/N (battle_mode_manager.gd) so LMB/RMB
+	# stay free for items/spells/attacks even while planning a move.
 
 	if event.is_action_pressed("primary_item_click"):
 		print("prim")

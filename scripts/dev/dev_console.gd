@@ -184,11 +184,24 @@ func _cmd_battle(_args: Array[String]) -> String:
 
 func _cmd_mark(_args: Array[String]) -> String:
 	BattleModeManager.mark_current_position()
-	return "marked"
+	return _waypoints_summary()
 
+## Not a plain undo -- see battle_mode_manager.gd's doc comment for the
+## walk-back-then-undo behavior. Reports player position too since which
+## of those two things happened isn't otherwise visible from "undone"
+## alone -- position changing (with waypoint count unchanged) means it
+## walked back; count decreasing means it actually removed one.
 func _cmd_undo(_args: Array[String]) -> String:
 	BattleModeManager.undo_last_waypoint()
-	return "undone"
+	var player := _get_player()
+	var pos_str: String = str(player.global_position) if player else "no player"
+	return "%s pos=%s" % [_waypoints_summary(), pos_str]
+
+func _waypoints_summary() -> String:
+	return "waypoints=%d last=%s" % [
+		BattleModeManager.waypoints.size(),
+		BattleModeManager.waypoints[-1] if not BattleModeManager.waypoints.is_empty() else "none",
+	]
 
 func _cmd_quit(_args: Array[String]) -> String:
 	get_tree().quit()
@@ -343,6 +356,53 @@ func _cmd_unit_ui_alpha(_args: Array[String]) -> String:
 ## test check the SAME thing gameplay scripts now check).
 func _cmd_unit_input_captured(_args: Array[String]) -> String:
 	return "captured=%s mouse_mode=%s" % [InputController.is_captured(), Input.mouse_mode]
+
+## unit_input_request_capture <owner>: simulates a menu opening (without
+## needing the real menu/keypress) -- specifically for testing that
+## WorldManager.switch_to_world() correctly releases it via
+## InputController.release_all_captures(), the same way a menu that opened
+## then switched worlds without closing itself first would otherwise leave
+## a stuck capture reason behind (silently blocking all movement/item use
+## in the new world).
+func _cmd_unit_input_request_capture(args: Array[String]) -> String:
+	InputController.request_capture(args[0] if not args.is_empty() else "unit_test")
+	return "captured=%s" % InputController.is_captured()
+
+## unit_jump: calls player.basic_jumper.request_jump() directly -- jump is
+## handled entirely through a real InputEvent
+## (basic_jump_resource.gd::handle_immediate_input(), wired from
+## player_blob_ctrl.gd's _input()), so unlike held-action mechanics
+## (unit_input_press/release, which only affect Input.is_action_pressed()
+## polling) there's no way to simulate a jump through the command queue
+## without this -- confirmed live while testing the ledge-safety
+## jump-arc fix: unit_input_press("jump") produced no vertical velocity
+## at all, since nothing in the jump path polls Input directly.
+func _cmd_unit_jump(_args: Array[String]) -> String:
+	var player := _get_player()
+	if not player or not ("basic_jumper" in player) or not player.basic_jumper:
+		return "no player/basic_jumper"
+	player.basic_jumper.request_jump()
+	return "jump requested"
+
+## unit_input_press/unit_input_release <action>: Godot's own
+## Input.action_press()/action_release() -- a software-held action state,
+## not a single event, so is_action_pressed() reads it as held across
+## multiple physics frames the same way a real held key would. The
+## sequence-matcher commands above simulate discrete *events*; this is for
+## testing HELD-button mechanics instead (ledge safety, anything else that
+## reads InputController.is_action_pressed() continuously) without a real
+## keyboard.
+func _cmd_unit_input_press(args: Array[String]) -> String:
+	if args.is_empty():
+		return "usage: unit_input_press <action>"
+	Input.action_press(args[0])
+	return "pressed %s" % args[0]
+
+func _cmd_unit_input_release(args: Array[String]) -> String:
+	if args.is_empty():
+		return "usage: unit_input_release <action>"
+	Input.action_release(args[0])
+	return "released %s" % args[0]
 
 ## unit_input_double_tap <action> <window_ms> <now_msec>: drives
 ## InputController.was_double_tapped() with a spoofed timestamp -- call

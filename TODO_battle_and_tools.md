@@ -302,11 +302,19 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       step; all five Enter-bound actions together for the start step) --
       confirmed match + actual `die()`/respawn end to end.
 
-- [ ] Stop using LMB/RMB for waypoint mark/undo in battle mode -- players
-      need those free for items/spells/attacks. Move to **M** (mark
-      current position / add node) and **N** (undo), via the input action
-      map (not fixed keys -- audit this generally, see Phase 9).
-- [ ] N's exact behavior (this is the "make moving and undoing much
+- [x] Stopped using LMB/RMB for waypoint mark/undo in battle mode --
+      players need those free for items/spells/attacks. Moved to **M**
+      (`battle_mark_waypoint`) and **N** (`battle_undo_waypoint`), new
+      input-map actions (not fixed keys) added to `project.godot`, handled
+      in `battle_mode_manager.gd`'s own `_unhandled_input()` alongside its
+      existing `toggle_battle_mode` handling, gated on
+      `InputController.is_captured()` so they don't fire while a menu's
+      open with nothing focused to otherwise consume the keys.
+      `two_handed_resource.gd`'s battle-mode LMB/RMB branch removed
+      entirely -- items/attacks now work normally even while battle mode
+      is active. HUD label text updated (`levels/hud.gd`) from "LMB mark,
+      RMB undo" to "M mark, N undo".
+- [x] N's exact behavior (this is the "make moving and undoing much
       easier" part, not simple undo): if the player is **not** standing
       on the last marked waypoint, N moves them **back onto it** (no
       undo). If they **are** standing on it, N undoes it like normal
@@ -315,6 +323,29 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       returns them to *that* one, then undoes on the press after, and so
       on. One key walks you back through history AND lets you jump back
       onto whichever waypoint you're currently reasoning about.
+    - "Standing on" is a horizontal-only (XZ) distance check within half a
+      voxel, not full 3D -- comparing Y too would need the player's exact
+      resting height to match the marked waypoint's Y (itself possibly
+      voxel-center-snapped, not the player's actual foot height), which
+      would rarely line up closely enough to feel like "same spot" rather
+      than "same pixel."
+    - The very first (starting) waypoint, marked automatically on
+      entering battle mode, can never be removed by N -- walking back onto
+      it is still allowed (lets you return to start any time), just not
+      undoing past it.
+    - `_cmd_mark`/`_cmd_undo` (dev console) now report waypoint
+      count/last-waypoint position instead of a fixed "marked"/"undone"
+      string, so which of "walked back" vs. "actually removed" happened
+      is visible from the result. Verified live via the command queue:
+      marked a waypoint, moved away, first `undo` teleported back without
+      changing the waypoint count, second `undo` (now standing on it)
+      actually removed it and dropped the count, a third `undo` correctly
+      walked back to the remaining starting anchor, and a fourth `undo`
+      (standing on that anchor) correctly refused to remove it. Boot-
+      checked clean. **Not yet independently confirmed**: the real M/N
+      keypresses themselves reaching `battle_mode_manager.gd`'s
+      `_unhandled_input()` -- the command queue calls `mark_current_position()`/
+      `undo_last_waypoint()` directly.
 - [x] Battle mode no longer force-enables flying/intangible on entry or
       clears them on exit -- whatever movement type was already active
       (walking, or manually double-tapped flying/intangible) stays
@@ -325,12 +356,24 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       full rework. Boot-checked; live-tested enough to confirm the player
       stays grounded/walking normally on entering battle mode rather than
       lifting off.
-- [ ] Double-tap-jump-to-fly interferes with wall jumping -- remove the
-      built-in double-tap gesture detection from `player_blob_ctrl.gd`
-      entirely. Fly and "dig"/intangible move to mod items instead (see
-      Phase 8), not built-in double-tap keys. ("Right the double ctrl and
-      double space things were a bad idea it seems" -- confirmed worth
-      doing, not done yet.)
+- [x] Double-tap-jump-to-fly interferes with wall jumping ("Right the
+      double ctrl and double space things were a bad idea it seems") --
+      quick fix per your ask ("change flight to f real quick instead of
+      double space so I can do wall jumps again") rather than waiting for
+      the full Phase 8 mod-item rework: flying now toggles on a single
+      press of a new `toggle_fly` action (F), not a double-tap of `jump`
+      at all, so rapid jump-jump-jump wall-jump chaining can no longer
+      accidentally toggle flight. Intangible is untouched for now -- still
+      double-tap `fly_descend` (Shift) -- since only flying/wall-jumping
+      was asked about here; moving both fully to mod items is still
+      Phase 8. Updated the HUD flight-status hint text (F to stop /
+      double-Shift to stop) to match -- also caught it was still saying
+      "double-Ctrl" for intangible from before the Shift rebind, missed
+      when that landed. Boot-checked clean. **Not independently
+      confirmed**: the real F keypress itself -- this one can't be
+      exercised through the command-queue channel at all (it's a bare
+      single-action check, nothing stateful to inspect), so it needs your
+      live test more than usual.
 - [x] Battle-mode waypoint lines were using true alpha-blend transparency
       -- same underlying flicker issue as everything else layered on the
       xray cutout system (Godot doesn't depth-sort overlapping alpha-
@@ -361,10 +404,19 @@ that aren't in 2d/3d billboards/hints in UIs so I can modify them."
       synthetic Ctrl key-hold accidentally also triggering the unrelated
       double-tap-Ctrl-for-intangible gesture. Code review looks correct
       (`event.ctrl_pressed` gate); worth a real check.
-- [ ] "Change ctrl-down to shift": rebind `fly_descend` from Ctrl to
-      Shift. The same Shift key, when grounded (not flying), triggers
-      ledge-safety instead (Phase 6) -- context-dependent like `jump`
-      already is (ground jump vs. fly ascend).
+- [x] "Change ctrl-down to shift": rebound `fly_descend`'s key in
+      `project.godot` from Ctrl to Shift (a literal keybind change, no
+      code touched -- the action name `fly_descend` still means what it
+      always meant, both for the descend-while-flying check and the
+      double-tap-to-toggle-intangible gesture, exactly like the TODO
+      wording asked for). Shift already belonged to the pre-existing
+      "slow" action, so this makes them share a key, same shape as `jump`
+      already being reused for both ground-jump and fly-ascend. Now
+      InputController's batch-fires-every-co-bound-action-per-event fix
+      (from the Konami-code bug) is what makes this safe -- holding Shift
+      correctly fires both `slow` and `fly_descend` from the same press.
+      See Phase 6 below for the "grounded means ledge-safety instead"
+      half.
 
 ## Phase 2 -- Character size system
 
@@ -446,17 +498,249 @@ simpler statement in the same message -- this is the one to build):
 
 ## Phase 6 -- Ledge safety / crouch (Shift)
 
-- [ ] Holding Shift while grounded should prevent walking off the edge of
+- [x] Holding Shift while grounded should prevent walking off the edge of
       the current voxel, with a small (~1/8 voxel) horizontal margin
-      allowed beyond it before treating it as a collision. Mechanic as
-      described: register the voxel below on shift-down; when moving (no
-      longer directly above that voxel), query for a new voxel below the
-      new position -- if there isn't one and the player is beyond the
-      ~1/8 margin, push them back to stay within voxel+margin; otherwise
-      collide normally.
-- [ ] Moving while holding Shift (grounded) = **half speed** (the
+      allowed beyond it before treating it as a collision. New
+      `LedgeSafetyResource` (`scripts/ledge_safety_resource.gd`), matching
+      the codebase's existing MoverResource/WallJumperResource/etc. "stat-
+      carrying resource with its own handle_* method" pattern, wired into
+      `player_blob_ctrl.gd` right after `move_and_slide()` each physics
+      frame it's held+grounded (not while flying, even if incidentally
+      hovering at floor level).
+    - Tracks by horizontal (XZ) voxel CELL, not exact position -- same
+      reasoning as `battle_mode_manager.gd`'s waypoint "standing on"
+      check: registers the cell the player's over the moment Shift goes
+      down (grounded); each frame after that, if they've moved to a
+      different cell, raycasts down from the new position -- solid floor
+      there means that becomes the new registered "safe" cell (so walking
+      across normal ground while holding Shift keeps working, not just
+      protecting wherever you started); no floor means clamp the player's
+      XZ back to the old cell's footprint + margin instead of letting
+      move_and_slide() carry them off it.
+    - Added `unit_input_press`/`unit_input_release` dev-console commands
+      (wrapping Godot's own `Input.action_press()`/`action_release()`) for
+      testing HELD-button mechanics specifically -- the existing
+      sequence-matcher test commands simulate discrete events, not a
+      continuous held state, so they couldn't drive this. Live-tested:
+      holding "slow" via this and walking behaves identically to walking
+      without it on normal solid ground (found and ruled out a real wall
+      near spawn as the cause of the player stopping, not a false-positive
+      ledge-safety clamp -- same stop happened with "slow" not held at
+      all). Boot-checked clean. **Not independently confirmed**: the
+      actual "don't fall off a real edge" behavior specifically -- finding
+      or constructing a verifiable cliff through the command-queue channel
+      alone wasn't a good use of further time here (Hilly World's terrain
+      is organic/sloped, not obviously full of sharp vertical edges near
+      spawn), and this is a movement-*feel* mechanic anyway, where your
+      own play is the fastest way to tell if it's right. Please try
+      standing at a real ledge and see how it feels.
+- [x] Live testing confirmed everything else works but this ("everything
+      but holding shift and not falling off ledges works") -- found two
+      real bugs on rereading the implementation:
+    - `probe_down_distance` (1.5) reached a full 1.5 voxels below the
+      player, so it happily found "floor" even a full voxel down and
+      treated an entirely ordinary single-block step -- a completely
+      normal, common terrain feature -- as still-safe ground. Only much
+      deeper drops than what "ledge" actually means here ever triggered
+      it. Dropped to 0.4 (just past the character's own ~0.255 vertical
+      half-extent, well short of a full voxel).
+    - Bigger structural issue: the check ran *after* `move_and_slide()`
+      had already moved the player, gated on `is_grounded`
+      (`is_on_floor()`/`_is_on_voxel_floor`) -- but crossing an edge in
+      that same move can already flip those false, so the grounded gate
+      would skip the correction entirely, one frame too late. Rewrote it
+      to run *before* `move_and_slide()` instead (Minecraft's actual
+      sneak-edge mechanic works the same way): predicts where this
+      frame's velocity would land, checks *that* position for a floor,
+      and clamps velocity so `move_and_slide()` can never actually carry
+      the player past the edge in the first place -- rather than
+      correcting position after the fact. Only ever touches horizontal
+      velocity, so jumping off a ledge deliberately still works normally.
+    - Regression-tested via the command queue: walking into the same
+      known wall near spawn with "slow" held reaches the identical stop
+      position as before the rewrite, confirming normal
+      walking/collision is unaffected. Still couldn't locate an actual
+      open ledge near spawn to test the fix directly against (tried a
+      second direction this round, hit another wall -- spawn appears to
+      be a small enclosed area) -- **still needs your live confirmation**,
+      but the two bugs found account for exactly the reported symptom and
+      the fix now matches how the reference mechanic (Minecraft sneaking)
+      actually works.
+- [x] Live test on your own controlled repro ("I changed the default
+      world so you start on one block surrounded by edges") still fell
+      straight through. Hand-built a matching 3x3x6 `limestone_slab` test
+      world myself (temporary, `worlds.json`/`world_5.sqlite`, both
+      removed again after) since neither existing saved world was actually
+      small (checked: 32x32 and 256x256 slabs, not "one block") -- with a
+      real repro finally in hand, added `debug_log` tracing
+      (`LedgeSafetyResource.debug_log`, same pattern as
+      `InputController.debug_log_input`) and caught the actual bug on the
+      first try: activated correctly, clamped correctly for two frames
+      *within* the margin -- then `"is_held=true is_grounded=false"` and
+      deactivated, followed by an uninterrupted fall. A capsule resting
+      only partially over an edge (even within the allowed margin)
+      doesn't reliably keep `is_on_floor()` true -- Godot's own collision
+      naturally flickers floor contact right at a boundary -- so gating
+      *continued* protection on that per-frame reading meant one flaky
+      "not grounded" frame threw the tracking away entirely.
+    - Rewrote (back to a post-`move_and_slide()` correction, this time
+      for real reasons, not the v1 mistake): `is_grounded` now only gates
+      whether to *start* tracking (so it doesn't kick in mid-jump), never
+      whether to keep protecting once active -- that only stops on
+      releasing Shift, or on a genuine deliberate jump (`velocity.y` above
+      a small threshold, so jumping off a ledge on purpose still works).
+      The correction itself now also zeroes velocity entirely (not just
+      horizontal) when it clamps, so gravity can't keep compounding a
+      fall the same frame's `move_and_slide()` already started.
+    - Verified on the real controlled platform this time: walking toward
+      an edge without Shift held falls straight through (confirmed
+      genuine baseline); holding Shift, the debug trace shows the exact
+      moment it starts clamping and the player's position stabilizes at
+      the cell boundary + margin (`x=-0.125`) with height essentially
+      unchanged (6.2555 -> 6.2142, not a fall) for as long as forward is
+      held, confirmed via multiple `pos` checks in a row all reporting the
+      identical clamped position. Releasing Shift correctly deactivates
+      tracking again. Added `unit_input_request_capture` along the way
+      (see the world-switch bug entry below) while building out this
+      test. Boot-checked clean.
+- [x] **Separate real bug you found in passing**: "changing worlds (to
+      save) and then changing back made it so I was unable to move my
+      character or place/remove blocks." Root cause: `dm_world_menu.gd`'s
+      world-select/create-and-switch handlers call
+      `WorldManager.switch_to_world()` directly without closing the menu
+      first (no `_set_menu_visible(false)`) -- so the
+      `InputController.request_capture("dm_world_menu")` it made while
+      open never gets released, and since `InputController` is an
+      autoload that survives the scene reload while the menu instance
+      that requested it doesn't, that capture reason is stuck forever,
+      silently blocking ALL movement and item use afterward (both gated
+      on `is_captured()`) -- not just in that session, but even after
+      switching to a *third* world, since nothing ever clears it.
+      `WorldManager.switch_to_world()` already had the exact same fix for
+      `UiPauseGate` for the exact same reason ("this autoload survives
+      scene reloads... the menu instances... don't survive the reload to
+      release it themselves") -- added the equivalent
+      `InputController.release_all_captures()` right alongside it.
+      Verified live via the command queue: requested a capture (mimicking
+      what the menu would leave behind), switched worlds, confirmed
+      `is_captured()` and `Input.mouse_mode` both correctly reset
+      afterward (previously would have stayed stuck). Boot-checked clean.
+- [x] "Close! Bug found: If I jump while holding shift and moving any
+      direction with wasd I may float close to the ground once I'm near a
+      block." Root cause: the jump-detection escape hatch
+      (`velocity.y > jump_velocity_threshold`) only matches during a
+      jump's ASCENT (positive Y velocity). Once it peaks and starts
+      falling back down, that check stops matching -- and the previous
+      code let the SAME frame's jump-detected branch re-register whatever
+      cell they were passing through as "safe" without checking for an
+      actual floor there, then on later descending frames (no longer
+      "jumping" by this check) tried to protect against a "no floor
+      within the short probe distance yet" reading that was really just
+      normal jump descent, not an edge -- clamping position and zeroing
+      velocity mid-air near the ground instead of letting them land.
+    - Fixed by suspending protection for the WHOLE jump arc, not just the
+      ascending half: detecting `velocity.y > threshold` now fully
+      deactivates tracking (same as releasing Shift) instead of letting
+      that one frame through -- it only resumes once `was_grounded`
+      is true again (a real landing), at which point it registers a
+      fresh, correct safe cell wherever they actually came down.
+    - Needed a new test hook to verify this one specifically: jump is
+      entirely event-driven (`basic_jump_resource.gd`'s
+      `handle_immediate_input()`, wired from `player_blob_ctrl.gd`'s
+      `_input()`), so `unit_input_press`/`release` (which only affect
+      `Input.is_action_pressed()` polling, no real `InputEvent`) couldn't
+      trigger a jump at all -- confirmed live via `debug_log`, which
+      never showed a "jump detected" line no matter how the press/release
+      was timed. Added `unit_jump` (calls
+      `player.basic_jumper.request_jump()` directly) to actually exercise
+      this path. With a real jump in hand, verified live: jumping off a
+      small isolated test platform (with nothing else below) correctly
+      falls into the void uninterrupted, matching "jumping off a ledge
+      deliberately still works"; jumping-and-landing well within a large
+      platform (nothing to fall into) shows the debug trace suspend on
+      takeoff and cleanly re-activate on landing, with the resting height
+      essentially unchanged before and after (8.2555 -> 8.2560) across
+      three consecutive `pos` checks, confirming no floating/freezing.
+      Boot-checked clean.
+- [x] "Huh, now I slowly float down if I shift on grass -- can we remove
+      player collision for grass though tbh?" Turned into two real, distinct
+      fixes once the actual root causes were found (neither was "remove
+      grass's own collision" -- your clarification, "I meant tall grass and
+      shrubs," pointed at the real one):
+    - **The actual pre-existing bug**: `voxel_library.tres` already
+      configures tall grass/dead shrub as non-collidable
+      (`collision_enabled_0 = false`, same as water) -- correctly keeping
+      Godot's own physics/`move_and_slide()` from colliding with them. But
+      `player_blob_ctrl.gd`'s `_handle_voxel_collisions()` implements a
+      SECOND, separate collision system on `VoxelTool.raycast()` (needed
+      because voxel terrain collision shapes aren't always reliably
+      queryable through normal physics), and that raycast hits ANYTHING
+      with `collision_aabbs` set (needed for item targeting) regardless of
+      `collision_enabled_0` -- so tall grass/dead shrub were still acting
+      as solid walls in practice, contradicting how they're actually
+      configured. Confirmed you were right that "player collision and tile
+      ray-selection are currently tied together" for this specific path,
+      even though the two underlying library properties
+      (`collision_enabled_0` vs `collision_aabbs`) are themselves
+      independent -- water was already fine since it has no
+      `collision_aabbs` at all, so this second system never hit it either.
+      Added `VoxelTypes.is_player_collidable()` (explicit type list,
+      matching the existing `is_stone_voxel()`-style pattern already in
+      `hilly_terrain_region_generator.gd` rather than querying the
+      library's runtime collision API, which isn't used anywhere else in
+      the codebase yet) and gated both of `_handle_voxel_collisions()`'s
+      raycasts on it.
+    - **The actual "slowly float down" cause -- nothing to do with grass
+      specifically**: reproduced identically pushing into any real edge on
+      real Hilly World terrain for long enough (a diagonal push at spawn,
+      not a flat test platform this time). Every time the clamp re-fires
+      (continuous while pushing into an edge), it zeroed velocity but left
+      Y wherever gravity had already pulled it that one frame -- gravity
+      re-accumulates a little from rest before being zeroed again next
+      frame, so height bled away a tiny amount every single corrective
+      frame. Invisible over the few frames my earlier flat-platform tests
+      happened to run, but a visible slow sink over the many frames of
+      continuously holding into a real edge. Fixed by tracking `_safe_y`
+      (the height at the moment the current safe cell was last confirmed
+      good) and restoring it on every clamp, not just X/Z.
+    - Also applied `VoxelTypes.is_player_collidable()` to
+      `LedgeSafetyResource._has_floor_below()` -- without it, standing on
+      a tall-grass tuft would have read as solid footing even though the
+      player actually falls straight through it.
+    - Verified live on real Hilly World terrain (not just the flat test
+      platform): repeating the exact push-into-a-real-edge scenario, Y now
+      holds rock-solid at the confirmed-safe height (9.256) across ten+
+      consecutive corrective frames, only changing once Shift is released
+      and normal physics resumes. Boot-checked clean.
+- [x] "One more issue: releasing shift allows us to move out of safe xz
+      space and then if we hit it again we might fall off despite being
+      on the edge. I think an easy fix for that is to move within bounds
+      by a slight margin" -- clarified as "push the character back in
+      bounds if they're on the edge or out of it once shift is released."
+      The margin deliberately lets you overhang past the cell's real
+      (solid) bounds while Shift is held ("stand right at the edge to
+      look over"), but that overhang position isn't necessarily fully
+      supported (same capsule-at-a-boundary flakiness noted elsewhere in
+      this file) -- so releasing Shift right there and immediately
+      re-pressing it would just register that shaky spot as the new safe
+      cell with nothing having actually re-verified it.
+    - Added `_snap_within_bounds()`, called the moment protection ends
+      (Shift released): pushes the player `release_inset` (0.1) inside
+      the last safe cell's real bounds, not just back to the raw
+      boundary -- a no-op for the overwhelmingly common case of releasing
+      Shift away from any edge, since it only does anything if the
+      player is currently past that inset. Verified live on real Hilly
+      World terrain: pushed into an edge until clamped at the margin
+      overhang `(-32.125, ..., 8.000)`, released Shift, confirmed snapped
+      to solidly-safe `(-31.9, ..., 8.1)` in the same frame, with a
+      normal resting Y. Boot-checked clean.
+- [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
-      but same key).
+      but same key) -- turned out to already be done: the pre-existing
+      "slow" action/`MoverResource.slow_speed` (3.75) is already exactly
+      half of `normal_speed` (7.5), and Shift already triggered it before
+      any of this session's changes. Nothing to build here, just noting
+      it's covered.
 
 ## Phase 7 -- Lighting
 
