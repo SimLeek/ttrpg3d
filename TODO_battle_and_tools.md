@@ -742,6 +742,25 @@ simpler statement in the same message -- this is the one to build):
       any of this session's changes. Nothing to build here, just noting
       it's covered.
 
+## Session plan: "the item phase" (Phases 8, 11, 10, 7, in that order)
+
+Skipping Phase 2 for now ("Logically 2 comes after 1 but flight/dig items
+and enemy spawn eggs just sound too fun not to go for"). Phases 7, 8, 10,
+and 11 (new, added below) are being tackled together across this session
+as one continuous arc -- "the item phase" (distinct from Phase 5's
+inventory *split*, which is about stock/limits on existing items, not new
+item types). Numbering stays as originally assigned rather than
+renumbering the whole doc top to bottom; this note is the actual intended
+execution order:
+
+1. **Phase 8** -- movement items (Wings/Phasing Gloves) + enemy spawn eggs.
+2. **Phase 11** -- enemy encounters trigger turn-based battle mode
+   (depends on Phase 8's spawn eggs existing to have enemies to encounter).
+3. **Phase 10** -- glass voxel (now simpler than originally scoped, folded
+   in here since it's "just a solid cutout shader piece" given the
+   alpha-scissor work already done this session for grass/battle lines).
+4. **Phase 7** -- lighting, saved for last since it's the hardest.
+
 ## Phase 7 -- Lighting
 
 - [ ] Voxels get a "light level" property; when set, the material's
@@ -848,6 +867,32 @@ simpler statement in the same message -- this is the one to build):
       "edges white-transparent, center pure transparent" look -- would
       sidestep the sorting problem entirely rather than needing to fix
       Godot's transparent rendering/sorting order.
+- [ ] Texture: generate the bitmap with a **Python script** (not
+      hand-drawn) -- a 3-wide x 2-tall sprite sheet, each of the 6 cells:
+      white border, alpha-transparent inside. Check the existing block
+      texture convention (`16xdirt.png` etc.) for cell sizing/layout
+      before writing the script, so glass's sheet matches how other
+      blocks are laid out. Otherwise register/configure like a normal
+      block -- full-cube mesh, `collision_aabbs`/`collision_enabled_0`
+      like `dirt`'s entry in `voxel_library.tres` -- just pointed at this
+      texture through the alpha-scissor/cutout shader (see above) instead
+      of an opaque material.
+
+## Phase 11 -- Turn-based enemy encounters (new, provisional numbering --
+## "so I guess phase 11? idk")
+
+- [ ] Running into an enemy should trigger `BattleModeManager`'s
+      turn-based battle mode automatically, instead of real-time reactive
+      combat -- "this is supposed to mimic ttrpg and allow planning and
+      isn't as much a reaction based game." Depends on Phase 8's enemy
+      spawn eggs existing first (need an actual enemy to encounter).
+      Needs a design pass once reached -- not yet specified: exact trigger
+      condition (proximity? line of sight? direct contact?), what happens
+      to the enemy's own `blob_ai_resource.gd`-driven behavior once battle
+      mode activates (does its AI turn into taking discrete turns too, or
+      stay real-time while the player plans around it?), and how/when the
+      encounter ends (enemy defeated? player flees battle mode? distance
+      threshold?).
 
 ## Notes / already-resolved, no action needed
 
