@@ -6,36 +6,50 @@ class_name LedgeSafetyResource
 ## past it before it's treated as a collision (Minecraft-sneak-style,
 ## which this is clearly modeled after). Lets a DM stand right at the edge
 ## of a ledge to look over without falling off by accident, while still
-## being able to step off deliberately by releasing Shift (or jumping --
-## this only ever touches horizontal velocity, never blocks a jump). The
+## being able to step off deliberately by releasing Shift or jumping. The
 ## "half speed while holding Shift" half of the Phase 6 crouch mechanic is
 ## already handled by the pre-existing "slow" action/MoverResource.slow_speed
 ## (already exactly half of normal_speed) -- this resource is only the new
 ## edge-safety part.
 ##
-## Called BEFORE move_and_slide(), not after: it PREDICTS where this
-## frame's horizontal velocity would move the player and checks THAT
-## position for a floor, clamping velocity so move_and_slide() never
-## actually carries them past the edge in the first place. A first version
-## corrected position *after* move_and_slide() instead, which had two real
-## bugs found via live testing ("everything...works except holding shift
-## and not falling off ledges"): (1) by the time the correction ran,
-## is_on_floor() could already read false from that same frame's move,
-## so the grounded-gated check would just skip doing anything -- one
-## frame too late; (2) the floor probe reached a full 1.5 voxels down,
-## so it happily treated an ordinary single-block step (a completely
-## normal, common terrain feature) as "still safe ground" and only ever
-## caught much deeper drops than what "ledge" actually means here.
+## Called AFTER move_and_slide(), correcting position/velocity if that
+## move carried the player somewhere unsafe. Two earlier versions both
+## failed live testing ("everything...works except holding shift and not
+## falling off ledges" / "still doesn't work" on a controlled 1-block-wide
+## test platform, confirmed via debug_log below):
+## - v1 corrected position after move_and_slide() but gated on
+##   is_grounded -- one frame too late, since crossing an edge in that
+##   same move could already flip is_on_floor() false.
+##   Also probe_down_distance (1.5) reached a full voxel down, treating an
+##   ordinary single-block step as still-safe ground.
+## - v2 moved the check to BEFORE move_and_slide() (predicting velocity),
+##   still gated on is_grounded for every frame. This uncovered the real
+##   issue: a capsule resting only partially over an edge (even within the
+##   allowed margin) doesn't reliably keep is_on_floor() true -- Godot's
+##   own collision naturally loses/regains floor contact right at a
+##   boundary. Gating continued protection on that per-frame reading meant
+##   ONE flaky "not grounded" frame threw away tracking entirely, letting
+##   gravity take over uncorrected from then on (confirmed via
+##   debug_log: activated -> two clamped frames within margin -> "is_held=true
+##   is_grounded=false" -> deactivated, followed by an uninterrupted fall).
+##
+## This version only checks is_grounded to decide whether to START
+## tracking (so it doesn't kick in mid-jump/mid-fall) -- once active, it
+## keeps correcting every frame Shift is held, regardless of what
+## is_on_floor() says that frame, only backing off for an actual deliberate
+## jump (velocity.y meaningfully positive) rather than an edge-adjacent
+## floor-contact flicker.
 ##
 ## Mechanic: register the voxel cell the player is standing on the moment
-## Shift goes down (grounded); each physics frame after that, predict
-## where this frame's horizontal movement would land -- if that's still
-## within the registered cell, or there's a floor there (within a SHORT
-## probe distance, just past the character's own vertical size -- NOT a
+## Shift goes down (grounded); each physics frame after that, if they've
+## moved to a different cell: a deliberate jump (velocity.y > threshold)
+## is let through untouched; otherwise, solid floor at the new position
+## (a SHORT probe, just past the character's own vertical size -- NOT a
 ## generous "any floor below" check, or every ordinary step down would
-## count as "safe"), let it through and update the registered cell;
-## otherwise clamp the velocity so this frame's move can only reach the
-## old cell's footprint plus `margin`, not past it.
+## count as "safe") updates the registered cell; no floor at all snaps
+## the player back to the old cell's footprint plus `margin` and zeroes
+## velocity entirely (not just horizontal -- otherwise gravity keeps
+## compounding a fall move_and_slide() already started this frame).
 ##
 ## Horizontal (XZ) cell tracking only, matching the same reasoning as
 ## BattleModeManager's waypoint "standing on" check -- vertical precision
@@ -44,6 +58,15 @@ class_name LedgeSafetyResource
 @export var margin: float = 0.125  ## ~1/8 voxel, per the spec
 @export var probe_down_distance: float = 0.4  ## just past the character's own vertical extent -- NOT enough to reach a full voxel drop, which should count as an edge
 @export var probe_up_offset: float = 0.1  ## raycast starts this far above the query position
+@export var jump_velocity_threshold: float = 0.1  ## velocity.y above this counts as "deliberately jumping," not "just walking" -- don't fight it
+
+## Diagnostic -- flip on (Inspector, or a future dev-console command) to
+## trace activation/cell-change/clamp decisions per frame, same pattern as
+## InputController.debug_log_input. Two earlier versions of this mechanic
+## both looked right on paper and both failed live; this is what actually
+## caught the real bug (see the class doc comment above). Off by default
+## now that it did its job.
+@export var debug_log: bool = false
 
 const VOXEL_SIZE := 1.0
 
@@ -52,44 +75,58 @@ var _safe_cell: Vector2i = Vector2i.ZERO
 
 ## terrain_origin: voxel_terrain.global_position, same relative-to-terrain
 ## approach player_blob_ctrl.gd/battle_mode_manager.gd already use so this
-## stays correct across the large-world origin-shifting system. Call
-## BEFORE move_and_slide(), with the velocity about to be applied this
-## frame -- returns the (possibly horizontally-clamped) velocity to
-## actually use.
-func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_origin: Vector3, is_held: bool, is_grounded: bool, velocity: Vector3, delta: float) -> Vector3:
-	if not is_held or not is_grounded or not vt or delta <= 0.0:
+## stays correct across the large-world origin-shifting system. Call AFTER
+## move_and_slide() each physics frame; mutates character.global_position/
+## velocity directly rather than returning a value, since it may need to
+## touch both position and velocity depending on the case.
+func handle_physics_process(character: CharacterBody3D, vt: VoxelTool, terrain_origin: Vector3, is_held: bool, was_grounded: bool) -> void:
+	if not is_held or not vt:
+		if debug_log and _active:
+			print("[LedgeSafety] deactivating: is_held=%s vt=%s" % [is_held, vt != null])
 		_active = false
-		return velocity
+		return
 
 	var pos: Vector3 = character.global_position
 	var cell := _cell_of(pos, terrain_origin)
 
 	if not _active:
+		if not was_grounded:
+			return  # only start tracking from solid ground, not mid-air
 		_active = true
 		_safe_cell = cell
-		return velocity
+		if debug_log:
+			print("[LedgeSafety] activated: pos=%s safe_cell=%s" % [pos, _safe_cell])
+		return
 
-	var predicted: Vector3 = pos + Vector3(velocity.x, 0.0, velocity.z) * delta
-	var predicted_cell := _cell_of(predicted, terrain_origin)
+	if cell == _safe_cell:
+		return  # still over the registered cell -- nothing to check
 
-	if predicted_cell == _safe_cell or _has_floor_below(vt, predicted):
-		_safe_cell = predicted_cell  # still safe (or solid new ground) -- track it
-		return velocity
+	if character.velocity.y > jump_velocity_threshold:
+		# Deliberately jumping -- don't fight it, just re-register wherever
+		# they end up (same as landing on solid new ground normally).
+		if debug_log:
+			print("[LedgeSafety] jump detected (velocity.y=%.2f), letting through: %s -> %s" % [character.velocity.y, _safe_cell, cell])
+		_safe_cell = cell
+		return
 
-	# No floor under where this frame's movement would land -- clamp
-	# velocity so move_and_slide() can only reach the old safe cell's
-	# footprint plus margin, not past it. Deriving velocity from the
-	# clamped predicted position (rather than just zeroing) means sliding
-	# along an edge still works normally -- only the axis actually headed
-	# off it gets reduced.
+	if _has_floor_below(vt, pos):
+		if debug_log:
+			print("[LedgeSafety] cell change OK: %s -> %s (floor found)" % [_safe_cell, cell])
+		_safe_cell = cell
+		return
+
+	# No floor here, not jumping -- push back to the old cell's footprint
+	# plus margin, and zero velocity entirely (not just horizontal) so
+	# gravity can't keep compounding whatever fall this frame's
+	# move_and_slide() already started.
 	var cell_min := Vector2(_safe_cell.x, _safe_cell.y) * VOXEL_SIZE + Vector2(terrain_origin.x, terrain_origin.z)
 	var cell_max := cell_min + Vector2(VOXEL_SIZE, VOXEL_SIZE)
-	var clamped_x: float = clamp(predicted.x, cell_min.x - margin, cell_max.x + margin)
-	var clamped_z: float = clamp(predicted.z, cell_min.y - margin, cell_max.y + margin)
-	var out_velocity := velocity
-	out_velocity.x = (clamped_x - pos.x) / delta
-	out_velocity.z = (clamped_z - pos.z) / delta
-	return out_velocity
+	var clamped_x: float = clamp(pos.x, cell_min.x - margin, cell_max.x + margin)
+	var clamped_z: float = clamp(pos.z, cell_min.y - margin, cell_max.y + margin)
+	if debug_log:
+		print("[LedgeSafety] CLAMPING: safe_cell=%s pos=%s -> (%.3f, %.3f)" % [_safe_cell, pos, clamped_x, clamped_z])
+	character.global_position = Vector3(clamped_x, pos.y, clamped_z)
+	character.velocity = Vector3.ZERO
 
 func _cell_of(pos: Vector3, terrain_origin: Vector3) -> Vector2i:
 	var local := pos - terrain_origin

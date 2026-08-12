@@ -357,6 +357,17 @@ func _cmd_unit_ui_alpha(_args: Array[String]) -> String:
 func _cmd_unit_input_captured(_args: Array[String]) -> String:
 	return "captured=%s mouse_mode=%s" % [InputController.is_captured(), Input.mouse_mode]
 
+## unit_input_request_capture <owner>: simulates a menu opening (without
+## needing the real menu/keypress) -- specifically for testing that
+## WorldManager.switch_to_world() correctly releases it via
+## InputController.release_all_captures(), the same way a menu that opened
+## then switched worlds without closing itself first would otherwise leave
+## a stuck capture reason behind (silently blocking all movement/item use
+## in the new world).
+func _cmd_unit_input_request_capture(args: Array[String]) -> String:
+	InputController.request_capture(args[0] if not args.is_empty() else "unit_test")
+	return "captured=%s" % InputController.is_captured()
+
 ## unit_input_press/unit_input_release <action>: Godot's own
 ## Input.action_press()/action_release() -- a software-held action state,
 ## not a single event, so is_action_pressed() reads it as held across

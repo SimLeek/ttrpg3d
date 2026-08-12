@@ -68,6 +68,19 @@ func release_capture(owner: String) -> void:
 	if not is_captured():
 		capture_changed.emit(false)
 
+## Unconditionally drops every capture reason -- same purpose as
+## UiPauseGate.release_all(), called from the same place
+## (WorldManager.switch_to_world()) for the same reason: this autoload
+## survives scene reloads, but a menu that requested capture (e.g.
+## dm_world_menu.gd switching worlds without closing itself first) does
+## not, so its reason would otherwise be stuck forever with nothing left
+## to release it -- silently blocking ALL movement and item use in the
+## freshly-loaded world, since both are gated on is_captured().
+func release_all_captures() -> void:
+	_capture_reasons.clear()
+	_apply_mouse_mode()
+	capture_changed.emit(false)
+
 func is_captured() -> bool:
 	return not _capture_reasons.is_empty()
 

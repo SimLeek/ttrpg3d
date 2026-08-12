@@ -42,8 +42,14 @@ func switch_to_world(world: Dictionary) -> void:
 	# UiPauseGate's reasons dict would too (it's an autoload; the menu
 	# instances that requested a pause don't survive the reload to release
 	# it themselves) -- so without this the freshly-loaded world would
-	# come up frozen, and stay that way.
+	# come up frozen, and stay that way. Same story for InputController's
+	# capture reasons (dm_world_menu.gd's own "dm_world_menu" reason, most
+	# likely, from switching worlds without closing the menu first) --
+	# without releasing those too, the new world comes up with movement
+	# and item use silently blocked instead of frozen outright, since both
+	# are gated on InputController.is_captured() now.
 	UiPauseGate.release_all()
+	InputController.release_all_captures()
 	await _flush_current_world()
 	current_world = world
 	pending_world = world

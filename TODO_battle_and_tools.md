@@ -566,6 +566,65 @@ simpler statement in the same message -- this is the one to build):
       but the two bugs found account for exactly the reported symptom and
       the fix now matches how the reference mechanic (Minecraft sneaking)
       actually works.
+- [x] Live test on your own controlled repro ("I changed the default
+      world so you start on one block surrounded by edges") still fell
+      straight through. Hand-built a matching 3x3x6 `limestone_slab` test
+      world myself (temporary, `worlds.json`/`world_5.sqlite`, both
+      removed again after) since neither existing saved world was actually
+      small (checked: 32x32 and 256x256 slabs, not "one block") -- with a
+      real repro finally in hand, added `debug_log` tracing
+      (`LedgeSafetyResource.debug_log`, same pattern as
+      `InputController.debug_log_input`) and caught the actual bug on the
+      first try: activated correctly, clamped correctly for two frames
+      *within* the margin -- then `"is_held=true is_grounded=false"` and
+      deactivated, followed by an uninterrupted fall. A capsule resting
+      only partially over an edge (even within the allowed margin)
+      doesn't reliably keep `is_on_floor()` true -- Godot's own collision
+      naturally flickers floor contact right at a boundary -- so gating
+      *continued* protection on that per-frame reading meant one flaky
+      "not grounded" frame threw the tracking away entirely.
+    - Rewrote (back to a post-`move_and_slide()` correction, this time
+      for real reasons, not the v1 mistake): `is_grounded` now only gates
+      whether to *start* tracking (so it doesn't kick in mid-jump), never
+      whether to keep protecting once active -- that only stops on
+      releasing Shift, or on a genuine deliberate jump (`velocity.y` above
+      a small threshold, so jumping off a ledge on purpose still works).
+      The correction itself now also zeroes velocity entirely (not just
+      horizontal) when it clamps, so gravity can't keep compounding a
+      fall the same frame's `move_and_slide()` already started.
+    - Verified on the real controlled platform this time: walking toward
+      an edge without Shift held falls straight through (confirmed
+      genuine baseline); holding Shift, the debug trace shows the exact
+      moment it starts clamping and the player's position stabilizes at
+      the cell boundary + margin (`x=-0.125`) with height essentially
+      unchanged (6.2555 -> 6.2142, not a fall) for as long as forward is
+      held, confirmed via multiple `pos` checks in a row all reporting the
+      identical clamped position. Releasing Shift correctly deactivates
+      tracking again. Added `unit_input_request_capture` along the way
+      (see the world-switch bug entry below) while building out this
+      test. Boot-checked clean.
+- [x] **Separate real bug you found in passing**: "changing worlds (to
+      save) and then changing back made it so I was unable to move my
+      character or place/remove blocks." Root cause: `dm_world_menu.gd`'s
+      world-select/create-and-switch handlers call
+      `WorldManager.switch_to_world()` directly without closing the menu
+      first (no `_set_menu_visible(false)`) -- so the
+      `InputController.request_capture("dm_world_menu")` it made while
+      open never gets released, and since `InputController` is an
+      autoload that survives the scene reload while the menu instance
+      that requested it doesn't, that capture reason is stuck forever,
+      silently blocking ALL movement and item use afterward (both gated
+      on `is_captured()`) -- not just in that session, but even after
+      switching to a *third* world, since nothing ever clears it.
+      `WorldManager.switch_to_world()` already had the exact same fix for
+      `UiPauseGate` for the exact same reason ("this autoload survives
+      scene reloads... the menu instances... don't survive the reload to
+      release it themselves") -- added the equivalent
+      `InputController.release_all_captures()` right alongside it.
+      Verified live via the command queue: requested a capture (mimicking
+      what the menu would leave behind), switched worlds, confirmed
+      `is_captured()` and `Input.mouse_mode` both correctly reset
+      afterward (previously would have stayed stuck). Boot-checked clean.
 - [x] Moving while holding Shift (grounded) = **half speed** (the
       "crouch" part of the mechanic, separate from the ledge-safety part
       but same key) -- turned out to already be done: the pre-existing
