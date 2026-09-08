@@ -1,0 +1,23 @@
+# Local dev/test container for the server only -- the client stays
+# un-dockerized (Vite's dev server / HMR loop is faster run natively); this
+# is for a consistent, disposable server environment and a step toward the
+# eventual deployment target.
+#
+#   docker compose up --build
+#
+services:
+  server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - "2567:2567"
+    volumes:
+      # Reserved for Phase 4's per-world SQLite files (worlds/<id>.sqlite) --
+      # nothing writes here yet in Phase 1, but the mount needs to exist
+      # from the start so world data survives container rebuilds once that
+      # code lands, matching the "downloadable/shareable world file" design
+      # goal in the migration plan.
+      - ./data:/app/packages/server/data
+    environment:
+      - PORT=2567

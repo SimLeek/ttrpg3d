@@ -1,17 +1,10 @@
-// Phase 0 scaffolding: bare Colyseus server, one hello-world room. Real
-// per-world rooms (WorldRoom, matching WorldManager's world = room mapping)
-// land in Phase 1/3 per the migration plan.
+// Real process entry point -- thin wrapper around server.ts's room/server
+// config, which is what actually gets exercised (via @colyseus/testing) by
+// this package's tests.
 
-import { defineServer, defineRoom } from "colyseus";
-import { HelloRoom } from "./rooms/HelloRoom.js";
+import { server } from "./server.js";
 
 const port = Number(process.env.PORT) || 2567;
-
-const server = defineServer({
-  rooms: {
-    hello: defineRoom(HelloRoom),
-  },
-});
 
 server.listen(port);
 console.log(`[ttrpg3d server] listening on ws://localhost:${port}`);

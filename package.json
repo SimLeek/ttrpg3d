@@ -7,7 +7,8 @@
     "dev:client": "pnpm --filter @ttrpg3d/client dev",
     "dev:server": "pnpm --filter @ttrpg3d/server dev",
     "dev": "pnpm --parallel -r run dev",
-    "build": "pnpm -r run build"
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test"
   },
   "packageManager": "pnpm@11.3.0"
 }
