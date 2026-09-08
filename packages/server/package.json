@@ -1,0 +1,22 @@
+{
+  "name": "@ttrpg3d/server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ttrpg3d/shared": "workspace:*",
+    "colyseus": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.0"
+  }
+}

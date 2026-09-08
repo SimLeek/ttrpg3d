@@ -1,0 +1,21 @@
+{
+  "name": "@ttrpg3d/client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^6.1.0",
+    "@ttrpg3d/shared": "workspace:*",
+    "noa-engine": "^0.33.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^7.0.0",
+    "vite": "^8.2.0"
+  }
+}

@@ -1,0 +1,17 @@
+packages:
+  - "packages/*"
+
+allowBuilds:
+  # Both are well-known, necessary native/postinstall build steps for this
+  # stack: esbuild fetches its platform binary (Vite depends on it),
+  # msgpackr-extract builds Colyseus's msgpack native binding.
+  esbuild: true
+  msgpackr-extract: true
+
+# noa-engine's own dependencies (aabb-3d, box-intersect) are pinned to git
+# repos owned by the same maintainer (fenomas) who publishes noa-engine
+# itself -- not third-party supply-chain risk, just an old-style dependency
+# declaration pnpm's exotic-subdependency check (a real, valuable protection
+# in general) doesn't distinguish from an untrusted one. Disabled here,
+# scoped to this repo only, not globally.
+blockExoticSubdeps: false
