@@ -10,7 +10,9 @@
 
 FROM node:26-alpine AS deps
 WORKDIR /app
-RUN corepack enable
+# corepack is no longer bundled in the node:26 images (removed from Node
+# core) -- install the exact pinned pnpm version directly instead.
+RUN npm install -g pnpm@11.3.0
 
 # Copy just the manifests first so `pnpm install` is its own cached layer,
 # independent of source-code changes.
@@ -21,7 +23,7 @@ RUN pnpm install --frozen-lockfile
 
 FROM node:26-alpine AS runtime
 WORKDIR /app
-RUN corepack enable
+RUN npm install -g pnpm@11.3.0
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 COPY --from=deps /app/packages/server/node_modules ./packages/server/node_modules
