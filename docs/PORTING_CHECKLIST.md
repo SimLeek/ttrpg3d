@@ -59,6 +59,12 @@ direct port) up front avoids that. The old implementation's *hard* part
 the soft-body physics question below gets settled by using a real physics
 library instead.
 
+**Logging**: log every origin-shift event to the browser devtools console
+(old origin, new origin, delta) — this is the always-available way to
+confirm shifting is happening and happening correctly even when it's too
+subtle to notice visually; pair it with the fixed reference objects called
+out in Phase 2 below as the visual half of the same check.
+
 ## Phase 2 — MVP (in progress / next up)
 
 Scope note (revised): movement is **not** a walk+jump subset anymore — port
@@ -67,10 +73,21 @@ played and rate well; re-deriving that feel later would be wasted work.
 Floating-origin shifting lands in this phase too, alongside movement, so
 both can be playtested together (see the section above). Voxel interaction
 is still scoped down to one hardcoded block type — `voxel_interactor.gd`'s
-full system is Phase 5.
+full system is Phase 5. Order below: the core walk/run movement first, then
+floating-origin shifting (so it's in place while the rest of movement is
+being built on top of it), then the rest of movement.
 
 - [ ] `scripts/movement_resource.gd` (94L) — **PORT** in full (speed/stamina/
       run, not a walk-only subset).
+- [ ] `levels/center_of_universe.gd` (167L) — **REDESIGN**, floating-origin
+      re-anchoring concept only (not the `SoftBody3D` re-bake workaround,
+      which the soft-body-library replacement in Phase 5 makes moot).
+      Deliverable for this phase: a small test area (a handful of voxels
+      arranged for jumping/climbing — steps, gaps, a wall), a few fixed
+      reference objects placed in it so an origin shift is visually
+      checkable while playing, and origin-shift events logged to the
+      browser console (old origin, new origin, delta) — see the logging
+      note in the section above.
 - [ ] `scripts/basic_jump_resource.gd` (53L) — **PORT** in full, including
       coyote-time.
 - [ ] `scripts/fall_resource.gd` (24L) — **PORT** in full.
@@ -84,15 +101,10 @@ full system is Phase 5.
 - [ ] `scripts/spring_arm_3d_look.gd` (103L) — **REDESIGN**, camera
       controller, moved up from Phase 5 (needed to actually playtest
       movement).
-- [ ] `levels/center_of_universe.gd` (167L) — **REDESIGN**, floating-origin
-      re-anchoring concept only (not the `SoftBody3D` re-bake workaround,
-      which the soft-body-library replacement in Phase 5 makes moot).
-      Deliverable for this phase: a small test area (a handful of voxels
-      arranged for jumping/climbing — steps, gaps, a wall), a few fixed
-      reference objects placed in it so an origin shift is visually
-      checkable while playing, and origin-shift events logged to the
-      browser console (old origin, new origin, delta) as a second,
-      always-available check.
+- [ ] `scripts/player_blob_ctrl.gd` (377L) — **REDESIGN**, moved up from
+      Phase 5 — the main controller hub tying movement/jump/fall/wall-jump/
+      stair-stepper/ledge-safety together is needed to actually playtest any
+      of them.
 - [ ] `scripts/pcg/limestone_slab_generator.gd` (39L) — **PORT**, good
       candidate for literally being the Phase 2 hardcoded/trivial world
       generator (deterministic, no randomness, bounded) — build the test
@@ -100,10 +112,6 @@ full system is Phase 5.
 - [ ] `scripts/items/voxelitem.gd` (91L) / `scripts/items/del_vox_item.gd`
       (55L) — **REDESIGN**, collapsed to "place/break one hardcoded block
       type," full multi-type version deferred to Phase 5.
-- [ ] `scripts/player_blob_ctrl.gd` (377L) — **REDESIGN**, moved up from
-      Phase 5 — the main controller hub tying movement/jump/fall/wall-jump/
-      stair-stepper/ledge-safety together is needed to actually playtest any
-      of them.
 - [ ] **Requires real playtesting, not just automated tests**: movement feel
       (jump/climb/wall-kick) and origin-shift visual correctness need you to
       actually play the test area — `@colyseus/testing` and two-tab checks
