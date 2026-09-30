@@ -13,6 +13,9 @@ importers:
       '@babylonjs/core':
         specifier: ^6.1.0
         version: 6.49.0
+      '@colyseus/sdk':
+        specifier: ^0.18.2
+        version: 0.18.2(@colyseus/core@0.18.11)(typescript@7.0.2)(zod@4.5.4)
       '@ttrpg3d/shared':
         specifier: workspace:*
         version: link:../shared
@@ -32,6 +35,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@colyseus/schema':
+        specifier: ^5.0.27
+        version: 5.0.27(typescript@7.0.2)
       '@ttrpg3d/shared':
         specifier: workspace:*
         version: link:../shared

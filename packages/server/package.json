@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@colyseus/schema": "^5.0.27",
     "@ttrpg3d/shared": "workspace:*",
     "colyseus": "^0.18.5",
     "tsx": "^4.23.0"

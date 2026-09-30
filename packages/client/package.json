@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@babylonjs/core": "^6.1.0",
+    "@colyseus/sdk": "^0.18.2",
     "@ttrpg3d/shared": "workspace:*",
     "noa-engine": "^0.33.0"
   },

@@ -5,9 +5,11 @@
 
 import { defineServer, defineRoom } from "colyseus";
 import { HelloRoom } from "./rooms/HelloRoom.js";
+import { WorldRoom } from "./rooms/WorldRoom.js";
 
 export const server = defineServer({
   rooms: {
     hello: defineRoom(HelloRoom),
+    world: defineRoom(WorldRoom),
   },
 });
