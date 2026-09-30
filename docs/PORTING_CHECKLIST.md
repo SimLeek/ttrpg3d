@@ -61,23 +61,53 @@ library instead.
 
 ## Phase 2 — MVP (in progress / next up)
 
-Scope is deliberately narrow per the plan (hardcoded flat world, walk+jump
-only, one hardcoded block type). Relevant old files are references for the
-*math/shape*, not things to port in full yet — the full versions land in
-Phase 5/6.
+Scope note (revised): movement is **not** a walk+jump subset anymore — port
+the full, already-tuned movement systems now, since they've actually been
+played and rate well; re-deriving that feel later would be wasted work.
+Floating-origin shifting lands in this phase too, alongside movement, so
+both can be playtested together (see the section above). Voxel interaction
+is still scoped down to one hardcoded block type — `voxel_interactor.gd`'s
+full system is Phase 5.
 
-- [ ] `scripts/movement_resource.gd` (94L) — **REDESIGN**, subset only (walk
-      speed, no run/slow stats yet).
-- [ ] `scripts/basic_jump_resource.gd` (53L) — **REDESIGN**, subset only (jump
-      impulse, no coyote-time/wall-kick yet).
-- [ ] `scripts/fall_resource.gd` (24L) — **REDESIGN**, gravity/terminal
-      velocity only.
+- [ ] `scripts/movement_resource.gd` (94L) — **PORT** in full (speed/stamina/
+      run, not a walk-only subset).
+- [ ] `scripts/basic_jump_resource.gd` (53L) — **PORT** in full, including
+      coyote-time.
+- [ ] `scripts/fall_resource.gd` (24L) — **PORT** in full.
+- [ ] `scripts/wall_jump_resource.gd` (54L) — **PORT**, moved up from Phase 5.
+      **Spike noa's contact-query API first** (not confirmed it exposes
+      per-face contact queries equivalent to Godot's `ShapeCast3D`).
+- [ ] `scripts/ledge_safety_resource.gd` (210L) / `playable/ledge_grabber.gd`
+      (359L) — **PORT**, moved up from Phase 5, same contact-query spike.
+- [ ] `scripts/stair_stepper_resource.gd` (25L) — **PORT**, moved up from
+      Phase 5.
+- [ ] `scripts/spring_arm_3d_look.gd` (103L) — **REDESIGN**, camera
+      controller, moved up from Phase 5 (needed to actually playtest
+      movement).
+- [ ] `levels/center_of_universe.gd` (167L) — **REDESIGN**, floating-origin
+      re-anchoring concept only (not the `SoftBody3D` re-bake workaround,
+      which the soft-body-library replacement in Phase 5 makes moot).
+      Deliverable for this phase: a small test area (a handful of voxels
+      arranged for jumping/climbing — steps, gaps, a wall), a few fixed
+      reference objects placed in it so an origin shift is visually
+      checkable while playing, and origin-shift events logged to the
+      browser console (old origin, new origin, delta) as a second,
+      always-available check.
 - [ ] `scripts/pcg/limestone_slab_generator.gd` (39L) — **PORT**, good
       candidate for literally being the Phase 2 hardcoded/trivial world
-      generator (deterministic, no randomness, bounded).
+      generator (deterministic, no randomness, bounded) — build the test
+      area's jump/climb geometry on top of it.
 - [ ] `scripts/items/voxelitem.gd` (91L) / `scripts/items/del_vox_item.gd`
       (55L) — **REDESIGN**, collapsed to "place/break one hardcoded block
       type," full multi-type version deferred to Phase 5.
+- [ ] `scripts/player_blob_ctrl.gd` (377L) — **REDESIGN**, moved up from
+      Phase 5 — the main controller hub tying movement/jump/fall/wall-jump/
+      stair-stepper/ledge-safety together is needed to actually playtest any
+      of them.
+- [ ] **Requires real playtesting, not just automated tests**: movement feel
+      (jump/climb/wall-kick) and origin-shift visual correctness need you to
+      actually play the test area — `@colyseus/testing` and two-tab checks
+      cover message flow and persistence, not feel.
 
 ## Phase 3 — Low-risk data/math ports
 
@@ -138,23 +168,17 @@ Phase 5/6.
       they're free, already-designed content, not just test data. Scope this
       once Phase 4's real per-world storage exists.
 
-## Phase 5 — Full player movement + voxel interaction
+## Phase 5 — Voxel interaction (movement itself moved to Phase 2)
 
-- [ ] `scripts/player_blob_ctrl.gd` (377L) — **REDESIGN**, main controller
-      hub, rebuilt against noa's AABB-sweep physics.
-- [ ] `scripts/movement_resource.gd`, `basic_jump_resource.gd`,
-      `fall_resource.gd` — **REDESIGN**, full versions now (stamina/run,
-      coyote-time, etc.), superseding Phase 2's stubs.
-- [ ] `scripts/wall_jump_resource.gd` (54L) — **REDESIGN**. Spike noa's
-      contact-query API first (per plan — not confirmed it exposes
-      Godot-`ShapeCast3D`-equivalent per-face contact queries).
-- [ ] `scripts/ledge_safety_resource.gd` (210L) / `playable/ledge_grabber.gd`
-      (359L) — **REDESIGN**, same contact-query spike applies.
-- [ ] `scripts/stair_stepper_resource.gd` (25L) — **REDESIGN**.
+Movement (`player_blob_ctrl.gd` and the full set of movement/jump/fall/
+wall-jump/ledge-safety/stair-stepper resources, plus the camera controller
+and floating-origin shifting) moved up into Phase 2 — see there. This phase
+now covers extending Phase 2's single-hardcoded-block placement to the real
+voxel interaction system, plus the movement-adjacent items that didn't need
+to land as early.
+
 - [ ] `playable/squeezer_rays.gd` (119L) — **REDESIGN**, low priority within
       this phase (tight-space movement slowdown, not core movement feel).
-- [ ] `scripts/spring_arm_3d_look.gd` (103L) — **REDESIGN**, camera
-      controller against Babylon's camera APIs.
 - [ ] `scripts/input/input_controller.gd` (257L) — **REDESIGN**. Carries
       forward an important *pattern*, not just code: single reference-counted
       owner of "what currently owns player input," replacing scattered ad hoc
