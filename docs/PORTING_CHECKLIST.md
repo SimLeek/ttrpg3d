@@ -31,8 +31,33 @@ project, reiterated across the TODO docs — don't regress on these):
 - The old project's code-generated UI was tolerated, not loved — worth
   actually using a real UI approach in the new stack where it's not much
   extra cost, rather than reflexively rebuilding the same pattern.
+- Where a system needs real engine/physics/shader capability (soft-body
+  physics, shaders, etc.), prefer porting in a well-maintained JS/Babylon
+  library over reimplementing Godot's custom workaround for it. Several of
+  the old repo's biggest custom systems exist specifically to work around
+  gaps in Godot/godot_voxel, not because the behavior itself is hard — the
+  new stack's own ecosystem libraries are likely to just be better at these
+  than a bespoke port would be.
 
 ---
+
+## Early architectural priority — floating-origin shifting
+
+`levels/center_of_universe.gd`'s floating-origin re-anchoring (shift the
+world origin back toward zero as the player moves far from it, to avoid
+float-precision jitter/glitches at large coordinates) is still a good idea
+in the new stack, and **worth doing early** — as close to Phase 2 as
+practical — rather than retrofitting it once movement, multiplayer position
+sync, and world-streaming code all already assume a single fixed origin.
+Retrofitting this kind of thing after the fact tends to touch everywhere
+position is read or written; deciding the coordinate-system convention
+(client-local re-anchoring vs. server-authoritative chunk-relative
+coordinates — the server/multiplayer model makes this a bit different from
+the old single-player version, worth a short design pass rather than a
+direct port) up front avoids that. The old implementation's *hard* part
+(manually re-baking `SoftBody3D` meshes on re-anchor) doesn't apply here if
+the soft-body physics question below gets settled by using a real physics
+library instead.
 
 ## Phase 2 — MVP (in progress / next up)
 
@@ -104,6 +129,14 @@ Phase 5/6.
 - [ ] Note: the limestone-slab generator's `voxel_id` fill-block picker param
       was implemented but **never live-tested** in the old repo — verify it
       properly against the new catalog rather than assuming it worked.
+- [ ] **NEW** — import old worlds. The old repo's voxel data is stored via
+      `VoxelStreamSQLite` — an actual per-world SQLite file — which should be
+      directly convertible into the new per-world `chunks` table with a
+      fairly small conversion script (schema differs, but it's SQLite→SQLite,
+      not a format that needs re-simulating). Worth doing: these worlds were
+      built for/with the same movement systems the new client is porting, so
+      they're free, already-designed content, not just test data. Scope this
+      once Phase 4's real per-world storage exists.
 
 ## Phase 5 — Full player movement + voxel interaction
 
@@ -145,14 +178,18 @@ Phase 5/6.
 - [ ] `playable/health.gd` (59L) — **PORT**, damage/regen model is mostly
       pure math + simple state.
 - [ ] `playable/blob_body_3d.gd` (467L), `scripts/limited_blob_body.gd`
-      (142L), `scripts/limited_blob_body_extra.gd` (199L) — **RE-EVALUATE,
-      likely DROP/REPLACE**. ~808 lines of custom soft-body physics exist
-      specifically because Godot's `SoftBody3D` didn't survive this project's
-      floating-origin re-anchoring (see old `center_of_universe.gd`'s manual
-      re-bake workaround). That specific problem may not exist in
-      Babylon.js/noa at all — don't blindly port; check whether Babylon's own
-      physics or a cheap squash-stretch shader gets the same visual result
-      for a fraction of the code before committing to a rewrite of this.
+      (142L), `scripts/limited_blob_body_extra.gd` (199L) — **DROP as a
+      porting target; replace with a real soft-body physics library.**
+      ~808 lines of custom mass-spring soft-body code exist specifically
+      because Godot's built-in `SoftBody3D` didn't survive this project's
+      floating-origin re-anchoring (manual per-frame mesh re-baking was the
+      workaround). That's a Godot-specific gap, not a hard problem in
+      general — the new stack should be able to just use an existing,
+      better-maintained JS soft-body/physics library instead of
+      reimplementing one by hand. **NEW** — spike which library to use
+      (options to evaluate live in whatever physics engine ends up paired
+      with noa/Babylon) as its own small task before this phase's movement
+      work depends on it.
 
 ## Phase 6 — Inventory/items
 
@@ -210,6 +247,12 @@ Phase 5/6.
 - [ ] `scripts/items/structure_saver_item.gd` (210L),
       `structure_placer_item.gd` (241L), `scripts/items/saved_structure.gd`
       (45L) — **PORT/REDESIGN**.
+- [ ] **NEW** — import old saved structures. These are Godot `.tres` resource
+      files (not SQLite, unlike world voxel data), but `saved_structure.gd`'s
+      shape is simple and fully known (size, pivot, flat voxel-id array) —
+      a small parser for that resource format is enough to pull them into
+      the new structure format, reusing content from the old repo's DM
+      build-tool work.
 - [ ] `scripts/items/plane_selector_item.gd` (118L) — **PORT/REDESIGN**.
 - [ ] `scripts/pcg/build_session.gd` (64L) — **PORT/REDESIGN**, shared
       plane-select state.
@@ -242,17 +285,24 @@ Phase 5/6.
 
 ## Phase 9 — Lighting + voxel tick system
 
-- [ ] `scripts/light_registry.gd` (290L) — **REDESIGN**, pooled
-      nearest-N dynamic lights. **Spike first** whether Babylon/noa supports
-      this model at all (per plan) — noa's default mesher gives baked AO,
-      not necessarily dynamic point-light pooling.
-- [ ] `scripts/pcg/voxel_lighting.gd` (50L) — **DO NOT re-attempt as-is**.
-      The old "GLOW" cheap per-voxel emission mode was built and **fully
-      reverted**: old vs. newly-generated chunks had incompatible channel
-      depth, causing a crash when both were in view. Decide fresh whether
-      cheap glow lighting is wanted at all before reattempting this
-      approach — it's a real unresolved design decision, not just
-      unfinished code.
+- [ ] **NEW — design lighting fresh, don't port the old model.** Both of the
+      old repo's lighting approaches were Godot-specific workarounds: pooled
+      nearest-N real `OmniLight3D`s (`light_registry.gd`, 290L) because
+      per-voxel emission wasn't cheaply available, and a CPU-painted
+      `CHANNEL_COLOR` "GLOW" hack (`voxel_lighting.gd`, 50L) that was built
+      and **fully reverted** after a chunk-format migration crash (old vs.
+      newly-generated chunks had incompatible channel depth). Web needs to
+      stay lightweight, and this time light-emitting voxels can likely just
+      set real emissive material properties directly (Babylon materials
+      support emissive color/texture natively) instead of routing through
+      either of those workarounds. Treat both old files as reference for
+      *what not to redo*, not as porting targets — design this against
+      Babylon's actual material/lighting capabilities from scratch.
+- [ ] Keep as fallback ideas if flat emissive materials aren't enough
+      visually or for performance at scale: the pooled nearest-N dynamic
+      light model, or the deferred real per-light occlusion idea below —
+      but don't default to either without checking whether plain emission
+      already looks right first.
 - [ ] `scripts/sunsetter.gd` (95L) — **PORT** concept (occlusion-raycast to
       sun drives indoor/outdoor lighting transition).
 - [ ] `scripts/pcg/voxel_tick_system.gd` (102L) — **PORT**, engine-agnostic
