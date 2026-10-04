@@ -2,12 +2,30 @@ import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, encodeChunk, type ChunkRequest } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, type WorldStateType } from "./WorldState.js";
 import { fillChunk, spawnPosition } from "../world/testArea.js";
+import { createWorldStorage, type WorldStorage } from "../world/storage.js";
+import { join } from "node:path";
 
 interface PlayerInput {
   x: number;
   y: number;
   z: number;
   yaw: number;
+}
+
+interface EditBlockMessage {
+  x: number;
+  y: number;
+  z: number;
+  voxelId: number;
+}
+
+/** Positive-and-negative-safe modulo, same reasoning as testArea.ts's own helper (JS's `%` can return negatives). */
+function mod(n: number, m: number): number {
+  return ((n % m) + m) % m;
+}
+
+function flatIndex(i: number, j: number, k: number): number {
+  return i * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + k;
 }
 
 export class WorldRoom extends Room<{ state: WorldStateType }> {
@@ -19,15 +37,52 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // (e.g. an old client, or @colyseus/testing's createRoom with no options)
   // still works rather than throwing -- real clients always pass one.
   worldId = "default";
+  storage!: WorldStorage;
 
   onCreate(options?: { worldId?: string }) {
     this.worldId = options?.worldId || "default";
+    this.storage = createWorldStorage(join(process.cwd(), "data", "worlds"), this.worldId);
     this.setState(new WorldState());
 
     this.onMessage<ChunkRequest>("requestChunk", (client, { cx, cy, cz }) => {
+      const saved = this.storage.getChunk(cx, cy, cz);
+      if (saved) {
+        client.sendBytes("chunk", encodeChunk(cx, cy, cz, saved));
+        return;
+      }
+      // Unmodified chunk -- regenerate from the generator, don't save it.
+      // Only edited chunks ever get persisted (the sparse-diff model the
+      // architecture plan committed to from the start).
       const voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
       fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId);
       client.sendBytes("chunk", encodeChunk(cx, cy, cz, voxels));
+    });
+
+    // No anti-cheat/validation beyond basic sanity, per the already-
+    // confirmed trust model -- DM-permission gating is later (Phase 8),
+    // not now.
+    this.onMessage<EditBlockMessage>("editBlock", (client, { x, y, z, voxelId }) => {
+      const cx = Math.floor(x / CHUNK_SIZE);
+      const cy = Math.floor(y / CHUNK_SIZE);
+      const cz = Math.floor(z / CHUNK_SIZE);
+      const li = mod(x, CHUNK_SIZE);
+      const lj = mod(y, CHUNK_SIZE);
+      const lk = mod(z, CHUNK_SIZE);
+
+      let voxels = this.storage.getChunk(cx, cy, cz);
+      if (!voxels) {
+        voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
+        fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId);
+      } else {
+        // getChunk returns the storage's own buffer -- copy before mutating
+        // so a second edit to the same chunk can't corrupt anything still
+        // referencing the original (defensive; cheap at chunk size).
+        voxels = voxels.slice();
+      }
+      voxels[flatIndex(li, lj, lk)] = voxelId;
+      this.storage.setChunk(cx, cy, cz, voxels);
+
+      this.broadcast("blockChanged", { x, y, z, voxelId }, { except: client });
     });
 
     // No anti-cheat / physics-verification requirement (per the migration
@@ -42,6 +97,10 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.z = z;
       player.yaw = yaw;
     });
+  }
+
+  onDispose() {
+    this.storage.close();
   }
 
   onJoin(client: Client, options?: { name?: string }) {
