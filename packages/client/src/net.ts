@@ -25,7 +25,7 @@ interface RemotePlayerLike {
 // and this keeps the message volume light without adding visible lag.
 const POS_SEND_EVERY_N_TICKS = 3;
 
-export async function connectAndStreamWorld(noa: Engine, url: string, playerName: string): Promise<void> {
+export async function connectAndStreamWorld(noa: Engine, url: string, playerName: string, worldId: string): Promise<void> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
   // matchmaking round-trip can possibly finish) -- so the listener below
@@ -59,7 +59,10 @@ export async function connectAndStreamWorld(noa: Engine, url: string, playerName
   );
 
   const client = new Client(url);
-  room = await client.joinOrCreate("world", { name: playerName });
+  // worldId is matched against WorldRoom.filterBy(['worldId']) server-side
+  // (server.ts) -- without it every player would land in the same shared
+  // room regardless of which world they picked.
+  room = await client.joinOrCreate("world", { name: playerName, worldId });
   for (const req of queuedRequests) room.send("requestChunk", req);
   queuedRequests.length = 0;
 

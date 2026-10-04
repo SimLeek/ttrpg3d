@@ -1,55 +1,92 @@
-// Phase 2: the first real playable slice. Connects to the server's "world"
-// room, streams the test-area terrain as chunks, and drives movement with a
-// ported version of the old game's tuned speed/jump/fall systems -- see
-// movement/PlayerController.ts for what's in scope this phase (walk/sprint/
-// jump/coyote-time/fall) vs. deferred (wall-kick/ledge-safety/stair-
-// stepping, see docs/PORTING_CHECKLIST.md). Floating-origin shifting is
-// noa-engine's own built-in behavior (see originShiftLogger.ts) -- this
-// file's job for that piece is just the test area's marker-pillar block and
-// wiring up the console log.
+// Entry point: wires up the router between the worlds lobby page (default
+// route) and the actual 3D game view (started once a world is picked).
+// See lobby.ts and game.ts for what each view actually does.
 
-import { Engine } from "noa-engine";
-import { CHUNK_SIZE } from "@ttrpg3d/shared";
-import { connectAndStreamWorld } from "./net.js";
-import { installPlayerController } from "./movement/PlayerController.js";
-import { installOriginShiftLogger } from "./originShiftLogger.js";
+import Navigo from "navigo";
+import { mountLobby, type Account, type WorldRecord } from "./lobby.js";
+import { startGame, type RunningGame } from "./game.js";
+import { fetchAccounts, fetchWorlds, ACCOUNT_STORAGE_KEY } from "./api.js";
 
-// Matches testArea.ts's spawnPosition() exactly -- avoids the player
-// rendering somewhere wrong for the one tick before the server's own spawn
-// position round-trips back. NOT the area center -- see that function's
-// comment for why (it collided with the center marker pillar).
-const SPAWN: [number, number, number] = [8, 5, 24];
+const wsUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
+const httpUrl = wsUrl.replace(/^ws/, "http");
 
-const noa = new Engine({
-  debug: true,
-  showFPS: true,
-  chunkSize: CHUNK_SIZE,
-  chunkAddDistance: 2.5,
-  chunkRemoveDistance: 3.5,
-  playerStart: SPAWN,
-  // Closer to Godot's typical 60Hz physics step than noa's own 30Hz
-  // default -- the ported movement constants (speed/friction-as-max-delta)
-  // were tuned against that, and matching tick rate avoids having to
-  // retune them just because the engine changed.
-  tickRate: 60,
-  // Matches the old repo's center_of_universe.gd threshold (128) closely
-  // enough in spirit -- rebase a bit more eagerly than noa's own default
-  // (25) is fine; smaller/more-frequent shifts are cheaper to verify during
-  // the Phase 2 playtest than rare/large ones.
-  originRebaseDistance: 40,
+const router = new Navigo("/");
+const lobbyEl = document.getElementById("lobby")!;
+
+// Navigo resolves routes from the URL alone; the world/account the lobby's
+// "Play" click picked travels through this instead of being re-fetched or
+// re-encoded into the URL -- fine for the normal lobby -> game handoff, but
+// it's empty on a direct URL load or a page refresh while already in a
+// game (both reproduced live: refreshing mid-game bounced to the lobby
+// instead of staying in the game). The /world/:id handler below falls back
+// to reconstructing the same state from localStorage + a server fetch in
+// that case, rather than giving up and going to the lobby.
+let pendingPlay: { world: WorldRecord; account: Account } | null = null;
+
+let runningGame: RunningGame | null = null;
+
+function stopRunningGameIfAny(): void {
+  if (runningGame) {
+    runningGame.stop();
+    runningGame = null;
+  }
+}
+
+router.on("/", () => {
+  // Leaving the game route (including via the browser back button, which
+  // Navigo resolves the same as any other navigation) previously left
+  // noa's canvas running full-screen on top of the lobby -- reproduced
+  // live, "stays in the world scene" until a hard refresh. Tear it down
+  // explicitly instead.
+  stopRunningGameIfAny();
+  lobbyEl.hidden = false;
+  mountLobby(lobbyEl, httpUrl, (world, account) => {
+    pendingPlay = { world, account };
+    router.navigate(`/world/${world.id}`);
+  });
 });
 
-noa.registry.registerMaterial("ground", { color: [0.45, 0.36, 0.22] });
-noa.registry.registerMaterial("marker", { color: [1.0, 0.1, 0.8] });
-noa.registry.registerBlock(1, { material: "ground" });
-noa.registry.registerBlock(2, { material: "marker" });
+router.on("/world/:id", (match) => {
+  const worldId = match?.data?.id;
+  if (!worldId) {
+    router.navigate("/");
+    return;
+  }
 
-installPlayerController(noa);
-installOriginShiftLogger(noa);
+  if (pendingPlay && pendingPlay.world.id === worldId) {
+    lobbyEl.hidden = true;
+    runningGame = startGame(worldId, pendingPlay.world.name, wsUrl, pendingPlay.account.displayName);
+    return;
+  }
 
-const serverUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
-const playerName = `Player-${Math.floor(Math.random() * 10000)}`;
-
-connectAndStreamWorld(noa, serverUrl, playerName).catch((err) => {
-  console.error("[net] failed to connect to world server:", err);
+  // Direct URL load or a refresh while already in-game: pendingPlay is
+  // gone, but the account id is still in localStorage and the world id is
+  // right there in the URL -- reconstruct instead of bouncing to the
+  // lobby and losing the session.
+  void (async () => {
+    const storedAccountId = localStorage.getItem(ACCOUNT_STORAGE_KEY);
+    if (!storedAccountId) {
+      router.navigate("/");
+      return;
+    }
+    const accounts = await fetchAccounts(httpUrl);
+    const account = accounts.find((a) => a.id === storedAccountId);
+    if (!account) {
+      router.navigate("/");
+      return;
+    }
+    const worlds = await fetchWorlds(httpUrl, account.id);
+    const world = worlds.find((w) => w.id === worldId);
+    if (!world) {
+      // Valid account, but this world isn't (or no longer is) visible to
+      // it -- genuinely can't reconstruct, lobby is the right fallback.
+      router.navigate("/");
+      return;
+    }
+    pendingPlay = { world, account };
+    lobbyEl.hidden = true;
+    runningGame = startGame(world.id, world.name, wsUrl, account.displayName);
+  })();
 });
+
+router.resolve();

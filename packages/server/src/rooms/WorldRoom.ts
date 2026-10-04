@@ -11,12 +11,22 @@ interface PlayerInput {
 }
 
 export class WorldRoom extends Room<{ state: WorldStateType }> {
-  onCreate() {
+  // Set once in onCreate from the first joiner's options -- paired with
+  // `.filterBy(['worldId'])` on this room's registration (server.ts), which
+  // tells Colyseus's matchmaker that different worldIds need different room
+  // instances rather than everyone piling into one shared "world" room.
+  // Falls back to "default" only so a room created with no worldId at all
+  // (e.g. an old client, or @colyseus/testing's createRoom with no options)
+  // still works rather than throwing -- real clients always pass one.
+  worldId = "default";
+
+  onCreate(options?: { worldId?: string }) {
+    this.worldId = options?.worldId || "default";
     this.setState(new WorldState());
 
     this.onMessage<ChunkRequest>("requestChunk", (client, { cx, cy, cz }) => {
       const voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
-      fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE);
+      fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId);
       client.sendBytes("chunk", encodeChunk(cx, cy, cz, voxels));
     });
 
@@ -42,11 +52,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     player.y = sy;
     player.z = sz;
     this.state.players.set(client.sessionId, player);
-    console.log(`[WorldRoom] ${player.name} (${client.sessionId}) joined`);
+    console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined`);
   }
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
-    console.log(`[WorldRoom] ${client.sessionId} left`);
+    console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }
 }
