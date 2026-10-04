@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@colyseus/better-call": "^1.3.3",
     "@colyseus/schema": "^5.0.27",
     "@ttrpg3d/shared": "workspace:*",
     "colyseus": "^0.18.5",

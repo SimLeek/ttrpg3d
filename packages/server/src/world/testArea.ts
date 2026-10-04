@@ -66,6 +66,54 @@ const MARKER_HEIGHT = 5; // blocks above the floor
 const GRID_PILLAR_SPACING = 16;
 const GRID_PILLAR_HEIGHT = 4;
 
+// Per-world variant region: a small 5x5 footprint near spawn, clear of the
+// stairs/gap/wall/markers, whose actual block structure depends on the
+// world's id. Added because two different worlds looked completely
+// identical in practice -- confirmed live ("impossible to tell which I'm
+// in") -- an on-screen label was tried first and explicitly rejected in
+// favor of this: real, lookable-at differences in the terrain itself.
+// Deliberately NOT full per-world storage (that's still Phase 4) -- this
+// is one more deterministic function of (worldId, position), same spirit
+// as everything else in this file, just salted by worldId too.
+const VARIANT_X0 = 36;
+const VARIANT_Z0 = 20;
+const VARIANT_SIZE = 5;
+
+/** Small, deterministic string hash (not cryptographic, doesn't need to be) -- just needs to spread different world ids across the variant patterns below. */
+function hashString(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
+
+/** Which of the 4 variant patterns `localX,localZ` (each 0..VARIANT_SIZE-1) belongs to, for pattern index `variant`. */
+function inVariantPattern(variant: number, localX: number, localZ: number): boolean {
+  const mid = Math.floor(VARIANT_SIZE / 2);
+  switch (variant) {
+    case 0: // solid platform
+      return true;
+    case 1: // plus/cross
+      return localX === mid || localZ === mid;
+    case 2: // hollow ring
+      return localX === 0 || localX === VARIANT_SIZE - 1 || localZ === 0 || localZ === VARIANT_SIZE - 1;
+    default: // lone center pillar (handled separately below for extra height)
+      return localX === mid && localZ === mid;
+  }
+}
+
+function variantRegionBlockAt(worldId: string, wx: number, wy: number, wz: number): number | null {
+  const localX = wx - VARIANT_X0;
+  const localZ = wz - VARIANT_Z0;
+  if (localX < 0 || localX >= VARIANT_SIZE || localZ < 0 || localZ >= VARIANT_SIZE) return null;
+
+  const variant = hashString(worldId) % 4;
+  const height = variant === 3 ? FLOOR_TOP + 6 : FLOOR_TOP + 1; // pattern 3 is a single tall pillar, the rest are one block tall
+  if (inVariantPattern(variant, localX, localZ) && wy > FLOOR_TOP && wy <= height) return MARKER;
+  return null;
+}
+
 function inStairColumn(wx: number): number | null {
   if (wx < STAIR_X0) return null;
   const step = Math.floor((wx - STAIR_X0) / STAIR_STEP_DEPTH);
@@ -78,7 +126,7 @@ function mod(n: number, m: number): number {
   return ((n % m) + m) % m;
 }
 
-function handBuiltAreaBlockAt(wx: number, wy: number, wz: number): number {
+function handBuiltAreaBlockAt(worldId: string, wx: number, wy: number, wz: number): number {
   // Marker pillars take priority -- thin (1x1), so they don't interfere with
   // the floor/stair/wall layout around them.
   for (const [mx, mz] of MARKER_POINTS) {
@@ -86,6 +134,9 @@ function handBuiltAreaBlockAt(wx: number, wy: number, wz: number): number {
       return MARKER;
     }
   }
+
+  const variantBlock = variantRegionBlockAt(worldId, wx, wy, wz);
+  if (variantBlock !== null) return variantBlock;
 
   const overGap = wx >= GAP_X0 && wx < GAP_X1;
   const overWall = wx >= WALL_X0 && wx < WALL_X1 && wz >= WALL_Z0 && wz < WALL_Z1;
@@ -116,10 +167,10 @@ function infinitePlaneBlockAt(wx: number, wy: number, wz: number): number {
   return AIR;
 }
 
-/** World-voxel coords -> block id. Pure function, same input always gives same output. */
-export function blockAt(wx: number, wy: number, wz: number): number {
+/** World-voxel coords -> block id, salted by worldId (see the variant region above). Pure function, same input always gives same output. */
+export function blockAt(worldId: string, wx: number, wy: number, wz: number): number {
   const inHandBuiltArea = wx >= 0 && wx < AREA_SIZE && wz >= 0 && wz < AREA_SIZE;
-  return inHandBuiltArea ? handBuiltAreaBlockAt(wx, wy, wz) : infinitePlaneBlockAt(wx, wy, wz);
+  return inHandBuiltArea ? handBuiltAreaBlockAt(worldId, wx, wy, wz) : infinitePlaneBlockAt(wx, wy, wz);
 }
 
 /** Fill a CHUNK_SIZE^3 flat voxel array (x-major, matching noa's ndarray.set(i,j,k,v) order) for the chunk whose low corner is (originX, originY, originZ) in world-voxel space. */
@@ -129,12 +180,13 @@ export function fillChunk(
   originX: number,
   originY: number,
   originZ: number,
+  worldId: string,
 ): void {
   let idx = 0;
   for (let i = 0; i < chunkSize; i++) {
     for (let j = 0; j < chunkSize; j++) {
       for (let k = 0; k < chunkSize; k++) {
-        voxels[idx++] = blockAt(originX + i, originY + j, originZ + k);
+        voxels[idx++] = blockAt(worldId, originX + i, originY + j, originZ + k);
       }
     }
   }

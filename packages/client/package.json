@@ -12,6 +12,7 @@
     "@babylonjs/core": "^6.1.0",
     "@colyseus/sdk": "^0.18.2",
     "@ttrpg3d/shared": "workspace:*",
+    "navigo": "^8.11.1",
     "noa-engine": "^0.33.0"
   },
   "devDependencies": {

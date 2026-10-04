@@ -4,4 +4,10 @@ dist/
 *.sqlite
 *.log
 .DS_Store
-data/
+/data/
+# The server's runtime accounts/worlds JSON store (packages/server/src/data/
+# is source code and must NOT match here -- this pattern is anchored to
+# avoid the same mistake as the root /data/ entry above, which originally
+# had no leading slash and silently excluded that source directory from
+# git entirely until caught before this commit).
+/packages/server/data/

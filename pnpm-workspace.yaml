@@ -5,6 +5,10 @@ allowBuilds:
   # Both are well-known, necessary native/postinstall build steps for this
   # stack: esbuild fetches its platform binary (Vite depends on it),
   # msgpackr-extract builds Colyseus's msgpack native binding.
+  # (better-sqlite3 was tried for the accounts/worlds store and its native
+  # build failed outright in this environment -- node-gyp/compile error
+  # against this Node version -- so that store uses a plain JSON file
+  # instead; nothing here needs it.)
   esbuild: true
   msgpackr-extract: true
 
