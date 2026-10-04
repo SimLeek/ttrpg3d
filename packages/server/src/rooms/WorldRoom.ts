@@ -3,6 +3,7 @@ import { CHUNK_SIZE, encodeChunk, type ChunkRequest } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, type WorldStateType } from "./WorldState.js";
 import { fillChunk, spawnPosition } from "../world/testArea.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
+import { mod } from "../world/mathUtils.js";
 import { join } from "node:path";
 
 interface PlayerInput {
@@ -17,11 +18,6 @@ interface EditBlockMessage {
   y: number;
   z: number;
   voxelId: number;
-}
-
-/** Positive-and-negative-safe modulo, same reasoning as testArea.ts's own helper (JS's `%` can return negatives). */
-function mod(n: number, m: number): number {
-  return ((n % m) + m) % m;
 }
 
 function flatIndex(i: number, j: number, k: number): number {

@@ -203,6 +203,15 @@ hardcoded-block placement to the real multi-block-type system.
 - [ ] Carry forward: **fixed mod-id-base scheme** (`MOD_VOXEL_ID_BASE =
       1000`) — exists because an earlier append-only scheme caused real save
       corruption. Don't regress.
+      **Found live, R&D session**: this project's current chunk voxel
+      format (packages/shared's encodeChunk/decodeChunk, and the SQLite
+      BLOB storage) is a single byte per voxel (Uint8Array) end to end,
+      capping real ids at 255 -- confirmed by a real bug (MARKER briefly
+      at id 998, silently wrapped to 230 on every write, found via a
+      saved chunk's actual byte histogram). `MOD_VOXEL_ID_BASE=1000`
+      can't work as-is against this format; whichever phase builds the
+      mod system needs to widen the wire format (Uint16Array, most
+      likely) before or alongside it, not just reserve the id range.
 - [ ] **NEW** — missing-mod-blocks warning/repair system: detect on world
       load when a world references a mod-voxel id that's now missing or
       reassigned (real, described-as-silent-corruption data-integrity issue

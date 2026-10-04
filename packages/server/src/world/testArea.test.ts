@@ -1,29 +1,37 @@
 import { describe, it, expect } from "vitest";
-import { blockAt, AIR, GROUND, MARKER, AREA_SIZE } from "./testArea.js";
+import { AIR, DIRT } from "@ttrpg3d/shared";
+import { blockAt, GROUND, MARKER, AREA_SIZE } from "./testArea.js";
+import { blockAt as hillyBlockAt } from "./hillyTerrain.js";
 
-describe("testArea generator: infinite plane beyond the hand-built area", () => {
-  it("is solid ground far past the hand-built area, in every direction", () => {
-    expect(blockAt("w1", 1000, 0, 1000)).toBe(GROUND);
-    expect(blockAt("w1", -500, 2, -500)).toBe(GROUND);
-    expect(blockAt("w1", AREA_SIZE + 200, 1, 50)).toBe(GROUND);
+describe("testArea generator: delegates to real hilly terrain beyond the hand-built area", () => {
+  // hillyTerrain.ts has its own dedicated test suite (hillyTerrain.test.ts)
+  // for the generator's actual properties (determinism, height bounds,
+  // per-world variation, trees, ...) -- these tests only check that
+  // testArea.ts's blockAt() correctly delegates to it outside the
+  // hand-built area's bounds, and still handles the hand-built area itself
+  // inside them. GROUND is re-exported from testArea.ts as an alias for
+  // the shared DIRT id (same old value, see testArea.ts's header comment).
+  it("re-exports GROUND as an alias for the shared DIRT id", () => {
+    expect(GROUND).toBe(DIRT);
   });
 
-  it("is air well above the plane, far from the hand-built area", () => {
-    expect(blockAt("w1", 1000, 20, 1000)).toBe(AIR);
+  it("matches hillyTerrain.ts's own output exactly outside the hand-built area", () => {
+    const coords: Array<[number, number, number]> = [
+      [1000, 0, 1000],
+      [-500, 2, -500],
+      [AREA_SIZE + 200, 1, 50],
+      [1000, 60, 1000],
+    ];
+    for (const [x, y, z] of coords) {
+      expect(blockAt("w1", x, y, z)).toBe(hillyBlockAt("w1", x, y, z));
+    }
   });
 
-  it("places a grid pillar every 16 blocks on both axes, far from spawn", () => {
-    // Grid spacing is 16; 1600 and 1616 are both multiples of 16.
-    expect(blockAt("w1", 1600, 3, 1600)).toBe(MARKER);
-    expect(blockAt("w1", 1616, 3, 1600)).toBe(MARKER);
-    // One block off the grid in either axis should NOT be a pillar.
-    expect(blockAt("w1", 1601, 3, 1600)).toBe(AIR);
-    expect(blockAt("w1", 1600, 3, 1601)).toBe(AIR);
-  });
-
-  it("negative coordinates hit the grid correctly too (JS %% is not true modulo)", () => {
-    expect(blockAt("w1", -16, 3, -16)).toBe(MARKER);
-    expect(blockAt("w1", -16, 3, 0)).toBe(MARKER);
+  it("still handles the hand-built area itself (inside AREA_SIZE bounds), not delegated", () => {
+    // y=1 inside the hand-built area's open floor is always DIRT,
+    // regardless of what the hilly generator would put at that same XZ --
+    // confirms the boundary check actually gates which generator runs.
+    expect(blockAt("w1", 8, 1, 24)).toBe(DIRT); // the spawn column
   });
 });
 

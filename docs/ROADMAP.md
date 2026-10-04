@@ -53,7 +53,7 @@ up during play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 1 | Testing infra (`@colyseus/testing`, Vitest) + Docker | DONE |
 | 2 | MVP -- full movement port, floating-origin shift, chunk streaming | DONE |
 | -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE |
-| 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break DONE |
+| 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break + real hilly terrain generator (textures, caves, ore, trees, foliage) DONE; DM world-create/admin-grant UI remains |
 | 4 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | NOT STARTED |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | NOT STARTED |
 | 6 | Mod system v2 -- per-world data-only mod registration | NOT STARTED |

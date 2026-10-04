@@ -14,10 +14,25 @@
 // This file's only remaining job for it is a console log, not UI.
 
 import { Engine } from "noa-engine";
-import { CHUNK_SIZE } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, VOXEL_TYPES } from "@ttrpg3d/shared";
 import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
+import { buildCrossPlantMesh } from "./plantMesh.js";
+
+// noa's registerBlock material array is a *fixed* 6-element order -- but
+// registry.js's own doc comment on the 6-length branch ("interpret as
+// [-x, +x, -y, +y, -z, +z]") is actually wrong, confirmed by tracing the
+// real consumer: terrainMesher.js's constructMeshMask calls
+// getMaterial(id0, d*2) / getMaterial(id1, d*2+1), and
+// getBlockFaceMaterial's OWN comment says dir 0..5 is
+// [+x, -x, +y, -y, +z, -z] -- which matches the actual mesher code (id0 is
+// the voxel on the low side of the face, so its "d*2" face points toward
+// +axis). Mismatching this swapped every pair (confirmed live: grass's
+// bottom/dirt texture was rendering on the top face instead of the green
+// top texture). This order is what's actually consumed -- use it, not the
+// registerBlock-branch comment.
+const FACE_SUFFIXES = ["px", "nx", "py", "ny", "pz", "nz"] as const;
 
 // Matches testArea.ts's spawnPosition() exactly -- avoids the player
 // rendering somewhere wrong for the one tick before the server's own spawn
@@ -61,12 +76,47 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
     // (25) is fine; smaller/more-frequent shifts are cheaper to verify during
     // the Phase 2 playtest than rare/large ones.
     originRebaseDistance: 40,
+    // Real block textures now -- copied from the old game's own PNGs
+    // (self-authored, confirmed via their Blender .mtl source comment) into
+    // public/textures/blocks/, served by Vite at this path. registerMaterial
+    // below resolves each type's textureFile against this base.
+    texturePath: "/textures/blocks/",
   });
 
-  noa.registry.registerMaterial("ground", { color: [0.45, 0.36, 0.22] });
-  noa.registry.registerMaterial("marker", { color: [1.0, 0.1, 0.8] });
-  noa.registry.registerBlock(1, { material: "ground" });
-  noa.registry.registerBlock(2, { material: "marker" });
+  // Per-type registration, from the shared table (packages/shared's
+  // single source of truth for both this loop and the server's
+  // generator). Real per-face textures and a real alpha-cutout plant
+  // mesh now -- both decoded directly from the old game's actual Blender/
+  // Godot source files (dirt.obj's UVs for the per-face atlas layout,
+  // tall_grass.obj's geometry+UVs for the cross mesh), not guessed. See
+  // voxelTypes.ts's `mesh` field doc for the full rationale.
+  for (const type of VOXEL_TYPES) {
+    if (type.mesh === "cube" && type.textureFile) {
+      const base = type.textureFile.replace(/\.png$/, "");
+      const materialNames = FACE_SUFFIXES.map((suffix) => `${type.name}-${suffix}`);
+      FACE_SUFFIXES.forEach((suffix, i) => {
+        noa.registry.registerMaterial(materialNames[i], { textureURL: `${base}_${suffix}.png` });
+      });
+      noa.registry.registerBlock(type.id, { material: materialNames, solid: type.solid, fluid: type.fluid });
+    } else if (type.mesh === "cross" && type.textureFile) {
+      const scene = noa.rendering.getScene();
+      const mesh = buildCrossPlantMesh(scene, type.name, `/textures/blocks/${type.textureFile}`);
+      // opaque defaults to true for any non-fluid block (confirmed in
+      // noa-engine's registry.js BlockOptions) -- left at that default,
+      // the terrain mesher culled the FACE OF THE SOLID BLOCK BELOW each
+      // plant placement, since it thought the cell above was opaque and
+      // would hide it anyway. The thin cross mesh doesn't actually cover
+      // that face, so the result was a real hole in the ground's render
+      // under every tallgrass/deadshrub, with the plant's own sprite
+      // appearing to float over it -- confirmed live, and absent before
+      // these were registered as opaque solid cubes (where the culling
+      // was actually correct). Must be explicit false here.
+      noa.registry.registerBlock(type.id, { blockMesh: mesh, solid: type.solid, fluid: type.fluid, opaque: false });
+    } else {
+      noa.registry.registerMaterial(type.name, { color: type.color });
+      noa.registry.registerBlock(type.id, { material: type.name, solid: type.solid, fluid: type.fluid });
+    }
+  }
 
   installPlayerController(noa);
   installOriginShiftLogger(noa);
