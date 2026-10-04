@@ -14,10 +14,11 @@ import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
 
-// Matches testArea.ts's spawnPosition() exactly (AREA_SIZE/2, FLOOR_TOP+3,
-// AREA_SIZE/2) -- avoids the player rendering somewhere wrong for the one
-// tick before the server's own spawn position round-trips back.
-const SPAWN: [number, number, number] = [24, 5, 24];
+// Matches testArea.ts's spawnPosition() exactly -- avoids the player
+// rendering somewhere wrong for the one tick before the server's own spawn
+// position round-trips back. NOT the area center -- see that function's
+// comment for why (it collided with the center marker pillar).
+const SPAWN: [number, number, number] = [8, 5, 24];
 
 const noa = new Engine({
   debug: true,

@@ -26,11 +26,26 @@ interface RemotePlayerLike {
 const POS_SEND_EVERY_N_TICKS = 3;
 
 export async function connectAndStreamWorld(noa: Engine, url: string, playerName: string): Promise<void> {
-  const client = new Client(url);
-  const room: Room = await client.joinOrCreate("world", { name: playerName });
-
-  // ---- chunk streaming ----
+  // noa starts emitting worldDataNeeded for chunks around the spawn point
+  // almost immediately (well before a WebSocket connection + Colyseus
+  // matchmaking round-trip can possibly finish) -- so the listener below
+  // must attach synchronously, right now, before any `await`. Requests that
+  // arrive before the room connection is ready get queued and flushed once
+  // it is, rather than lost (confirmed live: attaching this listener only
+  // after `await client.joinOrCreate(...)` meant the very first batch of
+  // chunk requests around spawn were silently dropped forever -- nothing
+  // ever rendered, reproduced as "blue as far as the eye can see").
   const pendingChunks = new Map<string, { id: string; data: any }>();
+  const queuedRequests: ChunkRequest[] = [];
+  let room: Room | undefined;
+
+  function requestChunk(req: ChunkRequest): void {
+    if (room) {
+      room.send("requestChunk", req);
+    } else {
+      queuedRequests.push(req);
+    }
+  }
 
   noa.world.on(
     "worldDataNeeded",
@@ -39,9 +54,14 @@ export async function connectAndStreamWorld(noa: Engine, url: string, playerName
       const cy = Math.floor(y / CHUNK_SIZE);
       const cz = Math.floor(z / CHUNK_SIZE);
       pendingChunks.set(`${cx},${cy},${cz}`, { id, data });
-      room.send("requestChunk", { cx, cy, cz } satisfies ChunkRequest);
+      requestChunk({ cx, cy, cz });
     },
   );
+
+  const client = new Client(url);
+  room = await client.joinOrCreate("world", { name: playerName });
+  for (const req of queuedRequests) room.send("requestChunk", req);
+  queuedRequests.length = 0;
 
   room.onMessage("chunk", (bytes: Uint8Array) => {
     const { cx, cy, cz, voxels } = decodeChunk(bytes);

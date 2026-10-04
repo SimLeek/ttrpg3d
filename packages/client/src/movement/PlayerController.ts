@@ -81,6 +81,18 @@ export function installPlayerController(noa: Engine): PlayerController {
     sv[0] = moveToward(sv[0], hasInput ? goal[0] : 0, friction);
     sv[2] = moveToward(sv[2], hasInput ? goal[2] : 0, friction);
 
+    // voxel-physics-engine puts a body to sleep after ~10 ticks of no
+    // applyForce/applyImpulse/setPosition call, and SKIPS integrating a
+    // sleeping body's position entirely (checked its tick() source
+    // directly) -- writing body.velocity[i] by index, as this controller
+    // does, never resets that counter. Without this, a player-controlled
+    // body would fall asleep ~1/6 second after spawning and then never
+    // move again regardless of velocity, reproduced live (position frozen
+    // across every diagnostic sample despite real, input-responsive
+    // velocity values). A player's own body should never be allowed to
+    // sleep in the first place.
+    (body as unknown as { _markActive(): void })._markActive();
+
     body.velocity[0] = sv[0];
     body.velocity[1] = sv[1];
     body.velocity[2] = sv[2];
