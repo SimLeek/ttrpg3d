@@ -4,11 +4,20 @@ Working, file-by-file breakdown of every `.gd` file in the old repo
 (`/home/simleek/gamedev/ttrpg-3d`, 83 files / 13,122 lines, `addons/` and
 `examples_dd3d/` excluded as third-party), plus every still-open item from
 that repo's four `TODO_*.md` docs, organized against the phases in
-[`vectorized-jumping-sunset.md`](/home/simleek/.claude/plans/vectorized-jumping-sunset.md).
-The old repo stays untouched and readable for the duration of the port (it's
-also preserved on GitHub as `SimLeek/ttrpg3d-godot-old`) — **delete a file
-from the old repo only after its port lands here and is verified**, not
-before, so there's always a reference copy one `git log` away.
+[`docs/ROADMAP.md`](ROADMAP.md). The old repo stays untouched and readable
+for the duration of the port (it's also preserved on GitHub as
+`SimLeek/ttrpg3d-godot-old`) — **delete a file from the old repo only after
+its port lands here and is verified**, not before, so there's always a
+reference copy one `git log` away.
+
+**Phases are sequenced by playtest visibility, not by risk/dependency
+order.** A prior version of this checklist had a standalone "low-risk
+data/math ports" phase early on, on the theory that zero-dependency pure
+functions are easy, safe wins to bank first — in practice this was
+backwards: those functions (an LCG, a spatial hash, distance math, the
+voxel type table) are *inputs* to Phase 4/8/9's systems, invisible and
+unverifiable on their own until something actually uses them. Each now
+lives in the phase that actually makes it show up during play.
 
 Decision tags used below:
 - **PORT** — near-verbatim translation, logic carries over directly.
@@ -41,121 +50,62 @@ project, reiterated across the TODO docs — don't regress on these):
 
 ---
 
-## Early architectural priority — floating-origin shifting
+## Phase 2 — MVP [DONE]
 
-`levels/center_of_universe.gd`'s floating-origin re-anchoring (shift the
-world origin back toward zero as the player moves far from it, to avoid
-float-precision jitter/glitches at large coordinates) is still a good idea
-in the new stack, and **worth doing early** — as close to Phase 2 as
-practical — rather than retrofitting it once movement, multiplayer position
-sync, and world-streaming code all already assume a single fixed origin.
-Retrofitting this kind of thing after the fact tends to touch everywhere
-position is read or written; deciding the coordinate-system convention
-(client-local re-anchoring vs. server-authoritative chunk-relative
-coordinates — the server/multiplayer model makes this a bit different from
-the old single-player version, worth a short design pass rather than a
-direct port) up front avoids that. The old implementation's *hard* part
-(manually re-baking `SoftBody3D` meshes on re-anchor) doesn't apply here if
-the soft-body physics question below gets settled by using a real physics
-library instead.
+- [x] `scripts/movement_resource.gd`, `basic_jump_resource.gd`,
+      `fall_resource.gd`, `wall_jump_resource.gd`,
+      `ledge_safety_resource.gd`/`playable/ledge_grabber.gd`,
+      `stair_stepper_resource.gd`, `spring_arm_3d_look.gd`,
+      `player_blob_ctrl.gd` — full movement system, ported in full rather
+      than a walk+jump subset.
+- [x] `levels/center_of_universe.gd` — floating-origin re-anchoring concept;
+      turned out noa-engine already does this itself, so this became test
+      markers + console logging rather than new re-anchoring logic.
+- [x] `scripts/pcg/limestone_slab_generator.gd` — basis for the Phase 2 test
+      area (steps/gap/wall), later extended into an infinite flat plane
+      with grid pillars once the hand-built area proved too small to
+      exercise origin-shifting.
+- [x] `scripts/items/voxelitem.gd`/`del_vox_item.gd` — collapsed to a single
+      hardcoded block type initially; full multi-type system is Phase 4
+      below.
 
-**Logging**: log every origin-shift event to the browser devtools console
-(old origin, new origin, delta) — this is the always-available way to
-confirm shifting is happening and happening correctly even when it's too
-subtle to notice visually; pair it with the fixed reference objects called
-out in Phase 2 below as the visual half of the same check.
+## Phase 3 — Real world management [PARTIAL]
 
-## Phase 2 — MVP (in progress / next up)
-
-Scope note (revised): movement is **not** a walk+jump subset anymore — port
-the full, already-tuned movement systems now, since they've actually been
-played and rate well; re-deriving that feel later would be wasted work.
-Floating-origin shifting lands in this phase too, alongside movement, so
-both can be playtested together (see the section above). Voxel interaction
-is still scoped down to one hardcoded block type — `voxel_interactor.gd`'s
-full system is Phase 5. Order below: the core walk/run movement first, then
-floating-origin shifting (so it's in place while the rest of movement is
-being built on top of it), then the rest of movement.
-
-- [ ] `scripts/movement_resource.gd` (94L) — **PORT** in full (speed/stamina/
-      run, not a walk-only subset).
-- [ ] `levels/center_of_universe.gd` (167L) — **REDESIGN**, floating-origin
-      re-anchoring concept only (not the `SoftBody3D` re-bake workaround,
-      which the soft-body-library replacement in Phase 5 makes moot).
-      Deliverable for this phase: a small test area (a handful of voxels
-      arranged for jumping/climbing — steps, gaps, a wall), a few fixed
-      reference objects placed in it so an origin shift is visually
-      checkable while playing, and origin-shift events logged to the
-      browser console (old origin, new origin, delta) — see the logging
-      note in the section above.
-- [ ] `scripts/basic_jump_resource.gd` (53L) — **PORT** in full, including
-      coyote-time.
-- [ ] `scripts/fall_resource.gd` (24L) — **PORT** in full.
-- [ ] `scripts/wall_jump_resource.gd` (54L) — **PORT**, moved up from Phase 5.
-      **Spike noa's contact-query API first** (not confirmed it exposes
-      per-face contact queries equivalent to Godot's `ShapeCast3D`).
-- [ ] `scripts/ledge_safety_resource.gd` (210L) / `playable/ledge_grabber.gd`
-      (359L) — **PORT**, moved up from Phase 5, same contact-query spike.
-- [ ] `scripts/stair_stepper_resource.gd` (25L) — **PORT**, moved up from
-      Phase 5.
-- [ ] `scripts/spring_arm_3d_look.gd` (103L) — **REDESIGN**, camera
-      controller, moved up from Phase 5 (needed to actually playtest
-      movement).
-- [ ] `scripts/player_blob_ctrl.gd` (377L) — **REDESIGN**, moved up from
-      Phase 5 — the main controller hub tying movement/jump/fall/wall-jump/
-      stair-stepper/ledge-safety together is needed to actually playtest any
-      of them.
-- [ ] `scripts/pcg/limestone_slab_generator.gd` (39L) — **PORT**, good
-      candidate for literally being the Phase 2 hardcoded/trivial world
-      generator (deterministic, no randomness, bounded) — build the test
-      area's jump/climb geometry on top of it.
-- [ ] `scripts/items/voxelitem.gd` (91L) / `scripts/items/del_vox_item.gd`
-      (55L) — **REDESIGN**, collapsed to "place/break one hardcoded block
-      type," full multi-type version deferred to Phase 5.
-- [ ] **Requires real playtesting, not just automated tests**: movement feel
-      (jump/climb/wall-kick) and origin-shift visual correctness need you to
-      actually play the test area — `@colyseus/testing` and two-tab checks
-      cover message flow and persistence, not feel.
-
-## Phase 3 — Low-risk data/math ports
-
-- [ ] `scripts/pcg/full_period_lcg.gd` (89L) — **PORT** near-verbatim.
-- [ ] `scripts/pcg/spatial_hash_3d.gd` (112L) — **PORT** near-verbatim.
-- [ ] `scripts/game_settings.gd` (198L) — **PORT** the Minkowski-norm
-      distance math only; the Godot-autoload settings-persistence half moves
-      to Phase 12 (client-side settings UI).
-- [ ] `scripts/pcg/voxel_types.gd` (194L) — **PORT** the ~20 types actually
-      wired to a display name/model today (per plan — not all ~59 reserved
-      constants).
-- [ ] `scripts/ui/dev_console_fade_state.gd` (29L) — **DEFER**. Pure,
-      testable fade-alpha math, but the dev console's *function* is already
-      superseded by `@colyseus/testing` (Phase 1, done); there's no in-browser
-      debug-console UI planned yet for this math to serve. Revisit only if a
-      live client-side debug console gets scheduled.
-
-## Phase 4 — Real world management
-
+- [x] Per-world voxel storage (`node:sqlite`-backed, not the originally
+      planned `better-sqlite3` — its native build failed outright in this
+      sandbox) and basic place/break — both landed ahead of the real
+      terrain generator below, since storage needs something to store.
 - [ ] `scripts/world/world_manager.gd` (167L) — **REDESIGN** → per-world
-      SQLite + `WorldRoom` mapping (already speced in the architecture plan).
+      SQLite + `WorldRoom` mapping. World *registry* (list/owner/admin)
+      already shipped via the worlds lobby page; this is the remaining
+      per-world switching/management piece.
 - [ ] `scripts/pcg/world_generator_catalog.gd` (92L) — **PORT** the
       repeatable/non_repeatable/finite classification concept.
 - [ ] `scripts/pcg/hilly_terrain_region_generator.gd` (464L) — **PORT**
       algorithm (noise-based height + biome features), largest single
-      generator in the codebase.
+      generator in the codebase. The real gameplay terrain, replacing
+      `testArea.ts`'s hand-built test area.
+- [ ] `scripts/pcg/voxel_types.gd` (194L) — **PORT** the ~20 types actually
+      wired to a display name/model today (not all ~59 reserved constants)
+      — the real terrain generator needs more than one material.
 - [ ] `scripts/pcg/generator_main.gd` (41L) — **DROP**. Pure
       `VoxelGeneratorScript` passthrough glue for Godot's generator plugin
       system; no equivalent indirection needed in TS.
 - [ ] `scripts/pcg/structure.gd` (3L) — **PORT** trivial data holder.
 - [ ] `scripts/pcg/tree_generator.gd` (73L) — **PORT** algorithm.
 - [ ] `scripts/pcg/windmill_generator.gd` (109L) — **PORT** algorithm.
-- [ ] `scripts/pcg/modified_block_tracker.gd` (73L) — **REDESIGN** → replaced
-      by the SQLite `chunks` table's dirty-chunk tracking (direct
-      architectural port per plan, different storage).
+- [ ] `scripts/pcg/modified_block_tracker.gd` (73L) — **REDESIGN**, mostly
+      done: the new SQLite `chunks` table already only stores edited
+      chunks (the same dirty-chunk-tracking intent), covered by
+      `storage.ts`'s existing tests.
 - [ ] `scripts/pcg/voxel_catalog.gd` (74L) — **REDESIGN**, catalog discovery
       moves from "scan a VoxelBlockyLibrary" to "read the shared TS voxel
       type table."
 - [ ] `scripts/world/procedural_skybox.gd` (56L) — **PORT** the
       direction→color algorithm, rebuild the actual sky as a Babylon shader.
+- [ ] World create/admin-grant management UI — deferred out of the worlds
+      lobby page on purpose; belongs here now that real per-world storage
+      exists to back it.
 - [ ] **NEW** — Terraria-style depth-based skybox switch (underground vs.
       surface). Was never built in the old repo either.
 - [ ] **DEFER/NEW** — Poisson-disc-in-capsule biome-boundary system and the
@@ -173,17 +123,12 @@ being built on top of it), then the rest of movement.
       fairly small conversion script (schema differs, but it's SQLite→SQLite,
       not a format that needs re-simulating). Worth doing: these worlds were
       built for/with the same movement systems the new client is porting, so
-      they're free, already-designed content, not just test data. Scope this
-      once Phase 4's real per-world storage exists.
+      they're free, already-designed content, not just test data.
 
-## Phase 5 — Voxel interaction (movement itself moved to Phase 2)
+## Phase 4 — Voxel interaction
 
-Movement (`player_blob_ctrl.gd` and the full set of movement/jump/fall/
-wall-jump/ledge-safety/stair-stepper resources, plus the camera controller
-and floating-origin shifting) moved up into Phase 2 — see there. This phase
-now covers extending Phase 2's single-hardcoded-block placement to the real
-voxel interaction system, plus the movement-adjacent items that didn't need
-to land as early.
+Movement moved to Phase 2 already. This phase extends Phase 2's single-
+hardcoded-block placement to the real multi-block-type system.
 
 - [ ] `playable/squeezer_rays.gd` (119L) — **REDESIGN**, low priority within
       this phase (tight-space movement slowdown, not core movement feel).
@@ -191,7 +136,7 @@ to land as early.
       forward an important *pattern*, not just code: single reference-counted
       owner of "what currently owns player input," replacing scattered ad hoc
       mouse-mode checks. Worth pulling this pattern forward as soon as any UI
-      competes with gameplay input, even if that's before Phase 5 lands fully.
+      competes with gameplay input.
 - [ ] `scripts/item_resources/voxel_interactor.gd` (328L) — **REDESIGN**,
       shared placement-plane/targeting-beam logic against noa's picking API.
 - [ ] `scripts/items/voxelitem.gd`, `del_vox_item.gd` — **REDESIGN**, full
@@ -204,7 +149,7 @@ to land as early.
       *equipped* (empty = interact, pickaxe = attack, block = place),
       replacing the current always-right-click-deletes behavior. Fold that
       redesign in here rather than reproducing the old mapping and redoing
-      it later. See also Phase 6/10 below.
+      it later. See also Phase 5/9 below.
 - [ ] `playable/left_hand_gripper.gd` (201L) — **REDESIGN**, hand/item equip
       management.
 - [ ] `playable/health.gd` (59L) — **PORT**, damage/regen model is mostly
@@ -219,11 +164,9 @@ to land as early.
       general — the new stack should be able to just use an existing,
       better-maintained JS soft-body/physics library instead of
       reimplementing one by hand. **NEW** — spike which library to use
-      (options to evaluate live in whatever physics engine ends up paired
-      with noa/Babylon) as its own small task before this phase's movement
-      work depends on it.
+      before this phase's movement work depends on it.
 
-## Phase 6 — Inventory/items
+## Phase 5 — Inventory/items
 
 - [ ] `scripts/pcg/item_catalog.gd` (132L) — **PORT** data shape into shared
       TS schema.
@@ -241,19 +184,19 @@ to land as early.
 - [ ] **NEW** — pickaxe/block-health combat rework: pickaxe attacks remove 1
       health/sec from a targeted block, every voxel type needs a health
       value, health regenerates instantly when attack stops. Pairs with the
-      hand-equipment-dependent dispatch noted in Phase 5. Entirely unbuilt.
+      hand-equipment-dependent dispatch noted in Phase 4. Entirely unbuilt.
 - [ ] **NEW** — equip scheme: double-click = equip right hand, single-click =
       equip left hand, Ctrl+hotbar-number = right hand, Shift+wheel cycles
       right-hand selection once dual-hand hotbar exists. Entirely unbuilt.
 - [ ] **DEFER** — item icon polish (rendered-emoji PNGs for non-block items;
       lower priority: real 3D-rendered cube icons for block items). Cosmetic,
-      push to Phase 12.
+      push to Phase 11+.
 
-## Phase 7 — Mod system v2
+## Phase 6 — Mod system v2
 
-- [ ] `scripts/modding/mod_manager.gd` (184L) — **REDESIGN** per plan:
-      registration happens per-world at `WorldRoom` instantiation, not once
-      globally at boot.
+- [ ] `scripts/modding/mod_manager.gd` (184L) — **REDESIGN**: registration
+      happens per-world at `WorldRoom` instantiation, not once globally at
+      boot.
 - [ ] `mods/wood_plank/register.gd` (48L), `mods/plains_biome/register.gd`
       (27L) — **PORT** as reference/example mods, rewritten as TS mod
       packages.
@@ -273,7 +216,7 @@ to land as early.
       (aspirational in the old repo, never fully enforced — worth actually
       holding to this time).
 
-## Phase 8 — DM tools
+## Phase 7 — DM tools
 
 - [ ] `scripts/ui/dm_world_menu.gd` (359L) — **REDESIGN**, World CRUD UI.
 - [ ] `scripts/items/structure_saver_item.gd` (210L),
@@ -289,7 +232,7 @@ to land as early.
 - [ ] `scripts/pcg/build_session.gd` (64L) — **PORT/REDESIGN**, shared
       plane-select state.
 - [ ] `scripts/items/enemy_spawn_egg_item.gd` (61L) — **REDESIGN**; depends
-      on Phase 11's NPC work existing first.
+      on Phase 10's NPC work existing first.
 - [ ] `levels/gridmap_rotation_tool.gd` (134L) — **DROP**. Godot-editor-only
       `@tool` script (MeshLibrary cell rotation in the editor); no equivalent
       concept in the new stack.
@@ -315,7 +258,7 @@ to land as early.
       to: new tools should be new catalog entries, not special-cased
       branches; avoid hardcoding tool-specific logic into shared scene nodes.
 
-## Phase 9 — Lighting + voxel tick system
+## Phase 8 — Lighting + voxel tick system
 
 - [ ] **NEW — design lighting fresh, don't port the old model.** Both of the
       old repo's lighting approaches were Godot-specific workarounds: pooled
@@ -330,13 +273,20 @@ to land as early.
       either of those workarounds. Treat both old files as reference for
       *what not to redo*, not as porting targets — design this against
       Babylon's actual material/lighting capabilities from scratch.
+- [ ] `scripts/pcg/spatial_hash_3d.gd` (112L) — **PORT**, *only if* the
+      emissive-material approach above isn't enough and the pooled
+      nearest-N dynamic light fallback is actually needed (it was
+      `light_registry.gd`'s lookup structure) — don't port ahead of
+      knowing that.
 - [ ] Keep as fallback ideas if flat emissive materials aren't enough
       visually or for performance at scale: the pooled nearest-N dynamic
-      light model, or the deferred real per-light occlusion idea below —
-      but don't default to either without checking whether plain emission
-      already looks right first.
+      light model (needs the spatial hash above), or the deferred real
+      per-light occlusion idea below — but don't default to either without
+      checking whether plain emission already looks right first.
 - [ ] `scripts/sunsetter.gd` (95L) — **PORT** concept (occlusion-raycast to
       sun drives indoor/outdoor lighting transition).
+- [ ] `scripts/pcg/full_period_lcg.gd` (89L) — **PORT** near-verbatim —
+      drives the ambient tick below.
 - [ ] `scripts/pcg/voxel_tick_system.gd` (102L) — **PORT**, engine-agnostic
       (FullPeriodLCG-driven ambient tick).
 - [ ] `scripts/pcg/world_check_tick.gd` (141L) — **REDESIGN**, repair sweep
@@ -351,8 +301,12 @@ to land as early.
       waypoint lines in Godot? If not, this whole workaround class may not
       be needed going forward.
 
-## Phase 10 — Battle mode / turn tracker
+## Phase 9 — Battle mode / turn tracker
 
+- [ ] `scripts/game_settings.gd` (198L) — **PORT** the Minkowski-norm
+      distance math only (the Godot-autoload settings-persistence half
+      moves to Phase 11+, client-side settings UI) — drives the
+      battle-mode/HUD distance readouts below.
 - [ ] `scripts/battle/battle_mode_manager.gd` (341L) — **REDESIGN**, now
       genuinely server-authoritative (per plan).
 - [ ] `scripts/battle/turn_tracker.gd` (51L) — **REDESIGN**, Colyseus
@@ -382,12 +336,12 @@ to land as early.
 - [ ] **NEW** — dice roller, Tab character-action menu (spells/abilities,
       likely a character-sheet mod extending inventory). Never built.
 - [ ] **DEFER** — line-of-sight lines from enemy to player. Blocked on
-      Phase 11's AI entity existing; connects to the vision-cone work there.
+      Phase 10's AI entity existing; connects to the vision-cone work there.
 - [ ] Note: waypoint cleanup across world-switch/death-respawn was never
       re-verified even in the old repo after force-enabled-intangible was
       removed — don't assume it's solid, re-check when porting.
 
-## Phase 11 — NPC/AI
+## Phase 10 — NPC/AI
 
 - [ ] `scripts/blob_ai_resource.gd` (687L) — **REDESIGN**, WANDER/CHASE/
       ATTACK/BOUNCING/STOP_AND_TURN state machine, server-owned per plan.
@@ -402,11 +356,10 @@ to land as early.
       gravity+move behavior is absorbed into the real NPC entity design.
 - [ ] `NPCs/dialog_entry.gd` (9L), `NPCs/npc_dialog_system.gd` (240L) —
       **REDESIGN**, dialog data model + paging UI.
-- [ ] Vision-cone mesh (per your correction to the original scoping — this
-      is genuinely useful for stealth/NPC-attack-range, not just a debug
-      visual): land the core FOV/LOS detection math **in this phase**
-      (AI perception needs it regardless); defer rendering it back to
-      players as a visible cone to Phase 12+ or its own item.
+- [ ] Vision-cone mesh (genuinely useful for stealth/NPC-attack-range, not
+      just a debug visual): land the core FOV/LOS detection math **in this
+      phase** (AI perception needs it regardless); defer rendering it back
+      to players as a visible cone to Phase 11+ or its own item.
 - [ ] **NEW** — puppet item (spawn a controllable-but-idle character),
       puppet-string item (interact to take control), a generic NPC entity
       beyond `evil_blob`, NPC-dialog-editor item. All entirely unbuilt.
@@ -414,15 +367,15 @@ to land as early.
       `ledge_grabber_path` export) is Godot-scene-specific and becomes moot
       on port — no action needed, won't carry forward.
 
-## Phase 12+ — Polish
+## Phase 11+ — Polish
 
 - [ ] `scripts/attribution.gd` (40L), `attribution_data.gd` (20L),
       `attribution_manager.gd` (20L) — **PORT** concept, low priority asset-
       credit tracking.
 - [ ] `scripts/save_system.gd` (119L) — **DROP** as a literal port (per-world
-      SQLite + the still-TBD account store already cover this per the plan);
-      its "separate global save file" pattern may still inform account-level
-      settings storage later.
+      SQLite + the account store already cover this); its "separate global
+      save file" pattern may still inform account-level settings storage
+      later.
 - [ ] `scripts/singleton_global_lib_stuff/globals_main.gd` (23L) — **TBD**,
       read directly when this phase is actually reached (survey agent
       couldn't summarize specifics from a skim).
@@ -433,6 +386,11 @@ to land as early.
 - [ ] `levels/hud.gd` (160L) — **REDESIGN**.
 - [ ] `menus/main_menu.gd` (19L), `menus/special_select.gd` (23L) —
       **REDESIGN**, trivial, low priority.
+- [ ] `scripts/ui/dev_console_fade_state.gd` (29L) — **DEFER**. Pure,
+      testable fade-alpha math for a debug-console UI, but the dev
+      console's *function* is already superseded by `@colyseus/testing`
+      (Phase 1, done) and no in-browser debug-console UI is currently
+      planned. Only relevant if one gets scheduled.
 - [ ] `scripts/ui/ui_pause_gate.gd` (25L) — **RE-EVALUATE**. Ref-counted
       pause-gate pattern assumed single-player pause; open question whether
       "pause" makes sense at all in a shared multiplayer world before
@@ -453,13 +411,12 @@ to land as early.
       going stale until player death (root cause undiagnosed — likely needs
       periodic autosave regardless, for crash safety); confirm world save
       actually fires on plain game exit, not just world-switch.
-- [ ] Chunk-streaming/meshing performance at real map sizes — already in the
-      architecture plan, worth an early stress test given this is a
-      DM-authored-map tool (potentially denser than typical survival voxel
-      games).
+- [ ] Chunk-streaming/meshing performance at real map sizes — this is a
+      DM-authored-map tool, potentially denser than typical survival voxel
+      games, worth an early stress test rather than an assumption.
 - [ ] Google/OAuth login + payment-processor integration for cosmetics
-      (3D dice, jiggle physics) — already flagged in the plan as its own
-      later research track, not scoped further here.
+      (3D dice, jiggle physics) — its own later research track, not scoped
+      further here.
 
 ## Cross-cutting / already resolved
 
