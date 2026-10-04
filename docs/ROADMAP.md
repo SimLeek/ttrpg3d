@@ -38,22 +38,30 @@ scannable phase list + standing decisions; it's not a narrative history.
 
 ## Phases
 
+**Sequenced by playtest visibility, not by risk/dependency order.** An
+earlier version of this table had a standalone "low-risk data/math ports"
+phase up front, on the theory that zero-dependency pure functions are easy
+wins to bank early -- in practice that was backwards: those functions (an
+LCG, a spatial hash, distance math, the voxel type table) are *inputs* to
+later systems, invisible and unverifiable on their own until something
+actually uses them. Each now ships as part of the phase that makes it show
+up during play (see `docs/PORTING_CHECKLIST.md` for exactly where).
+
 | # | Phase | Status |
 |---|---|---|
 | 0 | Scaffolding -- monorepo, client/server hello-world | DONE |
 | 1 | Testing infra (`@colyseus/testing`, Vitest) + Docker | DONE |
 | 2 | MVP -- full movement port, floating-origin shift, chunk streaming | DONE |
-| -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 4 | DONE |
-| 3 | Low-risk data/math ports -- `game_settings` distance math, `full_period_lcg`, `spatial_hash_3d`, voxel type catalog | NOT STARTED |
-| 4 | Real world management | **PARTIAL** -- per-world voxel storage + basic place/break DONE; real hilly terrain generator and DM world-create/admin-grant UI still open |
-| 5 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | NOT STARTED |
-| 6 | Inventory/items -- catalog + hotbar, server-authoritative item actions | NOT STARTED |
-| 7 | Mod system v2 -- per-world data-only mod registration | NOT STARTED |
-| 8 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED |
-| 9 | Lighting + voxel tick system -- needs fresh design, not a port (see `docs/PORTING_CHECKLIST.md`) | NOT STARTED |
-| 10 | Battle mode / turn tracker, server-authoritative | NOT STARTED |
-| 11 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED |
-| 12+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED |
+| -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE |
+| 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break DONE |
+| 4 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | NOT STARTED |
+| 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | NOT STARTED |
+| 6 | Mod system v2 -- per-world data-only mod registration | NOT STARTED |
+| 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED |
+| 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED |
+| 9 | Battle mode / turn tracker, server-authoritative -- also where the distance math lands | NOT STARTED |
+| 10 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED |
+| 11+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED |
 
 Per-file porting decisions (port/redesign/drop/defer for every old `.gd`
 file) live in `docs/PORTING_CHECKLIST.md`, not here.
