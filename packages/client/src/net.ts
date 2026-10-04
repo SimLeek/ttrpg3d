@@ -11,6 +11,14 @@ import { Client, type Room } from "@colyseus/sdk";
 import * as BABYLON from "@babylonjs/core";
 import type { Engine } from "noa-engine";
 import { CHUNK_SIZE, decodeChunk, type ChunkRequest } from "@ttrpg3d/shared";
+import { installVoxelEditor } from "./voxelEditor.js";
+
+interface EditBlockMessage {
+  x: number;
+  y: number;
+  z: number;
+  voxelId: number;
+}
 
 interface RemotePlayerLike {
   name: string;
@@ -25,7 +33,13 @@ interface RemotePlayerLike {
 // and this keeps the message volume light without adding visible lag.
 const POS_SEND_EVERY_N_TICKS = 3;
 
-export async function connectAndStreamWorld(noa: Engine, url: string, playerName: string, worldId: string): Promise<void> {
+export interface WorldConnection {
+  /** Actually tells the server this client is leaving the room -- see the
+   * doc comment at the bottom of this function for why this exists. */
+  leave(): void;
+}
+
+export async function connectAndStreamWorld(noa: Engine, url: string, playerName: string, worldId: string): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
   // matchmaking round-trip can possibly finish) -- so the listener below
@@ -83,6 +97,21 @@ export async function connectAndStreamWorld(noa: Engine, url: string, playerName
     noa.world.setChunkData(pending.id, pending.data);
   });
 
+  // ---- voxel edits: apply locally immediately (installVoxelEditor already
+  // does this via noa.setBlock before this callback even runs), send
+  // intent to the server, and apply other clients' edits the same way we
+  // apply our own. Installed here (after the room connects), not up with
+  // the worldDataNeeded listener above -- unlike chunk requests, a click
+  // can't happen before this function has had a chance to run past the
+  // `await` below, so there's no pre-connection window to queue against.
+  installVoxelEditor(noa, (x, y, z, voxelId) => {
+    room.send("editBlock", { x, y, z, voxelId });
+  });
+
+  room.onMessage("blockChanged", ({ x, y, z, voxelId }: EditBlockMessage) => {
+    noa.setBlock(voxelId, x, y, z);
+  });
+
   // ---- remote player avatars: plain colored boxes, just enough to see
   // other connected players move during a two-tab test ----
   const scene = noa.rendering.getScene();
@@ -130,4 +159,18 @@ export async function connectAndStreamWorld(noa: Engine, url: string, playerName
     if (!pos) return;
     room.send("pos", { x: pos[0], y: pos[1], z: pos[2], yaw: noa.camera.heading });
   });
+
+  // Real bug found live: leaving the game route (game.ts's RunningGame.stop())
+  // tore down the local noa/Babylon view but never told the SERVER this
+  // client disconnected -- the WebSocket just sat open with nothing reading
+  // from it. The old session's PlayerState lingered in that world's room
+  // state; reconnecting (even as a "new" session) made the leftover one
+  // render as a red, non-colliding "remote player" ghost box, reproduced
+  // live and confirmed from a screenshot. `leave()` here is what game.ts's
+  // stop() now actually calls.
+  return {
+    leave() {
+      room.leave();
+    },
+  };
 }

@@ -71,12 +71,24 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
   installPlayerController(noa);
   installOriginShiftLogger(noa);
 
-  connectAndStreamWorld(noa, serverUrl, playerName, worldId).catch((err) => {
+  // Resolves to the real server connection once joinOrCreate() completes --
+  // stop() below chains onto this (rather than needing its own connected/
+  // not-yet-connected branch) so leaving works correctly whether the
+  // connection has finished by then or not.
+  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
+    return null;
   });
 
   return {
     stop(): void {
+      // Real bug found live: this used to only tear down the local view --
+      // the server never learned the client left, so the old session
+      // lingered in that world's room state and reappeared as a red,
+      // walk-through "ghost" player box on reconnecting (confirmed from a
+      // screenshot). Actually leave the room now.
+      connection.then((c) => c?.leave());
+
       noa.setPaused(true);
       try {
         const scene = noa.rendering.getScene();
