@@ -8,13 +8,21 @@
 //
 // Run once (`node scripts/slice-block-textures.mjs`) and commit the
 // output -- not a build step, since the source atlases never change.
+//
+// Source atlases live in packages/client/textures-source/blocks/, NOT
+// public/ -- only the sliced per-face output (plus tallgrass.png/
+// deadshrub.png, which the cross-plane plant mesh loads directly as a
+// whole atlas, see plantMesh.ts) is ever actually requested by the
+// running client. Keeping the unsliced source atlases out of public/
+// means they don't ship as dead weight in the client build.
 
 import { Jimp } from "jimp";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BLOCKS_DIR = join(__dirname, "..", "packages", "client", "public", "textures", "blocks");
+const SOURCE_DIR = join(__dirname, "..", "packages", "client", "textures-source", "blocks");
+const OUTPUT_DIR = join(__dirname, "..", "packages", "client", "public", "textures", "blocks");
 
 // Pixel regions within the 48x32 atlas, decoded from dirt.obj's real UV
 // coordinates (see docs/PORTING_CHECKLIST.md / session notes for the
@@ -49,23 +57,32 @@ const CUBE_TYPES = [
   "copper",
   "quartz",
   "magnetite",
-  // Flat-color QA block, not from the old game -- generated (not ported)
-  // as a solid-magenta 48x32 atlas so it goes through the exact same
-  // real-per-face-texture path as every other block (noa's registerBlock
-  // takes a 6-element material array either way; a uniform flat image
-  // slices into 6 identical faces, which is fine). Previously used noa's
-  // flat-color-material path directly, which somehow rendered invisible
-  // live (unconfirmed root cause) -- this sidesteps it entirely rather
-  // than chasing a second, separate rendering code path.
+  // Flat-color QA block, not from the old game -- generated below (not
+  // ported) as a solid-magenta 48x32 atlas so it goes through the exact
+  // same real-per-face-texture path as every other block (noa's
+  // registerBlock takes a 6-element material array either way; a uniform
+  // flat image slices into 6 identical faces, which is fine). Previously
+  // used noa's flat-color-material path directly, which somehow rendered
+  // invisible live (unconfirmed root cause) -- this sidesteps it entirely
+  // rather than chasing a second, separate rendering code path.
   "marker",
 ];
 
+// marker.png isn't a real ported asset (the old game never had this
+// block), so generate its source atlas here rather than requiring it to
+// exist on disk already -- keeps the whole pipeline reproducible from
+// nothing but this script.
+const markerPath = join(SOURCE_DIR, "marker.png");
+const markerImage = new Jimp({ width: 48, height: 32, color: 0xff1acc_ff });
+await markerImage.write(markerPath);
+console.log("generated marker.png source atlas");
+
 for (const name of CUBE_TYPES) {
-  const srcPath = join(BLOCKS_DIR, `${name}.png`);
+  const srcPath = join(SOURCE_DIR, `${name}.png`);
   const image = await Jimp.read(srcPath);
   for (const [face, region] of Object.entries(FACE_REGIONS)) {
     const cropped = image.clone().crop(region);
-    const outPath = join(BLOCKS_DIR, `${name}_${face}.png`);
+    const outPath = join(OUTPUT_DIR, `${name}_${face}.png`);
     await cropped.write(outPath);
   }
   console.log(`sliced ${name}.png -> 6 faces`);
