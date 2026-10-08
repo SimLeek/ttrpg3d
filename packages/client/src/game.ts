@@ -14,7 +14,7 @@
 // This file's only remaining job for it is a console log, not UI.
 
 import { Engine } from "noa-engine";
-import { CHUNK_SIZE, VOXEL_TYPES } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, VOXEL_TYPES, FACE_ORDER } from "@ttrpg3d/shared";
 import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
@@ -31,8 +31,21 @@ import { buildCrossPlantMesh } from "./plantMesh.js";
 // +axis). Mismatching this swapped every pair (confirmed live: grass's
 // bottom/dirt texture was rendering on the top face instead of the green
 // top texture). This order is what's actually consumed -- use it, not the
-// registerBlock-branch comment.
-const FACE_SUFFIXES = ["px", "nx", "py", "ny", "pz", "nz"] as const;
+// registerBlock-branch comment. voxelTypes.ts's shared FACE_ORDER already
+// matches it (reused as-is for each type's own atlas layer order too,
+// since it's already a fixed order both sides need to agree on).
+//
+// Each "cube" type's faces live in ITS OWN atlas (type.atlasUrl,
+// type.atlasBaseLayer) rather than one hardcoded atlas constant here --
+// noa's material registration is already per-material
+// (`registerMaterial(name, {textureURL, atlasIndex})`), so different
+// types can freely point at different atlases with no engine-side
+// limitation. All of today's built-in types happen to share one atlas
+// (the most performant arrangement for a fixed, known set -- see
+// voxelTypes.ts's CORE_ATLAS_URL), but this loop doesn't know or care --
+// it just reads whatever each type says, which is what lets a future
+// mod-provided block (its own atlasUrl/atlasBaseLayer) register through
+// this exact same path with no changes here.
 
 // Matches testArea.ts's spawnPosition() exactly -- avoids the player
 // rendering somewhere wrong for the one tick before the server's own spawn
@@ -76,26 +89,29 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
     // (25) is fine; smaller/more-frequent shifts are cheaper to verify during
     // the Phase 2 playtest than rare/large ones.
     originRebaseDistance: 40,
-    // Real block textures now -- copied from the old game's own PNGs
-    // (self-authored, confirmed via their Blender .mtl source comment) into
-    // public/textures/blocks/, served by Vite at this path. registerMaterial
-    // below resolves each type's textureFile against this base.
+    // Real block textures -- self-authored PNGs decoded from the old
+    // game's own Blender/Godot source, served by Vite at this path.
+    // registerMaterial below resolves textureURL against this base: the
+    // shared atlas for cube types (see cubeAtlasIndex above), or the
+    // plant textures loaded directly in plantMesh.ts's custom mesh.
     texturePath: "/textures/blocks/",
   });
 
   // Per-type registration, from the shared table (packages/shared's
   // single source of truth for both this loop and the server's
-  // generator). Real per-face textures and a real alpha-cutout plant
-  // mesh now -- both decoded directly from the old game's actual Blender/
-  // Godot source files (dirt.obj's UVs for the per-face atlas layout,
-  // tall_grass.obj's geometry+UVs for the cross mesh), not guessed. See
-  // voxelTypes.ts's `mesh` field doc for the full rationale.
+  // generator). Real per-face textures (each type's own atlasUrl/
+  // atlasBaseLayer -- see the top-of-file comment on why that's per-type,
+  // not one hardcoded atlas here) and a real alpha-cutout plant mesh --
+  // both decoded directly from the old game's actual Blender/Godot source
+  // files (dirt.obj's UVs for the per-face atlas layout, tall_grass.obj's
+  // geometry+UVs for the cross mesh), not guessed. See voxelTypes.ts's
+  // `mesh` field doc for the full rationale.
   for (const type of VOXEL_TYPES) {
-    if (type.mesh === "cube" && type.textureFile) {
-      const base = type.textureFile.replace(/\.png$/, "");
-      const materialNames = FACE_SUFFIXES.map((suffix) => `${type.name}-${suffix}`);
-      FACE_SUFFIXES.forEach((suffix, i) => {
-        noa.registry.registerMaterial(materialNames[i], { textureURL: `${base}_${suffix}.png` });
+    if (type.mesh === "cube" && type.atlasUrl && type.atlasBaseLayer !== null) {
+      const { atlasUrl, atlasBaseLayer } = type;
+      const materialNames = FACE_ORDER.map((face) => `${type.name}-${face}`);
+      FACE_ORDER.forEach((face, i) => {
+        noa.registry.registerMaterial(materialNames[i], { textureURL: atlasUrl, atlasIndex: atlasBaseLayer + i });
       });
       noa.registry.registerBlock(type.id, { material: materialNames, solid: type.solid, fluid: type.fluid });
     } else if (type.mesh === "cross" && type.textureFile) {
