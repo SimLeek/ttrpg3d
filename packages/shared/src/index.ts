@@ -111,3 +111,5 @@ export function fuzzyMatch<T>(query: string, items: readonly T[], getText: (item
 }
 
 export * from "./voxelTypes.js";
+export * from "./items.js";
+export * from "./collision.js";

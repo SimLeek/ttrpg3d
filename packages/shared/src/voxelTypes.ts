@@ -70,6 +70,17 @@ export interface VoxelTypeDef {
   color: [number, number, number];
   solid: boolean;
   fluid: boolean;
+  /**
+   * Whether a player can select this type in the hotbar/inventory and
+   * place it (packages/shared/src/items.ts's `buildBlockCatalog`). True
+   * for every real voxel type from the old game -- `noa.setBlock` already
+   * handles every mesh kind (cube, cross) uniformly, so there's no extra
+   * placement-side work needed to support any of them, and the inventory
+   * grid (not a fixed slot count) is what bounds the catalog's size, not
+   * this flag. False only for MARKER, the ttrpg3d-specific internal QA
+   * block that was never part of the old game.
+   */
+  placeable: boolean;
 }
 
 export const AIR = 0;
@@ -104,23 +115,23 @@ export const MAGNETITE = 23;
 export const MARKER = 254;
 
 export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
-  { id: DIRT, name: "dirt", mesh: "cube", textureFile: "dirt.png", color: [0.45, 0.36, 0.22], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: GRASS, name: "grass", mesh: "cube", textureFile: "grass.png", color: [0.3, 0.55, 0.25], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: WATER_FULL, name: "water", mesh: "cube", textureFile: "water.png", color: [0.2, 0.4, 0.8], atlasUrl: null, atlasBaseLayer: null, solid: false, fluid: true },
-  { id: WATER_TOP, name: "watertop", mesh: "cube", textureFile: "watertop.png", color: [0.25, 0.45, 0.85], atlasUrl: null, atlasBaseLayer: null, solid: false, fluid: true },
-  { id: LOG, name: "log", mesh: "cube", textureFile: "log.png", color: [0.4, 0.28, 0.15], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: LEAVES, name: "leaves", mesh: "cube", textureFile: "leaves.png", color: [0.2, 0.45, 0.15], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: TALL_GRASS, name: "tallgrass", mesh: "cross", textureFile: "tallgrass.png", color: [0.35, 0.6, 0.25], atlasUrl: null, atlasBaseLayer: null, solid: false, fluid: false },
-  { id: DEAD_SHRUB, name: "deadshrub", mesh: "cross", textureFile: "deadshrub.png", color: [0.5, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, solid: false, fluid: false },
-  { id: MUDSTONE, name: "mudstone", mesh: "cube", textureFile: "mudstone.png", color: [0.4, 0.38, 0.35], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: PLASTIGLOMERATE, name: "plastiglomerate", mesh: "cube", textureFile: "plastiglomerate.png", color: [0.3, 0.3, 0.35], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: COAL_ORE, name: "coal_ore", mesh: "cube", textureFile: "coal.png", color: [0.15, 0.15, 0.15], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: GYPSUM_ORE, name: "gypsum_ore", mesh: "cube", textureFile: "gypsum.png", color: [0.85, 0.85, 0.8], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: HALITE_ORE, name: "halite_ore", mesh: "cube", textureFile: "halite.png", color: [0.9, 0.75, 0.75], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: COPPER_ORE, name: "copper_ore", mesh: "cube", textureFile: "copper.png", color: [0.55, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: QUARTZ, name: "quartz", mesh: "cube", textureFile: "quartz.png", color: [0.8, 0.8, 0.85], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: MAGNETITE, name: "magnetite", mesh: "cube", textureFile: "magnetite.png", color: [0.2, 0.2, 0.25], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
-  { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, solid: true, fluid: false },
+  { id: DIRT, name: "dirt", mesh: "cube", textureFile: "dirt.png", color: [0.45, 0.36, 0.22], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: GRASS, name: "grass", mesh: "cube", textureFile: "grass.png", color: [0.3, 0.55, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: WATER_FULL, name: "water", mesh: "cube", textureFile: "water.png", color: [0.2, 0.4, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: true },
+  { id: WATER_TOP, name: "watertop", mesh: "cube", textureFile: "watertop.png", color: [0.25, 0.45, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: true },
+  { id: LOG, name: "log", mesh: "cube", textureFile: "log.png", color: [0.4, 0.28, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: LEAVES, name: "leaves", mesh: "cube", textureFile: "leaves.png", color: [0.2, 0.45, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: TALL_GRASS, name: "tallgrass", mesh: "cross", textureFile: "tallgrass.png", color: [0.35, 0.6, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
+  { id: DEAD_SHRUB, name: "deadshrub", mesh: "cross", textureFile: "deadshrub.png", color: [0.5, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
+  { id: MUDSTONE, name: "mudstone", mesh: "cube", textureFile: "mudstone.png", color: [0.4, 0.38, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: PLASTIGLOMERATE, name: "plastiglomerate", mesh: "cube", textureFile: "plastiglomerate.png", color: [0.3, 0.3, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: COAL_ORE, name: "coal_ore", mesh: "cube", textureFile: "coal.png", color: [0.15, 0.15, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: GYPSUM_ORE, name: "gypsum_ore", mesh: "cube", textureFile: "gypsum.png", color: [0.85, 0.85, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: HALITE_ORE, name: "halite_ore", mesh: "cube", textureFile: "halite.png", color: [0.9, 0.75, 0.75], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: COPPER_ORE, name: "copper_ore", mesh: "cube", textureFile: "copper.png", color: [0.55, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: QUARTZ, name: "quartz", mesh: "cube", textureFile: "quartz.png", color: [0.8, 0.8, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: MAGNETITE, name: "magnetite", mesh: "cube", textureFile: "magnetite.png", color: [0.2, 0.2, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: false, solid: true, fluid: false },
 ];
 
 /**

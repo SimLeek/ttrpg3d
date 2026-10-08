@@ -14,11 +14,12 @@
 // This file's only remaining job for it is a console log, not UI.
 
 import { Engine } from "noa-engine";
-import { CHUNK_SIZE, VOXEL_TYPES, FACE_ORDER } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, VOXEL_TYPES, FACE_ORDER, buildBlockCatalog } from "@ttrpg3d/shared";
 import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
 import { buildCrossPlantMesh } from "./plantMesh.js";
+import { mountHotbar } from "./hotbar.js";
 
 // noa's registerBlock material array is a *fixed* 6-element order -- but
 // registry.js's own doc comment on the 6-length branch ("interpret as
@@ -137,11 +138,25 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
   installPlayerController(noa);
   installOriginShiftLogger(noa);
 
+  // Hotbar + inventory UI (hotbar.ts, direct port of the old game's
+  // player_inventory.gd) -- a plain DOM overlay, not part of noa's own
+  // canvas, so it gets its own container appended to the page like
+  // lobby.ts's UI does. Deliberately noa-free internally (see hotbar.ts's
+  // header) -- the one real noa dependency, suspending pointer-lock
+  // mouse-look while the inventory grid is open so the mouse is free to
+  // click it, is wired here instead via onInventoryOpenChange.
+  const hotbarContainer = document.createElement("div");
+  document.body.appendChild(hotbarContainer);
+  const hotbar = mountHotbar(hotbarContainer, {
+    catalog: buildBlockCatalog(),
+    onInventoryOpenChange: (open) => noa.container.setPointerLock(!open),
+  });
+
   // Resolves to the real server connection once joinOrCreate() completes --
   // stop() below chains onto this (rather than needing its own connected/
   // not-yet-connected branch) so leaving works correctly whether the
   // connection has finished by then or not.
-  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId).catch((err) => {
+  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId, hotbar.getEquippedItem).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
     return null;
   });
@@ -154,6 +169,9 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
       // walk-through "ghost" player box on reconnecting (confirmed from a
       // screenshot). Actually leave the room now.
       connection.then((c) => c?.leave());
+
+      hotbar.destroy();
+      hotbarContainer.remove();
 
       noa.setPaused(true);
       try {
