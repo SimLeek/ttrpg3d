@@ -109,3 +109,5 @@ export function fuzzyMatch<T>(query: string, items: readonly T[], getText: (item
   results.sort((a, b) => b.score - a.score);
   return results;
 }
+
+export * from "./voxelTypes.js";

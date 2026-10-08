@@ -14,10 +14,38 @@
 // This file's only remaining job for it is a console log, not UI.
 
 import { Engine } from "noa-engine";
-import { CHUNK_SIZE } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, VOXEL_TYPES, FACE_ORDER } from "@ttrpg3d/shared";
 import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
+import { buildCrossPlantMesh } from "./plantMesh.js";
+
+// noa's registerBlock material array is a *fixed* 6-element order -- but
+// registry.js's own doc comment on the 6-length branch ("interpret as
+// [-x, +x, -y, +y, -z, +z]") is actually wrong, confirmed by tracing the
+// real consumer: terrainMesher.js's constructMeshMask calls
+// getMaterial(id0, d*2) / getMaterial(id1, d*2+1), and
+// getBlockFaceMaterial's OWN comment says dir 0..5 is
+// [+x, -x, +y, -y, +z, -z] -- which matches the actual mesher code (id0 is
+// the voxel on the low side of the face, so its "d*2" face points toward
+// +axis). Mismatching this swapped every pair (confirmed live: grass's
+// bottom/dirt texture was rendering on the top face instead of the green
+// top texture). This order is what's actually consumed -- use it, not the
+// registerBlock-branch comment. voxelTypes.ts's shared FACE_ORDER already
+// matches it (reused as-is for each type's own atlas layer order too,
+// since it's already a fixed order both sides need to agree on).
+//
+// Each "cube" type's faces live in ITS OWN atlas (type.atlasUrl,
+// type.atlasBaseLayer) rather than one hardcoded atlas constant here --
+// noa's material registration is already per-material
+// (`registerMaterial(name, {textureURL, atlasIndex})`), so different
+// types can freely point at different atlases with no engine-side
+// limitation. All of today's built-in types happen to share one atlas
+// (the most performant arrangement for a fixed, known set -- see
+// voxelTypes.ts's CORE_ATLAS_URL), but this loop doesn't know or care --
+// it just reads whatever each type says, which is what lets a future
+// mod-provided block (its own atlasUrl/atlasBaseLayer) register through
+// this exact same path with no changes here.
 
 // Matches testArea.ts's spawnPosition() exactly -- avoids the player
 // rendering somewhere wrong for the one tick before the server's own spawn
@@ -61,12 +89,50 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
     // (25) is fine; smaller/more-frequent shifts are cheaper to verify during
     // the Phase 2 playtest than rare/large ones.
     originRebaseDistance: 40,
+    // Real block textures -- self-authored PNGs decoded from the old
+    // game's own Blender/Godot source, served by Vite at this path.
+    // registerMaterial below resolves textureURL against this base: the
+    // shared atlas for cube types (see cubeAtlasIndex above), or the
+    // plant textures loaded directly in plantMesh.ts's custom mesh.
+    texturePath: "/textures/blocks/",
   });
 
-  noa.registry.registerMaterial("ground", { color: [0.45, 0.36, 0.22] });
-  noa.registry.registerMaterial("marker", { color: [1.0, 0.1, 0.8] });
-  noa.registry.registerBlock(1, { material: "ground" });
-  noa.registry.registerBlock(2, { material: "marker" });
+  // Per-type registration, from the shared table (packages/shared's
+  // single source of truth for both this loop and the server's
+  // generator). Real per-face textures (each type's own atlasUrl/
+  // atlasBaseLayer -- see the top-of-file comment on why that's per-type,
+  // not one hardcoded atlas here) and a real alpha-cutout plant mesh --
+  // both decoded directly from the old game's actual Blender/Godot source
+  // files (dirt.obj's UVs for the per-face atlas layout, tall_grass.obj's
+  // geometry+UVs for the cross mesh), not guessed. See voxelTypes.ts's
+  // `mesh` field doc for the full rationale.
+  for (const type of VOXEL_TYPES) {
+    if (type.mesh === "cube" && type.atlasUrl && type.atlasBaseLayer !== null) {
+      const { atlasUrl, atlasBaseLayer } = type;
+      const materialNames = FACE_ORDER.map((face) => `${type.name}-${face}`);
+      FACE_ORDER.forEach((face, i) => {
+        noa.registry.registerMaterial(materialNames[i], { textureURL: atlasUrl, atlasIndex: atlasBaseLayer + i });
+      });
+      noa.registry.registerBlock(type.id, { material: materialNames, solid: type.solid, fluid: type.fluid });
+    } else if (type.mesh === "cross" && type.textureFile) {
+      const scene = noa.rendering.getScene();
+      const mesh = buildCrossPlantMesh(scene, type.name, `/textures/blocks/${type.textureFile}`);
+      // opaque defaults to true for any non-fluid block (confirmed in
+      // noa-engine's registry.js BlockOptions) -- left at that default,
+      // the terrain mesher culled the FACE OF THE SOLID BLOCK BELOW each
+      // plant placement, since it thought the cell above was opaque and
+      // would hide it anyway. The thin cross mesh doesn't actually cover
+      // that face, so the result was a real hole in the ground's render
+      // under every tallgrass/deadshrub, with the plant's own sprite
+      // appearing to float over it -- confirmed live, and absent before
+      // these were registered as opaque solid cubes (where the culling
+      // was actually correct). Must be explicit false here.
+      noa.registry.registerBlock(type.id, { blockMesh: mesh, solid: type.solid, fluid: type.fluid, opaque: false });
+    } else {
+      noa.registry.registerMaterial(type.name, { color: type.color });
+      noa.registry.registerBlock(type.id, { material: type.name, solid: type.solid, fluid: type.fluid });
+    }
+  }
 
   installPlayerController(noa);
   installOriginShiftLogger(noa);
