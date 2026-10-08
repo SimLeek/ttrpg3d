@@ -54,7 +54,7 @@ up during play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 2 | MVP -- full movement port, floating-origin shift, chunk streaming | DONE |
 | -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE |
 | 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break + real hilly terrain generator (textures, caves, ore, trees, foliage) DONE; DM world-create/admin-grant UI remains |
-| 4 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | NOT STARTED |
+| 4 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | **PARTIAL** -- real hotbar + full inventory grid + multi-block-type placement (with real icons, a self-overlap placement guard, and a minimal input-capture layer) DONE; dual-hand equip/hand-equipment dispatch, soft-body swap, health/fall-damage, and squeezer-rays remain |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | NOT STARTED |
 | 6 | Mod system v2 -- per-world data-only mod registration | NOT STARTED |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED |

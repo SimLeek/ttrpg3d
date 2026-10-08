@@ -125,35 +125,65 @@ project, reiterated across the TODO docs — don't regress on these):
       built for/with the same movement systems the new client is porting, so
       they're free, already-designed content, not just test data.
 
-## Phase 4 — Voxel interaction
+## Phase 4 — Voxel interaction [PARTIAL]
 
 Movement moved to Phase 2 already. This phase extends Phase 2's single-
 hardcoded-block placement to the real multi-block-type system.
 
+- [x] `scripts/item_resources/voxel_interactor.gd` (328L) — **DONE**
+      (differently than planned): its ~328 lines turned out to be mostly
+      manual raycasting + face-normal detection + placement-position math
+      that noa-engine's own `targetedBlock.position`/`.adjacent` already
+      does for free (confirmed by tracing noa's source) -- nothing to port
+      there. What WAS worth porting, and is: the character-overlap guard
+      (`_is_voxel_overlapping_character`), now `packages/shared/src/
+      collision.ts`'s `aabbsOverlap` + `voxelEditor.ts`'s use of it. The
+      placement-plane/targeting-beam *visuals* are still not ported
+      (cosmetic polish, deferred).
+- [x] `scripts/items/voxelitem.gd`, `del_vox_item.gd` — **DONE**: the
+      "one generic placer item, configured per catalog entry" pattern is
+      `packages/shared/src/items.ts`'s `Item`/`buildBlockCatalog`.
+      `del_vox_item.gd`'s type-agnostic delete was already how
+      `voxelEditor.ts`'s break ("fire") worked before this phase; unchanged.
+- [x] `scripts/ui/player_inventory.gd` (368L, actually cataloged under
+      Phase 5 below but pulled forward here) — **DONE**: `packages/client/
+      src/hotbar.ts`, a direct port of its real shape (10 hotbar slots,
+      number keys + mouse-wheel cycling, a toggleable full-inventory grid
+      where clicking an item loads it into the selected hotbar slot) --
+      not the originally-planned smaller ad hoc "just a palette" version;
+      corrected after it became clear picking which block to place *is*
+      the hotbar, not separable, deferrable Phase 5 scope. Equip-into-hand
+      is simplified to a single equip slot read directly by voxelEditor.ts
+      (no `HandController`/dual-hand object) -- see the two_handed_resource/
+      left_hand_gripper entry below for why dual-hand itself stayed
+      deferred. Native-tooltip/hint text not ported (a plain `title`
+      attribute stands in).
+- [ ] `scripts/input/input_controller.gd` (257L) — **PARTIAL**. Only its
+      core reference-counted `request_capture`/`release_capture`/
+      `is_captured` mechanism is ported (`packages/client/src/
+      inputCapture.ts`), pulled forward because the hotbar's inventory
+      grid is a real, current consumer (suspends noa's pointer-lock
+      mouse-look while open). Its gesture/sequence-matching, double-tap
+      detection, and event-replay/batching layers are NOT ported -- no
+      consumer for any of that yet.
+- [ ] `scripts/two_handed_resource.gd` (66L), `playable/
+      left_hand_gripper.gd` (201L) — **PARTIAL, by design**. Dual-hand
+      primary/secondary routing and a real `HandController` object are
+      NOT ported -- there's no second meaningful thing to hold yet (no
+      empty-hand-interact, no pickaxe), so it'd be pure added complexity
+      with no current payoff. `voxelEditor.ts` reads the hotbar's single
+      equipped item directly instead. Revisit once a second item kind
+      (pickaxe, etc., Phase 5/9) actually needs dispatching to a specific
+      hand. Hand-equipment-dependent dispatch (empty=interact,
+      pickaxe=attack, block=place) still NOT built -- there's only
+      place/break today, unchanged from before this phase.
 - [ ] `playable/squeezer_rays.gd` (119L) — **REDESIGN**, low priority within
       this phase (tight-space movement slowdown, not core movement feel).
-- [ ] `scripts/input/input_controller.gd` (257L) — **REDESIGN**. Carries
-      forward an important *pattern*, not just code: single reference-counted
-      owner of "what currently owns player input," replacing scattered ad hoc
-      mouse-mode checks. Worth pulling this pattern forward as soon as any UI
-      competes with gameplay input.
-- [ ] `scripts/item_resources/voxel_interactor.gd` (328L) — **REDESIGN**,
-      shared placement-plane/targeting-beam logic against noa's picking API.
-- [ ] `scripts/items/voxelitem.gd`, `del_vox_item.gd` — **REDESIGN**, full
-      multi-block-type versions now.
 - [ ] `scripts/items/phasing_gloves_item.gd` (20L), `wings_item.gd` (27L) —
       **PORT/REDESIGN**, small self-contained movement-mode items.
-- [ ] `scripts/two_handed_resource.gd` (66L) — **REDESIGN**. Don't just
-      port the old fixed click-dispatch mapping — TODO_battle_and_tools.md's
-      unbuilt combat rework wants hand behavior to depend on what's
-      *equipped* (empty = interact, pickaxe = attack, block = place),
-      replacing the current always-right-click-deletes behavior. Fold that
-      redesign in here rather than reproducing the old mapping and redoing
-      it later. See also Phase 5/9 below.
-- [ ] `playable/left_hand_gripper.gd` (201L) — **REDESIGN**, hand/item equip
-      management.
 - [ ] `playable/health.gd` (59L) — **PORT**, damage/regen model is mostly
-      pure math + simple state.
+      pure math + simple state. Still not needed yet -- no damage source
+      exists (combat/pickaxe-attack is Phase 5's own unbuilt scope).
 - [ ] `playable/blob_body_3d.gd` (467L), `scripts/limited_blob_body.gd`
       (142L), `scripts/limited_blob_body_extra.gd` (199L) — **DROP as a
       porting target; replace with a real soft-body physics library.**
@@ -168,29 +198,38 @@ hardcoded-block placement to the real multi-block-type system.
 
 ## Phase 5 — Inventory/items
 
-- [ ] `scripts/pcg/item_catalog.gd` (132L) — **PORT** data shape into shared
-      TS schema.
-- [ ] `scripts/ui/player_inventory.gd` (368L) — **REDESIGN**, fresh HTML/CSS
-      hotbar+grid UI (informed by, not copied from, the old screen
-      composition).
+- [x] `scripts/pcg/item_catalog.gd` (132L) — **DONE**, pulled forward into
+      Phase 4: `packages/shared/src/items.ts`.
+- [x] `scripts/ui/player_inventory.gd` (368L) — **DONE**, pulled forward
+      into Phase 4: `packages/client/src/hotbar.ts`. See that phase's own
+      entry for exactly what was/wasn't ported.
 - [ ] `scripts/ui/item_tooltip.gd` (161L) — **REDESIGN**, "how to use this
-      item" hint UI.
+      item" hint UI. Still not built -- hotbar.ts uses a plain `title`
+      attribute as a stand-in, not this.
 - [ ] `scripts/base_item.gd` (77L) — **REDESIGN**, base item contract as a TS
-      interface/class.
+      interface/class. `packages/shared/src/items.ts`'s `Item` tagged union
+      covers today's one item kind (`place-block`); this entry is about the
+      more general base contract once a second kind (pickaxe, etc.) exists.
 - [ ] **NEW** — DM-vs-player inventory split (infinite DM inventory + a
       separate limited-stock player inventory the DM stocks; placing a block
       consumes 1 from the player's stock, default cap 9999). Entirely unbuilt
-      in the old repo.
+      in the old repo. Still unbuilt here too -- every item has unlimited
+      "ammo" for now.
 - [ ] **NEW** — pickaxe/block-health combat rework: pickaxe attacks remove 1
       health/sec from a targeted block, every voxel type needs a health
       value, health regenerates instantly when attack stops. Pairs with the
       hand-equipment-dependent dispatch noted in Phase 4. Entirely unbuilt.
 - [ ] **NEW** — equip scheme: double-click = equip right hand, single-click =
       equip left hand, Ctrl+hotbar-number = right hand, Shift+wheel cycles
-      right-hand selection once dual-hand hotbar exists. Entirely unbuilt.
-- [ ] **DEFER** — item icon polish (rendered-emoji PNGs for non-block items;
-      lower priority: real 3D-rendered cube icons for block items). Cosmetic,
-      push to Phase 11+.
+      right-hand selection once dual-hand hotbar exists. Entirely unbuilt --
+      Phase 4 shipped only a single equip slot (see that phase's
+      two_handed_resource/left_hand_gripper entry for why).
+- [x] ~~**DEFER** — item icon polish~~ — **DONE**, earlier than planned:
+      `scripts/build-block-icons.mjs` crops each block's real top-face
+      texture into a standalone icon (not the originally-cosmetic-deferred
+      rendered-emoji/3D-cube-render approach) -- cheap enough once the real
+      per-face block textures already existed that there was no reason to
+      ship flat color swatches first and redo this later.
 
 ## Phase 6 — Mod system v2
 
