@@ -66,6 +66,26 @@ export interface VoxelTypeDef {
   atlasUrl: string | null;
   /** This type's first face's layer index within `atlasUrl` -- its 6 faces occupy `atlasBaseLayer + FACE_ORDER.indexOf(face)`. Null for non-"cube" types. */
   atlasBaseLayer: number | null;
+  /**
+   * Which of the old game's two real xray-if-behind shaders this type's
+   * block material should use (both read in full from
+   * 3dAssets/shaders/xray_if_behind_{cutout,transparent}.gdshader --
+   * identical cone-fade math, only the alpha handling at the end differs):
+   * - "cutout": hard `discard` once faded alpha drops below ~1 (render_mode
+   *   depth_prepass_alpha in the old shader). This is the UNIVERSAL
+   *   default -- confirmed by grepping every real shader_*.tres in the old
+   *   repo: dirt/grass/log/leaves/glass/wall/shrub all use the cutout
+   *   variant, not just the handful of types that are visually see-through.
+   * - "transparent": real soft alpha blend, only discarding fully-invisible
+   *   pixels, with backface culling off (render_mode blend_mix,
+   *   depth_draw_always, cull_disabled). Used by exactly 3 types in the old
+   *   repo: water, watertop, quartz. These also come OFF the shared core
+   *   atlas (see CUBE_TYPE_NAMES below) and get their own small standalone
+   *   texture instead -- game.ts's registration loop branches on this
+   *   field, not on a hardcoded type-name list, so a future mod type can
+   *   opt into either mode the same way.
+   */
+  transparencyMode: "cutout" | "transparent";
   /** [r,g,b] 0..1, used as a fallback before a texture loads, or always for "none" types. */
   color: [number, number, number];
   solid: boolean;
@@ -115,23 +135,32 @@ export const MAGNETITE = 23;
 export const MARKER = 254;
 
 export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
-  { id: DIRT, name: "dirt", mesh: "cube", textureFile: "dirt.png", color: [0.45, 0.36, 0.22], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: GRASS, name: "grass", mesh: "cube", textureFile: "grass.png", color: [0.3, 0.55, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: WATER_FULL, name: "water", mesh: "cube", textureFile: "water.png", color: [0.2, 0.4, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: true },
-  { id: WATER_TOP, name: "watertop", mesh: "cube", textureFile: "watertop.png", color: [0.25, 0.45, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: true },
-  { id: LOG, name: "log", mesh: "cube", textureFile: "log.png", color: [0.4, 0.28, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: LEAVES, name: "leaves", mesh: "cube", textureFile: "leaves.png", color: [0.2, 0.45, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: TALL_GRASS, name: "tallgrass", mesh: "cross", textureFile: "tallgrass.png", color: [0.35, 0.6, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
-  { id: DEAD_SHRUB, name: "deadshrub", mesh: "cross", textureFile: "deadshrub.png", color: [0.5, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
-  { id: MUDSTONE, name: "mudstone", mesh: "cube", textureFile: "mudstone.png", color: [0.4, 0.38, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: PLASTIGLOMERATE, name: "plastiglomerate", mesh: "cube", textureFile: "plastiglomerate.png", color: [0.3, 0.3, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: COAL_ORE, name: "coal_ore", mesh: "cube", textureFile: "coal.png", color: [0.15, 0.15, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: GYPSUM_ORE, name: "gypsum_ore", mesh: "cube", textureFile: "gypsum.png", color: [0.85, 0.85, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: HALITE_ORE, name: "halite_ore", mesh: "cube", textureFile: "halite.png", color: [0.9, 0.75, 0.75], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: COPPER_ORE, name: "copper_ore", mesh: "cube", textureFile: "copper.png", color: [0.55, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: QUARTZ, name: "quartz", mesh: "cube", textureFile: "quartz.png", color: [0.8, 0.8, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: MAGNETITE, name: "magnetite", mesh: "cube", textureFile: "magnetite.png", color: [0.2, 0.2, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
-  { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: false, solid: true, fluid: false },
+  { id: DIRT, name: "dirt", mesh: "cube", textureFile: "dirt.png", transparencyMode: "cutout", color: [0.45, 0.36, 0.22], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: GRASS, name: "grass", mesh: "cube", textureFile: "grass.png", transparencyMode: "cutout", color: [0.3, 0.55, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  // water/watertop: "transparent" (soft blend, cull disabled) in the old
+  // game too -- see VoxelTypeDef.transparencyMode's doc. Off the shared
+  // core atlas (see CUBE_TYPE_NAMES below); textureFile here is a plain
+  // standalone file loaded directly from public/textures/blocks/, not a
+  // source atlas to crop (scripts/build-block-standalone-textures.mjs).
+  { id: WATER_FULL, name: "water", mesh: "cube", textureFile: "water.png", transparencyMode: "transparent", color: [0.2, 0.4, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: true },
+  { id: WATER_TOP, name: "watertop", mesh: "cube", textureFile: "watertop.png", transparencyMode: "transparent", color: [0.25, 0.45, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: true },
+  { id: LOG, name: "log", mesh: "cube", textureFile: "log.png", transparencyMode: "cutout", color: [0.4, 0.28, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: LEAVES, name: "leaves", mesh: "cube", textureFile: "leaves.png", transparencyMode: "cutout", color: [0.2, 0.45, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: TALL_GRASS, name: "tallgrass", mesh: "cross", textureFile: "tallgrass.png", transparencyMode: "cutout", color: [0.35, 0.6, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
+  { id: DEAD_SHRUB, name: "deadshrub", mesh: "cross", textureFile: "deadshrub.png", transparencyMode: "cutout", color: [0.5, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
+  { id: MUDSTONE, name: "mudstone", mesh: "cube", textureFile: "mudstone.png", transparencyMode: "cutout", color: [0.4, 0.38, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: PLASTIGLOMERATE, name: "plastiglomerate", mesh: "cube", textureFile: "plastiglomerate.png", transparencyMode: "cutout", color: [0.3, 0.3, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: COAL_ORE, name: "coal_ore", mesh: "cube", textureFile: "coal.png", transparencyMode: "cutout", color: [0.15, 0.15, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: GYPSUM_ORE, name: "gypsum_ore", mesh: "cube", textureFile: "gypsum.png", transparencyMode: "cutout", color: [0.85, 0.85, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: HALITE_ORE, name: "halite_ore", mesh: "cube", textureFile: "halite.png", transparencyMode: "cutout", color: [0.9, 0.75, 0.75], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: COPPER_ORE, name: "copper_ore", mesh: "cube", textureFile: "copper.png", transparencyMode: "cutout", color: [0.55, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  // quartz: real transparent variant too, same as water/watertop.
+  // textureFile corrected to the old repo's real transparent source
+  // (3dAssets/blocks/transparent/16xquartz.png) -- `quartz.png` here was
+  // flagged earlier this session as an approximation that didn't match.
+  { id: QUARTZ, name: "quartz", mesh: "cube", textureFile: "quartz.png", transparencyMode: "transparent", color: [0.8, 0.8, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: MAGNETITE, name: "magnetite", mesh: "cube", textureFile: "magnetite.png", transparencyMode: "cutout", color: [0.2, 0.2, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", transparencyMode: "cutout", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: false, solid: true, fluid: false },
 ];
 
 /**
@@ -149,8 +178,15 @@ export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
  */
 export const FACE_ORDER = ["px", "nx", "py", "ny", "pz", "nz"] as const;
 
-/** All "cube"-mesh voxel types, in the fixed array order the core atlas (CORE_ATLAS_URL) was built in. */
-export const CUBE_TYPE_NAMES: readonly string[] = VOXEL_TYPES.filter((t) => t.mesh === "cube").map((t) => t.name);
+/**
+ * All "cube"-mesh voxel types that live in the shared core atlas, in the
+ * fixed array order it was built in. Excludes "transparent"-mode types
+ * (water/watertop/quartz) -- they're still `mesh: "cube"` (real
+ * terrain-meshed cubes, not cross meshes), but get their own small
+ * standalone texture instead of a core-atlas slot (see
+ * VoxelTypeDef.transparencyMode's doc for why).
+ */
+export const CUBE_TYPE_NAMES: readonly string[] = VOXEL_TYPES.filter((t) => t.mesh === "cube" && t.transparencyMode === "cutout").map((t) => t.name);
 
 /**
  * The one shared atlas every CURRENT (built-in) "cube" type's faces live
@@ -171,7 +207,7 @@ export const CORE_ATLAS_URL = "blocks-atlas.png";
 // build-block-atlas.mjs independently derives the identical numbers from
 // the same CUBE_TYPE_NAMES/FACE_ORDER inputs, so the two can't drift.
 for (const type of VOXEL_TYPES) {
-  if (type.mesh !== "cube") continue;
+  if (type.mesh !== "cube" || type.transparencyMode !== "cutout") continue;
   type.atlasUrl = CORE_ATLAS_URL;
   type.atlasBaseLayer = CUBE_TYPE_NAMES.indexOf(type.name) * FACE_ORDER.length;
 }

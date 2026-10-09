@@ -15,6 +15,7 @@
 // addInstance), which is why this mesh's x/z are centered on 0 rather
 // than spanning 0..1 like a regular terrain-meshed cube.
 import * as BABYLON from "@babylonjs/core";
+import { XrayFadePlugin } from "./blockShaders.js";
 
 // Each quad: 4 position vertices (x,y,z, already recentered so x/z span
 // -0.5..0.5 and y spans 0..1 -- see header) and 4 UV pairs, taken directly
@@ -78,6 +79,11 @@ export function buildCrossPlantMesh(scene: BABYLON.Scene, name: string, textureU
   material.diffuseTexture = texture;
   material.backFaceCulling = false;
   material.specularColor = new BABYLON.Color3(0, 0, 0);
+  // Same universal xray-if-behind cutout fade every other block gets --
+  // confirmed by grepping every real shader_*.tres in the old repo: the
+  // plant types (shrub.tres etc) use xray_if_behind_cutout.gdshader too,
+  // not a special plant-only variant.
+  new XrayFadePlugin(material, "cutout");
   mesh.material = material;
 
   // Root-caused via R&D into both noa-engine's and Babylon.js's actual

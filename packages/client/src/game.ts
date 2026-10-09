@@ -14,12 +14,17 @@
 // This file's only remaining job for it is a console log, not UI.
 
 import { Engine } from "noa-engine";
-import { CHUNK_SIZE, VOXEL_TYPES, FACE_ORDER, buildBlockCatalog } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, VOXEL_TYPES, FACE_ORDER, CORE_ATLAS_URL, buildBlockCatalog } from "@ttrpg3d/shared";
 import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
 import { buildCrossPlantMesh } from "./plantMesh.js";
 import { mountHotbar } from "./hotbar.js";
+import { installCameraZoom } from "./cameraZoom.js";
+import { installUnderwaterEffect } from "./underwaterEffect.js";
+import { installPlayerBodyMesh } from "./playerBodyMesh.js";
+import * as BABYLON from "@babylonjs/core";
+import { XrayFadePlugin, AtlasSamplingPlugin, updateXrayUniforms } from "./blockShaders.js";
 
 // noa's registerBlock material array is a *fixed* 6-element order -- but
 // registry.js's own doc comment on the 6-length branch ("interpret as
@@ -98,6 +103,40 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
     texturePath: "/textures/blocks/",
   });
 
+  const scene = noa.rendering.getScene();
+
+  // ONE shared material for every "cutout"-mode cube type still on the
+  // core atlas (dirt/grass/log/leaves/ores/etc) -- built once and reused
+  // via noa's `registerMaterial(name, {renderMaterial})`, which bypasses
+  // noa's own auto-created atlas material entirely once set (confirmed
+  // directly in terrainMaterials.js's createTerrainMat: `if (matInfo.
+  // renderMat) return matInfo.renderMat`). Reusing one object (rather than
+  // building a new one per type) preserves the single-shared-GPU-material
+  // performance characteristic the atlas work was for -- terrainMaterials.
+  // js's own decideTerrainMatID dedupes by this exact object identity.
+  // AtlasSamplingPlugin re-implements noa's own internal (non-exported)
+  // TerrainMaterialPlugin to sample the real texture-array atlas;
+  // XrayFadePlugin layers the old game's universal xray-if-behind cutout
+  // fade on top -- see blockShaders.ts's header for both.
+  const coreAtlasMaterial = new BABYLON.StandardMaterial("core-atlas-mat", scene);
+  const coreAtlasTexture = new BABYLON.Texture(
+    `/textures/blocks/${CORE_ATLAS_URL}`,
+    scene,
+    true,
+    false,
+    BABYLON.Texture.NEAREST_SAMPLINGMODE,
+  );
+  coreAtlasMaterial.diffuseTexture = coreAtlasTexture;
+  coreAtlasMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+  new AtlasSamplingPlugin(coreAtlasMaterial, coreAtlasTexture);
+  new XrayFadePlugin(coreAtlasMaterial, "cutout");
+
+  // Real per-material alpha_min values from the old game's actual
+  // shader_*.tres files (not the shader's generic default) -- water/
+  // watertop use 0.5, quartz uses the same 0.2 as everything else
+  // (DEFAULT_XRAY_PARAMS.alphaMin), so no override needed for it.
+  const TRANSPARENT_ALPHA_MIN: Partial<Record<string, number>> = { water: 0.5, watertop: 0.5 };
+
   // Per-type registration, from the shared table (packages/shared's
   // single source of truth for both this loop and the server's
   // generator). Real per-face textures (each type's own atlasUrl/
@@ -109,14 +148,52 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
   // `mesh` field doc for the full rationale.
   for (const type of VOXEL_TYPES) {
     if (type.mesh === "cube" && type.atlasUrl && type.atlasBaseLayer !== null) {
-      const { atlasUrl, atlasBaseLayer } = type;
+      // "cutout"-mode cube type, still on the shared core atlas -- reuse
+      // coreAtlasMaterial for every face via renderMaterial. atlasIndex is
+      // still passed per face: it's read unconditionally by noa's
+      // registerMaterial regardless of renderMaterial, and drives the
+      // texAtlasIndices vertex attribute the terrain mesher populates
+      // (confirmed in noa's registry.js/terrainMesher.js) -- the same
+      // attribute AtlasSamplingPlugin's shader code reads.
+      const { atlasBaseLayer } = type;
       const materialNames = FACE_ORDER.map((face) => `${type.name}-${face}`);
       FACE_ORDER.forEach((face, i) => {
-        noa.registry.registerMaterial(materialNames[i], { textureURL: atlasUrl, atlasIndex: atlasBaseLayer + i });
+        noa.registry.registerMaterial(materialNames[i], { renderMaterial: coreAtlasMaterial, atlasIndex: atlasBaseLayer + i });
       });
       noa.registry.registerBlock(type.id, { material: materialNames, solid: type.solid, fluid: type.fluid });
+    } else if (type.mesh === "cube" && type.transparencyMode === "transparent" && type.textureFile) {
+      // water/watertop/quartz: off the atlas, own small standalone
+      // texture+material (XrayFadePlugin("transparent", ...) -- real soft
+      // alpha blend, backface culling off so the surface is visible from
+      // both sides, direct fix for "water invisible from inside" since
+      // these were previously backface-culled opaque cubes). Same texture
+      // on every face -- confirmed visually uniform/repeating across the
+      // old game's own source images, no per-face distinction worth
+      // keeping (see transparencyMode's doc).
+      const material = new BABYLON.StandardMaterial(`${type.name}-mat`, scene);
+      const texture = new BABYLON.Texture(`/textures/blocks/${type.textureFile}`, scene, true, false, BABYLON.Texture.NEAREST_SAMPLINGMODE);
+      texture.hasAlpha = true;
+      material.diffuseTexture = texture;
+      material.backFaceCulling = false;
+      // Real, documented Babylon limitation (confirmed via the Babylon
+      // forum, not guessed): an alpha-blended material with
+      // backFaceCulling off can still have its OWN far faces culled when
+      // the camera is INSIDE the mesh (e.g. swimming inside a water
+      // voxel, looking up at the surface from below) -- exactly the
+      // reported "water surface cannot be seen from below" bug.
+      // separateCullingPass (does culling in its own pass instead of
+      // relying on draw order) plus forceDepthWrite is the documented fix.
+      material.separateCullingPass = true;
+      material.forceDepthWrite = true;
+      material.specularColor = new BABYLON.Color3(0, 0, 0);
+      // Spreads over DEFAULT_XRAY_PARAMS inside the plugin -- must omit the
+      // key entirely (not pass `alphaMin: undefined`) for quartz to fall
+      // through to the default 0.2 rather than overwriting it with undefined.
+      const alphaMin = TRANSPARENT_ALPHA_MIN[type.name];
+      new XrayFadePlugin(material, "transparent", alphaMin === undefined ? {} : { alphaMin });
+      noa.registry.registerMaterial(type.name, { renderMaterial: material });
+      noa.registry.registerBlock(type.id, { material: type.name, solid: type.solid, fluid: type.fluid, opaque: false });
     } else if (type.mesh === "cross" && type.textureFile) {
-      const scene = noa.rendering.getScene();
       const mesh = buildCrossPlantMesh(scene, type.name, `/textures/blocks/${type.textureFile}`);
       // opaque defaults to true for any non-fluid block (confirmed in
       // noa-engine's registry.js BlockOptions) -- left at that default,
@@ -135,8 +212,52 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
     }
   }
 
+  // Feeds blockShaders.ts's shared player/camera-position uniforms once
+  // per frame -- every XrayFadePlugin instance (on coreAtlasMaterial and
+  // each transparent-type material) reads these same two vectors when it
+  // binds. Direct analogue of the old game's player_camera_with_cutout.gd,
+  // which set the equivalent `global uniform vec3` pair every frame.
+  //
+  // MUST be noa.globalToLocal()'d first, not fed the raw getPosition()/
+  // getPosition() GLOBAL (world) coords directly -- real bug found live
+  // ("upon origin shift... the cutout went off in the distance"). Terrain
+  // mesh vertices (vPositionW in the shader, read via blockShaders.ts's
+  // CUSTOM_FRAGMENT_UPDATE_ALPHA) are built in noa's LOCAL/render frame
+  // (relative to noa.worldOriginOffset, confirmed directly in
+  // terrainMesher.js/components/position.js), while `noa.ents.getPosition`
+  // and `noa.camera.getPosition()` both deliberately return GLOBAL world
+  // coords (confirmed directly in camera.js's own getPosition: `this.noa.
+  // localToGlobal(loc, globalCamPos)`). The two frames coincide (by
+  // coincidence) until the first origin rebase, after which they diverge
+  // by exactly worldOriginOffset -- displacing the whole xray cone by that
+  // same amount, matching the reported symptom exactly.
+  const localPlayerPos: [number, number, number] = [0, 0, 0];
+  const localCameraPos: [number, number, number] = [0, 0, 0];
+  const centerGlobal: [number, number, number] = [0, 0, 0];
+  scene.onBeforeRenderObservable.add(() => {
+    // noa.ents.getPosition returns the BOTTOM-CENTER of the player's AABB
+    // (confirmed directly in components/position.js's own doc comment),
+    // not the body's actual center -- feeding that straight in as the
+    // cone's apex put it ~0.9 units too low (half the player's own
+    // height), leaving a visible gap below/in front of the player where
+    // the fade math didn't line up with where the body actually is
+    // (reported live). Real center = feet position + height/2.
+    const posData = noa.ents.getPositionData(noa.playerEntity);
+    const feet = posData?.position ?? noa.ents.getPosition(noa.playerEntity) ?? [0, 0, 0];
+    const height = posData ? posData.height : 0;
+    centerGlobal[0] = feet[0];
+    centerGlobal[1] = feet[1] + height / 2;
+    centerGlobal[2] = feet[2];
+    noa.globalToLocal(centerGlobal, null, localPlayerPos);
+    noa.globalToLocal(noa.camera.getPosition(), null, localCameraPos);
+    updateXrayUniforms(localPlayerPos, localCameraPos);
+  });
+
   installPlayerController(noa);
   installOriginShiftLogger(noa);
+  installCameraZoom(noa);
+  installUnderwaterEffect(noa);
+  installPlayerBodyMesh(noa);
 
   // Hotbar + inventory UI (hotbar.ts, direct port of the old game's
   // player_inventory.gd) -- a plain DOM overlay, not part of noa's own

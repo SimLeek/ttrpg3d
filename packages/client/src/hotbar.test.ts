@@ -15,8 +15,8 @@ function dispatchKey(code: string): void {
   window.dispatchEvent(new KeyboardEvent("keydown", { code }));
 }
 
-function dispatchWheel(deltaY: number): void {
-  window.dispatchEvent(new WheelEvent("wheel", { deltaY }));
+function dispatchWheel(deltaY: number, ctrlKey = false): void {
+  window.dispatchEvent(new WheelEvent("wheel", { deltaY, ctrlKey }));
 }
 
 let container: HTMLElement;
@@ -68,6 +68,13 @@ describe("mountHotbar", () => {
     expect(hotbar.getEquippedItem()).toEqual(catalog[9]);
     dispatchWheel(1); // wrap forward past the end -> first slot
     expect(hotbar.getEquippedItem()).toEqual(catalog[0]);
+  });
+
+  it("ignores Ctrl+wheel -- that's cameraZoom.ts's zoom control, not hotbar cycling", () => {
+    const catalog = makeCatalog(10);
+    const hotbar = mount({ catalog });
+    dispatchWheel(1, true); // Ctrl held
+    expect(hotbar.getEquippedItem()).toEqual(catalog[0]); // unchanged
   });
 
   it("clicking an inventory item loads it into the currently-selected hotbar slot", () => {

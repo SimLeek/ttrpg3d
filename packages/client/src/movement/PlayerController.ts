@@ -14,9 +14,11 @@ import type { Engine } from "noa-engine";
 import { MoverResource } from "./MoverResource.js";
 import { BasicJumperResource } from "./BasicJumperResource.js";
 import { FallerResource } from "./FallerResource.js";
+import { SwimResource } from "./SwimResource.js";
 
 const SPEED_DECAY_GROUND = 2.5;
 const SPEED_DECAY_AIR = 0.5;
+const SPEED_DECAY_WATER = 1.5;
 
 function moveToward(current: number, target: number, maxDelta: number): number {
   const diff = target - current;
@@ -28,12 +30,14 @@ export interface PlayerController {
   mover: MoverResource;
   jumper: BasicJumperResource;
   faller: FallerResource;
+  swimmer: SwimResource;
 }
 
 export function installPlayerController(noa: Engine): PlayerController {
   const mover = new MoverResource();
   const jumper = new BasicJumperResource();
   const faller = new FallerResource();
+  const swimmer = new SwimResource();
 
   // removeComponent is inherited from ent-comp's ECS base class -- real at
   // runtime (noa's own source uses it throughout), but ent-comp ships no
@@ -58,26 +62,39 @@ export function installPlayerController(noa: Engine): PlayerController {
 
     const input = noa.inputs.state as Record<string, boolean>;
     const grounded = body.atRestY() < 0;
+    // body.inFluid is real, already-maintained state (set every physics
+    // tick by voxel-physics-engine's applyFluidForces, which also already
+    // drives real buoyancy/drag off it) -- not something this controller
+    // computes itself.
+    const submerged = body.inFluid;
 
     const inputY = (input.forward ? 1 : 0) - (input.backward ? 1 : 0);
     const inputX = (input.right ? 1 : 0) - (input.left ? 1 : 0);
     const hasInput = Math.hypot(inputX, inputY) > 0.05;
 
-    const goal: [number, number, number] = [0, 0, 0];
-    mover.handlePhysicsInput(inputX, inputY, !!input.slow, !!input.sprint, goal, dt, noa.camera.heading);
-
     const jumpHeld = !!input.jump;
-    if (jumpHeld && !prevJumpHeld) jumper.requestJump();
-    if (!jumpHeld && prevJumpHeld) jumper.releaseJump();
+    const sv: [number, number, number] = [body.velocity[0], body.velocity[1], body.velocity[2]];
+    const goal: [number, number, number] = [0, 0, 0];
+
+    if (submerged) {
+      // Jump/slow keys are repurposed as swim-up/swim-down while
+      // submerged -- continuous (held), not edge-triggered like
+      // BasicJumperResource's ground jump, so the land jumper is skipped
+      // entirely here rather than also firing a big ground-jump impulse
+      // the moment the player surfaces.
+      swimmer.handlePhysicsInput(inputX, inputY, jumpHeld, !!input.slow, goal, sv, noa.camera.heading);
+    } else {
+      mover.handlePhysicsInput(inputX, inputY, !!input.slow, !!input.sprint, goal, dt, noa.camera.heading);
+      if (jumpHeld && !prevJumpHeld) jumper.requestJump();
+      if (!jumpHeld && prevJumpHeld) jumper.releaseJump();
+      jumper.updateCoyoteTime(grounded, dt);
+      jumper.applyJump(sv, grounded);
+    }
     prevJumpHeld = jumpHeld;
 
-    jumper.updateCoyoteTime(grounded, dt);
-
-    const sv: [number, number, number] = [body.velocity[0], body.velocity[1], body.velocity[2]];
-    jumper.applyJump(sv, grounded);
     faller.applyTerminalVelocity(sv);
 
-    const friction = grounded ? SPEED_DECAY_GROUND : SPEED_DECAY_AIR;
+    const friction = submerged ? SPEED_DECAY_WATER : grounded ? SPEED_DECAY_GROUND : SPEED_DECAY_AIR;
     sv[0] = moveToward(sv[0], hasInput ? goal[0] : 0, friction);
     sv[2] = moveToward(sv[2], hasInput ? goal[2] : 0, friction);
 
@@ -98,5 +115,5 @@ export function installPlayerController(noa: Engine): PlayerController {
     body.velocity[2] = sv[2];
   });
 
-  return { mover, jumper, faller };
+  return { mover, jumper, faller, swimmer };
 }

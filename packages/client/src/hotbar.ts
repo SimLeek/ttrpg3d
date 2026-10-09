@@ -174,6 +174,7 @@ export function mountHotbar(container: HTMLElement, options: HotbarOptions): Hot
   }
 
   function onWheel(event: WheelEvent): void {
+    if (event.ctrlKey) return; // Ctrl+wheel is cameraZoom.ts's zoom control, not hotbar cycling -- same split the old game's player_inventory.gd used (plain scroll = hotbar, Ctrl+scroll = camera zoom)
     if (event.deltaY === 0) return;
     selectSlot(selectedSlot + (event.deltaY > 0 ? 1 : -1));
   }
