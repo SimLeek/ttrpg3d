@@ -239,8 +239,13 @@ hardcoded-block placement to the real multi-block-type system.
       place/break today, unchanged from before this phase.
 - [ ] `playable/squeezer_rays.gd` (119L) — **REDESIGN**, low priority within
       this phase (tight-space movement slowdown, not core movement feel).
-- [ ] `scripts/items/phasing_gloves_item.gd` (20L), `wings_item.gd` (27L) —
-      **PORT/REDESIGN**, small self-contained movement-mode items.
+- [x] `scripts/items/phasing_gloves_item.gd` (20L), `wings_item.gd` (27L) —
+      **DONE** (core/mod-boundary PR, see this phase's own entry above):
+      their shared no-gravity/direct-vertical-control/no-collision concept
+      is `NoclipFlyProvider`. Not yet wired to an actual hotbar item the
+      way the old game had it (today it's only reachable via the GM
+      admin-override toggle) -- an item-based unlock is still open, not a
+      regression, just not needed until a non-admin use case exists.
 - [ ] `playable/health.gd` (59L) — **REDESIGN, not a port** (corrected,
       core/mod-boundary PR): this was built for the old game's stealth-
       platformer, not a TTRPG -- confirmed by design discussion, not
