@@ -57,7 +57,31 @@ project, reiterated across the TODO docs — don't regress on these):
       `ledge_safety_resource.gd`/`playable/ledge_grabber.gd`,
       `stair_stepper_resource.gd`, `spring_arm_3d_look.gd`,
       `player_blob_ctrl.gd` — full movement system, ported in full rather
-      than a walk+jump subset.
+      than a walk+jump subset. Note: `spring_arm_3d_look.gd`'s own
+      first/third-person zoom-distance piece specifically landed LATER than
+      the rest of this bullet (as part of the xray-shader PR below) — its
+      Ctrl+scroll binding and 0..8 zoom range are a direct port, but its
+      collision-raycast wall-avoidance was deliberately NOT ported:
+      noa-engine's own camera already clamps zoom to avoid clipping into
+      terrain, and that clamp was then found to actively fight the
+      xray-cutout shader (snapping to first person in almost any tunnel) and
+      disabled in favor of letting the shader handle near-camera geometry.
+- [x] `3dAssets/shaders/xray_if_behind_cutout.gdshader` /
+      `xray_if_behind_transparent.gdshader`, `playable/
+      player_camera_with_cutout.gd` — **DONE**, `packages/client/src/
+      blockShaders.ts`'s `XrayFadePlugin`, applied universally (every cube
+      + plant type, confirmed by grepping every real `shader_*.tres` in the
+      old repo, not just water/quartz). Real water/watertop/quartz
+      transparency (genuine alpha blend, not the atlas cutout path) landed
+      alongside it, fixing the "water invisible from inside" bug reported
+      during Phase 4 playtesting. **NEW** (no old-repo equivalent, grepped
+      `swim|underwater|in_water` across every `.gd` file — zero matches):
+      swimming controls (`movement/SwimResource.ts`, layered on noa's
+      already-real fluid buoyancy/drag physics) and an underwater fog
+      effect (`underwaterEffect.ts`). Also added: a visible local
+      third-person player body mesh (`playerBodyMesh.ts`) — previously
+      nonexistent since the camera could never leave the player's eye
+      before this PR.
 - [x] `levels/center_of_universe.gd` — floating-origin re-anchoring concept;
       turned out noa-engine already does this itself, so this became test
       markers + console logging rather than new re-anchoring logic.
@@ -344,10 +368,16 @@ hardcoded-block placement to the real multi-block-type system.
       old repo (needed an engine recompile there) — the old blocker is moot
       under the new stack, so this may be worth a fresh look, just not
       urgently.
-- [ ] Check early: does Babylon.js have the same transparent-depth-write
+- [x] Check early: does Babylon.js have the same transparent-depth-write
       quirk that forced an alpha-scissor-cutout workaround for glass/battle
-      waypoint lines in Godot? If not, this whole workaround class may not
-      be needed going forward.
+      waypoint lines in Godot? **Answered** (xray-shader PR): yes, a related
+      one — an alpha-blended, backface-uncull material can still cull its
+      own far faces when the camera is inside the mesh (confirmed live on
+      water, and via the Babylon forum, not Godot-specific). Fixed with
+      `material.separateCullingPass = true` + `forceDepthWrite = true`
+      (`game.ts`'s water/watertop/quartz materials) — so the alpha-scissor-
+      cutout *workaround itself* isn't needed, but real alpha-blended
+      geometry viewed from inside still needs this pair of flags set.
 
 ## Phase 9 — Battle mode / turn tracker
 
