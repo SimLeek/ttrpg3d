@@ -138,6 +138,28 @@ export function createStore(baseDir: string) {
       if (account.role === "root") return worlds;
       return worlds.filter((w) => w.ownerAccountId === accountId || w.adminAccountIds.includes(accountId));
     },
+
+    getWorld(worldId: string): WorldRecord | undefined {
+      return loadWorlds().find((w) => w.id === worldId);
+    },
+
+    /**
+     * Same owner/admin/root-superuser check listWorldsVisibleTo uses for
+     * the lobby's world list, for a single (world, account) pair -- the
+     * GM admin-override escape hatch's actual permission check
+     * (WorldRoom.onJoin). Missing/unknown world or account id is false,
+     * not an error, since a stale/forged worldId or accountId should just
+     * mean "not admin," not a crash.
+     */
+    isWorldAdmin(worldId: string, accountId: string | undefined): boolean {
+      if (!accountId) return false;
+      const account = loadAccounts().find((a) => a.id === accountId);
+      if (!account) return false;
+      if (account.role === "root") return true;
+      const world = loadWorlds().find((w) => w.id === worldId);
+      if (!world) return false;
+      return world.ownerAccountId === accountId || world.adminAccountIds.includes(accountId);
+    },
   };
 }
 
