@@ -75,7 +75,7 @@ export interface RunningGame {
   stop(): void;
 }
 
-export function startGame(worldId: string, worldName: string, serverUrl: string, playerName: string): RunningGame {
+export function startGame(worldId: string, worldName: string, serverUrl: string, playerName: string, accountId: string): RunningGame {
   console.log(`[game] starting world "${worldName}" (${worldId})`);
 
   const noa = new Engine({
@@ -253,7 +253,7 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
     updateXrayUniforms(localPlayerPos, localCameraPos);
   });
 
-  installPlayerController(noa);
+  const playerController = installPlayerController(noa);
   installOriginShiftLogger(noa);
   installCameraZoom(noa);
   installUnderwaterEffect(noa);
@@ -277,7 +277,7 @@ export function startGame(worldId: string, worldName: string, serverUrl: string,
   // stop() below chains onto this (rather than needing its own connected/
   // not-yet-connected branch) so leaving works correctly whether the
   // connection has finished by then or not.
-  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId, hotbar.getEquippedItem).catch((err) => {
+  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId, accountId, hotbar.getEquippedItem, playerController, SPAWN).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
     return null;
   });

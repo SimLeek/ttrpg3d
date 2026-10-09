@@ -4,6 +4,7 @@ import { WorldState, PlayerState, type WorldStateType } from "./WorldState.js";
 import { fillChunk, spawnPosition } from "../world/testArea.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
+import { store } from "../data/store.js";
 import { join } from "node:path";
 
 interface PlayerInput {
@@ -18,6 +19,12 @@ interface EditBlockMessage {
   y: number;
   z: number;
   voxelId: number;
+}
+
+interface JoinOptions {
+  name?: string;
+  /** Lobby-account id (packages/client/src/api.ts's Account.id) -- used ONLY to check world owner/admin/root status server-side (store.isWorldAdmin), per the core/mod-boundary plan's GM admin-override escape hatch. Never trusted blindly: a forged/missing id just means "not admin," checked fresh against the store, not taken from the client as-is. */
+  accountId?: string;
 }
 
 function flatIndex(i: number, j: number, k: number): number {
@@ -35,10 +42,42 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   worldId = "default";
   storage!: WorldStorage;
 
+  // GM admin-override escape hatch state (core/mod-boundary plan) -- which
+  // currently-connected sessions are this world's owner/admin/root,
+  // tracked server-side rather than trusting a client-sent flag (checked
+  // once at join via store.isWorldAdmin, not re-derived per message).
+  private adminSessionIds = new Set<string>();
+
+  // Respawn anchor itself is in-memory per room, NOT persisted to SQLite
+  // (a known limitation of this PR, not silently assumed durable: a
+  // server restart loses any admin-set anchor, resetting
+  // state.hasRespawnAnchor to false -- clients fall back to
+  // spawnPosition()). worldBottomY is a fixed schema default for every
+  // world today (see WorldState.ts's DEFAULT_WORLD_BOTTOM_Y doc) -- real
+  // per-world config is Phase 7 DM-tools scope.
+
   onCreate(options?: { worldId?: string }) {
     this.worldId = options?.worldId || "default";
     this.storage = createWorldStorage(join(process.cwd(), "data", "worlds"), this.worldId);
     this.setState(new WorldState());
+
+    // Admin-only: sets the shared respawn anchor (Schema fields, auto-
+    // synced to every client -- same mechanism the "pos" handler below
+    // already relies on for x/y/z/yaw, no manual broadcast needed) to the
+    // sender's current position. The core respawnPlayer/setAnchor
+    // *functions* are this plus respawnControl.ts's client-side
+    // teleportTo call; this message IS the "calling them is mod/policy"
+    // layer the plan described (gated to admin here, not pluggable yet --
+    // see the plan's explicit out-of-scope note on that).
+    this.onMessage("setRespawnAnchor", (client) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      this.state.hasRespawnAnchor = true;
+      this.state.respawnAnchorX = player.x;
+      this.state.respawnAnchorY = player.y;
+      this.state.respawnAnchorZ = player.z;
+    });
 
     this.onMessage<ChunkRequest>("requestChunk", (client, { cx, cy, cz }) => {
       const saved = this.storage.getChunk(cx, cy, cz);
@@ -99,7 +138,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.storage.close();
   }
 
-  onJoin(client: Client, options?: { name?: string }) {
+  onJoin(client: Client, options?: JoinOptions) {
     const player = new PlayerState();
     player.name = options?.name || `Player-${client.sessionId.slice(0, 4)}`;
     const [sx, sy, sz] = spawnPosition();
@@ -107,11 +146,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     player.y = sy;
     player.z = sz;
     this.state.players.set(client.sessionId, player);
-    console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined`);
+
+    const isAdmin = store.isWorldAdmin(this.worldId, options?.accountId);
+    if (isAdmin) this.adminSessionIds.add(client.sessionId);
+    player.isAdmin = isAdmin;
+
+    console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}`);
   }
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
+    this.adminSessionIds.delete(client.sessionId);
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }
 }

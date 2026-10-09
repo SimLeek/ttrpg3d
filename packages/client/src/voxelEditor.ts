@@ -41,7 +41,17 @@ function blockAabb(x: number, y: number, z: number): AABB {
   return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
 }
 
-export function installVoxelEditor(noa: Engine, getEquippedItem: () => Item | null, onEdit: (x: number, y: number, z: number, voxelId: number) => void): void {
+export function installVoxelEditor(
+  noa: Engine,
+  getEquippedItem: () => Item | null,
+  onEdit: (x: number, y: number, z: number, voxelId: number) => void,
+  // GM admin-override escape hatch (core/mod-boundary plan): instant
+  // build/delete bypasses the overlap guard while active -- a live check
+  // (called per placement, not read once), matching gmOverride.ts's own
+  // toggle semantics. Optional/defaulted so every existing call site (and
+  // every test) that doesn't care about GM mode keeps working unchanged.
+  isGmModeActive: () => boolean = () => false,
+): void {
   noa.inputs.down.on("fire", () => {
     const tgt = noa.targetedBlock;
     if (!tgt) return;
@@ -56,7 +66,7 @@ export function installVoxelEditor(noa: Engine, getEquippedItem: () => Item | nu
     const tgt = noa.targetedBlock;
     if (!tgt) return;
     const [x, y, z] = tgt.adjacent;
-    if (aabbsOverlap(blockAabb(x, y, z), playerAabb(noa))) return; // would overlap the player -- refuse, same as the old game
+    if (!isGmModeActive() && aabbsOverlap(blockAabb(x, y, z), playerAabb(noa))) return; // would overlap the player -- refuse, same as the old game (GM mode bypasses this, same as it bypasses terrain collision)
     noa.setBlock(item.voxelId, x, y, z);
     onEdit(x, y, z, item.voxelId);
   });

@@ -5,7 +5,9 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { server } from "../server.js";
 import { WorldRoom } from "./WorldRoom.js";
+import { DEFAULT_WORLD_BOTTOM_Y } from "./WorldState.js";
 import { GROUND, AIR, AREA_SIZE } from "../world/testArea.js";
+import { store } from "../data/store.js";
 
 // Every room created below passes this same worldId -- WorldRoom's storage
 // isn't test-dir-injectable the way data/store.ts's createStore(baseDir)
@@ -27,6 +29,21 @@ describe("WorldRoom", () => {
   afterAll(async () => {
     await colyseus.shutdown();
     rmSync(join(process.cwd(), "data", "worlds", `${TEST_WORLD_ID}.sqlite`), { force: true });
+  });
+
+  it("worldBottomY (DEFAULT_WORLD_BOTTOM_Y, the real default for a genuinely bottomless generator) survives the actual binary Schema encode/decode round-trip to a connected client", async () => {
+    // Real concern, not a hypothetical: -Infinity was the first value
+    // tried here and it did NOT survive this field's real wire encoding
+    // (silently clamped server-side-vs-client-side -- see
+    // DEFAULT_WORLD_BOTTOM_Y's own doc in WorldState.ts for the full
+    // story). room.state (server-side memory) would trivially read back
+    // whatever JS value was set regardless of encoding -- the actual
+    // thing worth checking is what a CONNECTED CLIENT receives after
+    // @colyseus/testing's real (in-process, but genuine) encode/decode.
+    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: TEST_WORLD_ID });
+    const client = await colyseus.connectTo(room);
+    await new Promise((resolve) => setTimeout(resolve, 50)); // let the initial state sync actually land
+    expect((client.state as { worldBottomY: number }).worldBottomY).toBe(DEFAULT_WORLD_BOTTOM_Y);
   });
 
   it("spawns a joining player inside the test area bounds", async () => {
@@ -64,6 +81,52 @@ describe("WorldRoom", () => {
     const idx = (i: number, j: number, k: number) => i * 32 * 32 + j * 32 + k;
     expect(decoded.voxels[idx(5, 0, 5)]).toBe(GROUND);
     expect(decoded.voxels[idx(5, 10, 5)]).toBe(AIR);
+  });
+
+  describe("GM admin-override escape hatch + respawn anchor (core/mod-boundary)", () => {
+    // store.ts's own createAccount/createWorld (real, not test-isolated --
+    // see store.test.ts for the pure-logic coverage of isWorldAdmin itself;
+    // this suite only checks WorldRoom actually wires it up). Uses this
+    // real world's own id for the room, not TEST_WORLD_ID, since
+    // isWorldAdmin needs a world store.ts actually knows about.
+    const owner = store.createAccount(`WorldRoom-test-owner-${Date.now()}`);
+    const stranger = store.createAccount(`WorldRoom-test-stranger-${Date.now()}`);
+    const world = store.createWorld(`WorldRoom-test-world-${Date.now()}`, owner.id);
+
+    afterAll(() => {
+      rmSync(join(process.cwd(), "data", "worlds", `${world.id}.sqlite`), { force: true });
+    });
+
+    it("PlayerState.isAdmin is true for the world's owner, false for a stranger or no accountId -- present immediately on join, not a racy follow-up message", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+
+      const ownerClient = await colyseus.connectTo(room, { accountId: owner.id });
+      expect(room.state.players.get(ownerClient.sessionId)?.isAdmin).toBe(true);
+
+      const strangerClient = await colyseus.connectTo(room, { accountId: stranger.id });
+      expect(room.state.players.get(strangerClient.sessionId)?.isAdmin).toBe(false);
+
+      const anonClient = await colyseus.connectTo(room);
+      expect(room.state.players.get(anonClient.sessionId)?.isAdmin).toBe(false);
+    });
+
+    it("setRespawnAnchor is ignored from a non-admin, and sets the shared (Schema-synced) anchor when sent by the admin", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const strangerClient = await colyseus.connectTo(room, { accountId: stranger.id });
+
+      strangerClient.send("setRespawnAnchor");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.hasRespawnAnchor).toBe(false);
+
+      adminClient.send("setRespawnAnchor");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.hasRespawnAnchor).toBe(true);
+      const adminPos = room.state.players.get(adminClient.sessionId)!;
+      expect(room.state.respawnAnchorX).toBe(adminPos.x);
+      expect(room.state.respawnAnchorY).toBe(adminPos.y);
+      expect(room.state.respawnAnchorZ).toBe(adminPos.z);
+    });
   });
 
   describe("block edits persist (real per-world storage)", () => {

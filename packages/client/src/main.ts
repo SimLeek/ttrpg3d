@@ -55,7 +55,7 @@ router.on("/world/:id", (match) => {
 
   if (pendingPlay && pendingPlay.world.id === worldId) {
     lobbyEl.hidden = true;
-    runningGame = startGame(worldId, pendingPlay.world.name, wsUrl, pendingPlay.account.displayName);
+    runningGame = startGame(worldId, pendingPlay.world.name, wsUrl, pendingPlay.account.displayName, pendingPlay.account.id);
     return;
   }
 
@@ -85,7 +85,7 @@ router.on("/world/:id", (match) => {
     }
     pendingPlay = { world, account };
     lobbyEl.hidden = true;
-    runningGame = startGame(world.id, world.name, wsUrl, account.displayName);
+    runningGame = startGame(world.id, world.name, wsUrl, account.displayName, account.id);
   })();
 });
 

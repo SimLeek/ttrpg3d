@@ -12,6 +12,9 @@ import * as BABYLON from "@babylonjs/core";
 import type { Engine } from "noa-engine";
 import { CHUNK_SIZE, decodeChunk, type ChunkRequest, type Item } from "@ttrpg3d/shared";
 import { installVoxelEditor } from "./voxelEditor.js";
+import { installGmOverride } from "./gmOverride.js";
+import { installRespawnControl } from "./respawnControl.js";
+import type { PlayerController } from "./movement/PlayerController.js";
 
 interface EditBlockMessage {
   x: number;
@@ -39,7 +42,16 @@ export interface WorldConnection {
   leave(): void;
 }
 
-export async function connectAndStreamWorld(noa: Engine, url: string, playerName: string, worldId: string, getEquippedItem: () => Item | null): Promise<WorldConnection> {
+export async function connectAndStreamWorld(
+  noa: Engine,
+  url: string,
+  playerName: string,
+  worldId: string,
+  accountId: string,
+  getEquippedItem: () => Item | null,
+  playerController: PlayerController,
+  fallbackSpawn: readonly [number, number, number],
+): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
   // matchmaking round-trip can possibly finish) -- so the listener below
@@ -75,10 +87,16 @@ export async function connectAndStreamWorld(noa: Engine, url: string, playerName
   const client = new Client(url);
   // worldId is matched against WorldRoom.filterBy(['worldId']) server-side
   // (server.ts) -- without it every player would land in the same shared
-  // room regardless of which world they picked.
-  room = await client.joinOrCreate("world", { name: playerName, worldId });
+  // room regardless of which world they picked. accountId is used ONLY
+  // server-side (WorldRoom.onJoin -> store.isWorldAdmin, core/mod-boundary
+  // plan's GM admin-override escape hatch) to check owner/admin/root
+  // status -- never trusted blindly, checked fresh against the store.
+  room = await client.joinOrCreate("world", { name: playerName, worldId, accountId });
   for (const req of queuedRequests) room.send("requestChunk", req);
   queuedRequests.length = 0;
+
+  const gmOverride = installGmOverride(noa, room, playerController);
+  installRespawnControl(noa, room, playerController, fallbackSpawn);
 
   room.onMessage("chunk", (bytes: Uint8Array) => {
     const { cx, cy, cz, voxels } = decodeChunk(bytes);
@@ -104,9 +122,14 @@ export async function connectAndStreamWorld(noa: Engine, url: string, playerName
   // the worldDataNeeded listener above -- unlike chunk requests, a click
   // can't happen before this function has had a chance to run past the
   // `await` below, so there's no pre-connection window to queue against.
-  installVoxelEditor(noa, getEquippedItem, (x, y, z, voxelId) => {
-    room.send("editBlock", { x, y, z, voxelId });
-  });
+  installVoxelEditor(
+    noa,
+    getEquippedItem,
+    (x, y, z, voxelId) => {
+      room.send("editBlock", { x, y, z, voxelId });
+    },
+    () => gmOverride.isActive(),
+  );
 
   room.onMessage("blockChanged", ({ x, y, z, voxelId }: EditBlockMessage) => {
     noa.setBlock(voxelId, x, y, z);

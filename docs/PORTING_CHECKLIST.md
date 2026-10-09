@@ -53,11 +53,20 @@ project, reiterated across the TODO docs — don't regress on these):
 ## Phase 2 — MVP [DONE]
 
 - [x] `scripts/movement_resource.gd`, `basic_jump_resource.gd`,
-      `fall_resource.gd`, `wall_jump_resource.gd`,
-      `ledge_safety_resource.gd`/`playable/ledge_grabber.gd`,
-      `stair_stepper_resource.gd`, `spring_arm_3d_look.gd`,
-      `player_blob_ctrl.gd` — full movement system, ported in full rather
-      than a walk+jump subset. Note: `spring_arm_3d_look.gd`'s own
+      `fall_resource.gd`, `spring_arm_3d_look.gd`, `player_blob_ctrl.gd` —
+      walk/sprint/jump/fall/zoom, now `CoreMovementProvider` (core/mod-
+      boundary PR) — see that PR's own entry below for why this moved
+      behind a `MovementProvider` seam instead of being
+      `PlayerController.ts`'s own hardcoded logic. **Correction**: this
+      bullet previously ALSO claimed `wall_jump_resource.gd` and
+      `ledge_safety_resource.gd`/`playable/ledge_grabber.gd` as DONE —
+      confirmed live (core/mod-boundary PR's research) that was wrong,
+      neither was ever actually built, only mentioned in a comment as
+      later work. Moved to NOT STARTED below, now scoped as their own
+      future `MovementProvider` implementations (same pattern
+      `NoclipFlyProvider` established), not part of this bullet.
+      `stair_stepper_resource.gd` also NOT STARTED, same reason.
+      Note: `spring_arm_3d_look.gd`'s own
       first/third-person zoom-distance piece specifically landed LATER than
       the rest of this bullet (as part of the xray-shader PR below) — its
       Ctrl+scroll binding and 0..8 zoom range are a direct port, but its
@@ -82,6 +91,33 @@ project, reiterated across the TODO docs — don't regress on these):
       third-person player body mesh (`playerBodyMesh.ts`) — previously
       nonexistent since the camera could never leave the player's eye
       before this PR.
+- [ ] `wall_jump_resource.gd`, `ledge_safety_resource.gd`/`playable/
+      ledge_grabber.gd`, `stair_stepper_resource.gd` — **NOT STARTED**
+      (corrected from an earlier, wrong DONE claim — see the bullet
+      above). Scoped as their own future `MovementProvider`
+      implementations (packages/client/src/movement/MovementProvider.ts,
+      core/mod-boundary PR), the same pattern `NoclipFlyProvider`
+      established, not special-cased into `CoreMovementProvider`.
+- [x] Core/mod-boundary PR — `packages/client/src/movement/
+      MovementProvider.ts` (the interface every movement mode implements:
+      update/reset/optional onActivate/onDeactivate), `CoreMovementProvider`
+      (today's walk/jump/fall/swim repackaged behind it, not rewritten —
+      see the bullet above), `NoclipFlyProvider` (direct port of
+      `scripts/items/phasing_gloves_item.gd`'s intangibility +
+      `wings_item.gd`'s flying — both used the same no-gravity, direct-
+      vertical-control path in the old game, confirmed directly). Also:
+      the GM admin-override escape hatch (`gmOverride.ts`, gated on
+      `PlayerState.isAdmin` — server-side via `store.isWorldAdmin`, reusing
+      `store.ts`'s existing owner/admin/root model, nothing new invented)
+      toggling fly+noclip+instant-build/delete; respawn core primitives
+      (`worldBottomCatch.ts`, `PlayerController.teleportTo`,
+      `WorldRoom`'s respawn-anchor Schema fields) plus one fixed default
+      policy (`respawnControl.ts` — Shift+R for anyone, Shift+T admin-only
+      anchor-set; NOT Ctrl+T, a browser-reserved new-tab shortcut a page
+      can't intercept, caught live). See `docs/ROADMAP.md`'s Standing Decisions for the full
+      core/mod boundary this PR established. Respawn anchors are
+      in-memory per room, NOT persisted across server restarts — a known
+      limitation, not assumed durable.
 - [x] `levels/center_of_universe.gd` — floating-origin re-anchoring concept;
       turned out noa-engine already does this itself, so this became test
       markers + console logging rather than new re-anchoring logic.
@@ -205,9 +241,15 @@ hardcoded-block placement to the real multi-block-type system.
       this phase (tight-space movement slowdown, not core movement feel).
 - [ ] `scripts/items/phasing_gloves_item.gd` (20L), `wings_item.gd` (27L) —
       **PORT/REDESIGN**, small self-contained movement-mode items.
-- [ ] `playable/health.gd` (59L) — **PORT**, damage/regen model is mostly
-      pure math + simple state. Still not needed yet -- no damage source
-      exists (combat/pickaxe-attack is Phase 5's own unbuilt scope).
+- [ ] `playable/health.gd` (59L) — **REDESIGN, not a port** (corrected,
+      core/mod-boundary PR): this was built for the old game's stealth-
+      platformer, not a TTRPG -- confirmed by design discussion, not
+      guessed. A real TTRPG health model needs to be character-sheet-
+      based (per-character/per-system stats, not a fixed stamina-style
+      regen curve), and per the core/mod-boundary's core/mod split this
+      is combat/health DEFAULT-MOD territory, not core engine code.
+      Still not needed yet -- no damage source exists (combat/pickaxe-
+      attack is Phase 5's own unbuilt scope).
 - [ ] `playable/blob_body_3d.gd` (467L), `scripts/limited_blob_body.gd`
       (142L), `scripts/limited_blob_body_extra.gd` (199L) — **DROP as a
       porting target; replace with a real soft-body physics library.**
@@ -243,6 +285,11 @@ hardcoded-block placement to the real multi-block-type system.
       health/sec from a targeted block, every voxel type needs a health
       value, health regenerates instantly when attack stops. Pairs with the
       hand-equipment-dependent dispatch noted in Phase 4. Entirely unbuilt.
+      Default-mod territory per `docs/ROADMAP.md`'s core/mod boundary
+      (combat rules, not core engine code) -- the GM admin-override escape
+      hatch's instant build/delete (core/mod-boundary PR, Phase 4) already
+      bypasses this kind of thing for an admin, so this is specifically
+      about non-admin player-character pickaxe use.
 - [ ] **NEW** — equip scheme: double-click = equip right hand, single-click =
       equip left hand, Ctrl+hotbar-number = right hand, Shift+wheel cycles
       right-hand selection once dual-hand hotbar exists. Entirely unbuilt --
@@ -257,9 +304,22 @@ hardcoded-block placement to the real multi-block-type system.
 
 ## Phase 6 — Mod system v2
 
+Scope grew beyond the old game's own mod system during the core/mod-
+boundary PR (Phase 4): `mod_manager.gd` was purely DATA-mods (voxel
+types, biomes) — this project's actual pitch ("roll20 for any tabletop
+system," see `docs/ROADMAP.md`'s Standing Decisions) also needs
+BEHAVIOR-mods (movement rules, combat, respawn policy), which the old
+game never had any equivalent of. The core/mod-boundary PR built the
+minimal seam for one of those (`MovementProvider`) plus two core-vs-
+policy splits (GM powers, respawn) as a proof of concept — none of the
+actual DYNAMIC mod-loading/config/UI machinery below exists yet; that's
+still this phase's full scope.
+
 - [ ] `scripts/modding/mod_manager.gd` (184L) — **REDESIGN**: registration
       happens per-world at `WorldRoom` instantiation, not once globally at
-      boot.
+      boot. Needs to cover behavior-mod registration (`MovementProvider`
+      and future equivalents for combat/respawn-policy), not just the old
+      game's data-only (voxel type/biome) mod shape.
 - [ ] `mods/wood_plank/register.gd` (48L), `mods/plains_biome/register.gd`
       (27L) — **PORT** as reference/example mods, rewritten as TS mod
       packages.
@@ -386,7 +446,12 @@ hardcoded-block placement to the real multi-block-type system.
       moves to Phase 11+, client-side settings UI) — drives the
       battle-mode/HUD distance readouts below.
 - [ ] `scripts/battle/battle_mode_manager.gd` (341L) — **REDESIGN**, now
-      genuinely server-authoritative (per plan).
+      genuinely server-authoritative (per plan). Its M/N waypoint-mark/
+      undo actually TELEPORTS the player between marked waypoints — use
+      `PlayerController.teleportTo` (core/mod-boundary PR,
+      `packages/client/src/movement/PlayerController.ts`) for that, the
+      same entry point `respawnControl.ts` already calls; don't build a
+      second position-forcing mechanism for this.
 - [ ] `scripts/battle/turn_tracker.gd` (51L) — **REDESIGN**, Colyseus
       `Schema` room state.
 - [ ] `scripts/ui/turn_tracker_menu.gd` (250L) — **REDESIGN**; also fix two

@@ -72,6 +72,25 @@ describe("accounts/worlds store (pure logic, no 3D/physics -- real unit tests)",
     expect(store.listWorldsVisibleTo("does-not-exist")).toEqual([]);
   });
 
+  it("isWorldAdmin: owner, granted admin, and root are admin; a stranger, unknown account, and unknown world are not", () => {
+    store.ensureSeedData(); // creates the root account
+    const owner = store.createAccount("Owner");
+    const admin = store.createAccount("Admin");
+    const stranger = store.createAccount("Stranger");
+    const world = store.createWorld("Guarded World", owner.id);
+
+    expect(store.isWorldAdmin(world.id, owner.id)).toBe(true);
+    expect(store.isWorldAdmin(world.id, stranger.id)).toBe(false);
+
+    store.grantAdmin(world.id, admin.id);
+    expect(store.isWorldAdmin(world.id, admin.id)).toBe(true);
+
+    expect(store.isWorldAdmin(world.id, "root")).toBe(true);
+    expect(store.isWorldAdmin(world.id, "does-not-exist")).toBe(false);
+    expect(store.isWorldAdmin("not-a-real-world", owner.id)).toBe(false);
+    expect(store.isWorldAdmin(world.id, undefined)).toBe(false);
+  });
+
   it("persists across separate createStore calls pointed at the same directory", () => {
     const owner = store.createAccount("Persisted Owner");
     store.createWorld("Persisted World", owner.id);
