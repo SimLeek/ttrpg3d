@@ -14,6 +14,7 @@ import { CHUNK_SIZE, decodeChunk, type ChunkRequest, type Item } from "@ttrpg3d/
 import { installVoxelEditor } from "./voxelEditor.js";
 import { installGmOverride } from "./gmOverride.js";
 import { installRespawnControl } from "./respawnControl.js";
+import { mountPageManager } from "./pageManager.js";
 import type { PlayerController } from "./movement/PlayerController.js";
 
 interface EditBlockMessage {
@@ -51,6 +52,9 @@ export async function connectAndStreamWorld(
   getEquippedItem: () => Item | null,
   playerController: PlayerController,
   fallbackSpawn: readonly [number, number, number],
+  httpUrl: string,
+  gameId: string,
+  onSwitchWorld: (worldId: string, worldName: string) => void,
 ): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
@@ -97,6 +101,48 @@ export async function connectAndStreamWorld(
 
   const gmOverride = installGmOverride(noa, room, playerController);
   installRespawnControl(noa, room, playerController, fallbackSpawn);
+
+  function isAdmin(): boolean {
+    if (!room) return false;
+    const players = (room.state as { players?: Map<string, { isAdmin?: boolean }> } | undefined)?.players;
+    return !!players?.get(room.sessionId)?.isAdmin;
+  }
+
+  // Real bug found live: the client never actually applied the SERVER's
+  // own computed spawn position to the local player at all -- it just
+  // sat wherever noa's `playerStart` cosmetic placeholder (game.ts's
+  // `SPAWN` constant) put it. This went unnoticed through the whole
+  // hand-built-test-area era because that constant was hand-tuned to
+  // exactly match the old fixed, single spawnPosition() every world used
+  // -- a coincidence, not a real round-trip. Now that spawn is real,
+  // per-generator, per-world, and (games-and-world-generators PR)
+  // per-anchor, nothing was ever pulling the player onto it -- reproduced
+  // live as "spawns underground" even where the SERVER's own computed
+  // spawn was a verified-safe, open-air position. Fixed: wait for our own
+  // PlayerState entry to actually appear in the synced room state (per
+  // the "late sync" reasoning the remote-player loop below already
+  // accounts for), then teleportTo it once via the SAME mechanism
+  // respawnControl.ts's Shift+R already uses.
+  let appliedInitialSpawn = false;
+  noa.on("tick", () => {
+    if (appliedInitialSpawn) return;
+    const players = (room.state as { players?: Map<string, { x: number; y: number; z: number }> } | undefined)?.players;
+    const me = players?.get(room.sessionId);
+    if (!me) return;
+    appliedInitialSpawn = true;
+    playerController.teleportTo([me.x, me.y, me.z]);
+  });
+
+  const pageManagerContainer = document.createElement("div");
+  document.body.appendChild(pageManagerContainer);
+  const pageManager = mountPageManager(pageManagerContainer, {
+    httpUrl,
+    gameId,
+    accountId,
+    currentWorldId: worldId,
+    isAdmin,
+    onSwitchWorld,
+  });
 
   room.onMessage("chunk", (bytes: Uint8Array) => {
     const { cx, cy, cz, voxels } = decodeChunk(bytes);
@@ -176,6 +222,12 @@ export async function connectAndStreamWorld(
   // ---- send our own position ----
   let tickCount = 0;
   noa.on("tick", () => {
+    // Gated on the initial-spawn correction above -- sending our own
+    // (still-cosmetic-placeholder) position before that correction lands
+    // would overwrite the server's real computed spawn in its own Schema
+    // state (WorldRoom's "pos" handler unconditionally trusts whatever
+    // position it's sent), erasing the fix before the player ever sees it.
+    if (!appliedInitialSpawn) return;
     tickCount++;
     if (tickCount % POS_SEND_EVERY_N_TICKS !== 0) return;
     const pos = noa.ents.getPosition(noa.playerEntity);
@@ -193,6 +245,8 @@ export async function connectAndStreamWorld(
   // stop() now actually calls.
   return {
     leave() {
+      pageManager.destroy();
+      pageManagerContainer.remove();
       room.leave();
     },
   };

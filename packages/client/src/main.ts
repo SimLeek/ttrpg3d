@@ -1,11 +1,20 @@
-// Entry point: wires up the router between the worlds lobby page (default
-// route) and the actual 3D game view (started once a world is picked).
-// See lobby.ts and game.ts for what each view actually does.
+// Entry point: wires up the router between the games lobby page (default
+// route) and the actual 3D game view (started once a game is picked). See
+// lobby.ts and game.ts for what each view actually does.
+//
+// Games-and-world-generators PR: routing is now keyed by GAME id
+// (`/game/:id`, was `/world/:id`) -- a game's current world (roll20
+// "page") is resolved at launch time, and `launchGame`'s `onSwitchWorld`
+// callback (passed into game.ts/net.ts, triggered by the in-game
+// page-management panel) restarts the SAME game session against a
+// different world without touching the route or going back through the
+// lobby -- it reuses the exact same stop()+startGame() cycle this file
+// already used for the lobby->game handoff.
 
 import Navigo from "navigo";
-import { mountLobby, type Account, type WorldRecord } from "./lobby.js";
+import { mountLobby, type Account, type GameRecord, type WorldRecord } from "./lobby.js";
 import { startGame, type RunningGame } from "./game.js";
-import { fetchAccounts, fetchWorlds, ACCOUNT_STORAGE_KEY } from "./api.js";
+import { fetchAccounts, fetchGames, fetchWorldsForGame, ACCOUNT_STORAGE_KEY } from "./api.js";
 
 const wsUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
 const httpUrl = wsUrl.replace(/^ws/, "http");
@@ -13,15 +22,16 @@ const httpUrl = wsUrl.replace(/^ws/, "http");
 const router = new Navigo("/");
 const lobbyEl = document.getElementById("lobby")!;
 
-// Navigo resolves routes from the URL alone; the world/account the lobby's
-// "Play" click picked travels through this instead of being re-fetched or
-// re-encoded into the URL -- fine for the normal lobby -> game handoff, but
-// it's empty on a direct URL load or a page refresh while already in a
-// game (both reproduced live: refreshing mid-game bounced to the lobby
-// instead of staying in the game). The /world/:id handler below falls back
-// to reconstructing the same state from localStorage + a server fetch in
-// that case, rather than giving up and going to the lobby.
-let pendingPlay: { world: WorldRecord; account: Account } | null = null;
+// Navigo resolves routes from the URL alone; the game/world/account the
+// lobby's "Play" click picked travels through this instead of being
+// re-fetched or re-encoded into the URL -- fine for the normal lobby ->
+// game handoff, but it's empty on a direct URL load or a page refresh
+// while already in a game (both reproduced live: refreshing mid-game
+// bounced to the lobby instead of staying in the game). The /game/:id
+// handler below falls back to reconstructing the same state from
+// localStorage + a server fetch in that case, rather than giving up and
+// going to the lobby.
+let pendingPlay: { game: GameRecord; world: WorldRecord; account: Account } | null = null;
 
 let runningGame: RunningGame | null = null;
 
@@ -32,6 +42,17 @@ function stopRunningGameIfAny(): void {
   }
 }
 
+function launchGame(game: GameRecord, worldId: string, worldName: string, account: Account): void {
+  lobbyEl.hidden = true;
+  runningGame = startGame(game.id, worldId, worldName, wsUrl, httpUrl, account.displayName, account.id, (newWorldId, newWorldName) => {
+    // Page-management panel's "switch" action -- same proven teardown/
+    // setup this file already uses for the lobby->game handoff, just
+    // without navigating the route or re-showing the lobby in between.
+    stopRunningGameIfAny();
+    launchGame(game, newWorldId, newWorldName, account);
+  });
+}
+
 router.on("/", () => {
   // Leaving the game route (including via the browser back button, which
   // Navigo resolves the same as any other navigation) previously left
@@ -40,29 +61,34 @@ router.on("/", () => {
   // explicitly instead.
   stopRunningGameIfAny();
   lobbyEl.hidden = false;
-  mountLobby(lobbyEl, httpUrl, (world, account) => {
-    pendingPlay = { world, account };
-    router.navigate(`/world/${world.id}`);
+  mountLobby(lobbyEl, httpUrl, (game, world, account) => {
+    pendingPlay = { game, world, account };
+    router.navigate(`/game/${game.id}`);
   });
 });
 
-router.on("/world/:id", (match) => {
-  const worldId = match?.data?.id;
-  if (!worldId) {
+router.on("/game/:id", (match) => {
+  const gameId = match?.data?.id;
+  if (!gameId) {
     router.navigate("/");
     return;
   }
 
-  if (pendingPlay && pendingPlay.world.id === worldId) {
-    lobbyEl.hidden = true;
-    runningGame = startGame(worldId, pendingPlay.world.name, wsUrl, pendingPlay.account.displayName, pendingPlay.account.id);
+  if (pendingPlay && pendingPlay.game.id === gameId) {
+    launchGame(pendingPlay.game, pendingPlay.world.id, pendingPlay.world.name, pendingPlay.account);
     return;
   }
 
   // Direct URL load or a refresh while already in-game: pendingPlay is
-  // gone, but the account id is still in localStorage and the world id is
+  // gone, but the account id is still in localStorage and the game id is
   // right there in the URL -- reconstruct instead of bouncing to the
-  // lobby and losing the session.
+  // lobby and losing the session. Resolves the game's FIRST world (same
+  // as lobby.ts's own Play-click resolution) -- if the player had
+  // switched to a different page before refreshing, this loses that in-
+  // session choice and returns to the first page, a real but minor
+  // limitation (no server-side "which page was this client last on"
+  // tracking exists, matching this PR's explicit no-cross-client-sync
+  // scope).
   void (async () => {
     const storedAccountId = localStorage.getItem(ACCOUNT_STORAGE_KEY);
     if (!storedAccountId) {
@@ -75,17 +101,22 @@ router.on("/world/:id", (match) => {
       router.navigate("/");
       return;
     }
-    const worlds = await fetchWorlds(httpUrl, account.id);
-    const world = worlds.find((w) => w.id === worldId);
-    if (!world) {
-      // Valid account, but this world isn't (or no longer is) visible to
+    const games = await fetchGames(httpUrl, account.id);
+    const game = games.find((g) => g.id === gameId);
+    if (!game) {
+      // Valid account, but this game isn't (or no longer is) visible to
       // it -- genuinely can't reconstruct, lobby is the right fallback.
       router.navigate("/");
       return;
     }
-    pendingPlay = { world, account };
-    lobbyEl.hidden = true;
-    runningGame = startGame(world.id, world.name, wsUrl, account.displayName, account.id);
+    const worlds = await fetchWorldsForGame(httpUrl, game.id);
+    const world = worlds[0];
+    if (!world) {
+      router.navigate("/");
+      return;
+    }
+    pendingPlay = { game, world, account };
+    launchGame(game, world.id, world.name, account);
   })();
 });
 

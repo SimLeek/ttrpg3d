@@ -1,14 +1,23 @@
-// Worlds lobby page: account switcher + fuzzy-searchable worlds list.
-// Plain DOM/TS, no UI framework -- see the "Worlds lobby page" section of
-// the architecture plan for why (a filtered list and an account dropdown
-// don't need one; navigo alone covers the "add a router now" preference).
+// Games lobby page: account switcher + fuzzy-searchable GAMES list (the
+// roll20-"campaign" concept). Plain DOM/TS, no UI framework -- see the
+// "Worlds lobby page" section of the architecture plan for why (a filtered
+// list and an account dropdown don't need one; navigo alone covers the
+// "add a router now" preference).
+//
+// Games-and-world-generators PR: this used to list/create WORLDS directly
+// -- worlds (roll20 "pages") now live INSIDE a game, created/switched from
+// the in-game page-management panel (pageManager.ts) once a session is
+// active, not from here. Picking a game here resolves its first world
+// (every game is guaranteed at least one -- see the "Create game" handler
+// below, which auto-creates a starter "hilly" world the same way
+// store.ts's ensureSeedData() does for the seeded games) and enters it.
 
 import { fuzzyMatch } from "@ttrpg3d/shared";
-import { fetchAccounts, fetchWorlds, createAccount, ACCOUNT_STORAGE_KEY, type Account, type WorldRecord } from "./api.js";
+import { fetchAccounts, fetchGames, fetchWorldsForGame, createAccount, createGame, createWorldInGame, ACCOUNT_STORAGE_KEY, type Account, type GameRecord, type WorldRecord } from "./api.js";
 
-export type { Account, WorldRecord };
+export type { Account, GameRecord, WorldRecord };
 
-export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (world: WorldRecord, account: Account) => void): void {
+export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (game: GameRecord, world: WorldRecord, account: Account) => void): void {
   container.innerHTML = `
     <style>
       .lobby { max-width: 640px; margin: 48px auto; font-family: system-ui, sans-serif; color: #eee; }
@@ -17,12 +26,12 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (wor
       .lobby input, .lobby select, .lobby button { font-size: 1rem; padding: 6px 10px; }
       .lobby ul { list-style: none; padding: 0; margin: 0; }
       .lobby li { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; margin-bottom: 6px; background: #2a2a2a; border-radius: 6px; }
-      .lobby li .world-meta { color: #999; font-size: 0.85rem; margin-left: 8px; }
+      .lobby li .game-meta { color: #999; font-size: 0.85rem; margin-left: 8px; }
       .lobby .play-btn { cursor: pointer; }
       .lobby .empty { color: #888; padding: 10px 0; }
     </style>
     <div class="lobby">
-      <h1>ttrpg3d -- Worlds</h1>
+      <h1>ttrpg3d -- Games</h1>
       <div class="row">
         <label for="account-select">Account:</label>
         <select id="account-select"></select>
@@ -30,20 +39,26 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (wor
         <button id="create-account-btn" type="button">Create account</button>
       </div>
       <div class="row">
-        <input id="search" placeholder="Search worlds..." style="flex:1" />
+        <input id="new-game-name" placeholder="New game name" style="flex:1" />
+        <button id="create-game-btn" type="button">Create game</button>
       </div>
-      <ul id="worlds-list"></ul>
+      <div class="row">
+        <input id="search" placeholder="Search games..." style="flex:1" />
+      </div>
+      <ul id="games-list"></ul>
     </div>
   `;
 
   const select = container.querySelector<HTMLSelectElement>("#account-select")!;
-  const newNameInput = container.querySelector<HTMLInputElement>("#new-account-name")!;
-  const createBtn = container.querySelector<HTMLButtonElement>("#create-account-btn")!;
+  const newAccountNameInput = container.querySelector<HTMLInputElement>("#new-account-name")!;
+  const createAccountBtn = container.querySelector<HTMLButtonElement>("#create-account-btn")!;
+  const newGameNameInput = container.querySelector<HTMLInputElement>("#new-game-name")!;
+  const createGameBtn = container.querySelector<HTMLButtonElement>("#create-game-btn")!;
   const searchInput = container.querySelector<HTMLInputElement>("#search")!;
-  const listEl = container.querySelector<HTMLUListElement>("#worlds-list")!;
+  const listEl = container.querySelector<HTMLUListElement>("#games-list")!;
 
   let accounts: Account[] = [];
-  let worlds: WorldRecord[] = [];
+  let games: GameRecord[] = [];
   let selectedAccountId: string | null = localStorage.getItem(ACCOUNT_STORAGE_KEY);
 
   function renderAccountOptions(): void {
@@ -52,58 +67,86 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (wor
       .join("");
   }
 
-  function renderWorldsList(): void {
-    const filtered = fuzzyMatch(searchInput.value, worlds, (w) => w.name).map((r) => r.item);
+  function renderGamesList(): void {
+    const filtered = fuzzyMatch(searchInput.value, games, (g) => g.name).map((r) => r.item);
     if (filtered.length === 0) {
-      listEl.innerHTML = `<li class="empty">No worlds found.</li>`;
+      listEl.innerHTML = `<li class="empty">No games found.</li>`;
       return;
     }
     listEl.innerHTML = filtered
-      .map((w) => {
+      .map((g) => {
         const account = accounts.find((a) => a.id === selectedAccountId);
-        const relation = account && w.ownerAccountId === account.id ? "owner" : account?.role === "root" ? "root" : "admin";
-        return `<li><span>${w.name}<span class="world-meta">(${relation})</span></span><button class="play-btn" type="button" data-world-id="${w.id}">Play</button></li>`;
+        const relation = account && g.ownerAccountId === account.id ? "owner" : account?.role === "root" ? "root" : "admin";
+        return `<li><span>${g.name}<span class="game-meta">(${relation})</span></span><button class="play-btn" type="button" data-game-id="${g.id}">Play</button></li>`;
       })
       .join("");
   }
 
-  async function loadWorldsForSelectedAccount(): Promise<void> {
+  async function loadGamesForSelectedAccount(): Promise<void> {
     if (!selectedAccountId) {
-      worlds = [];
-      renderWorldsList();
+      games = [];
+      renderGamesList();
       return;
     }
-    worlds = await fetchWorlds(httpUrl, selectedAccountId);
-    renderWorldsList();
+    games = await fetchGames(httpUrl, selectedAccountId);
+    renderGamesList();
   }
 
   select.addEventListener("change", () => {
     selectedAccountId = select.value;
     localStorage.setItem(ACCOUNT_STORAGE_KEY, selectedAccountId);
-    void loadWorldsForSelectedAccount();
+    void loadGamesForSelectedAccount();
   });
 
-  createBtn.addEventListener("click", () => {
-    const displayName = newNameInput.value.trim();
+  createAccountBtn.addEventListener("click", () => {
+    const displayName = newAccountNameInput.value.trim();
     if (!displayName) return;
     void createAccount(httpUrl, displayName).then((account) => {
       accounts.push(account);
       selectedAccountId = account.id;
       localStorage.setItem(ACCOUNT_STORAGE_KEY, account.id);
-      newNameInput.value = "";
+      newAccountNameInput.value = "";
       renderAccountOptions();
-      void loadWorldsForSelectedAccount();
+      void loadGamesForSelectedAccount();
     });
   });
 
-  searchInput.addEventListener("input", renderWorldsList);
+  createGameBtn.addEventListener("click", () => {
+    const name = newGameNameInput.value.trim();
+    if (!name || !selectedAccountId) return;
+    const ownerAccountId = selectedAccountId;
+    void createGame(httpUrl, name, ownerAccountId)
+      // Every game needs at least one world to actually enter -- the
+      // in-game page-management panel (pageManager.ts) that would
+      // otherwise create one can only be reached from inside an active
+      // session, so a brand-new game can't be left empty the way a world-
+      // less game would be. Same "auto-create a starter hilly world"
+      // pattern store.ts's ensureSeedData() already uses for the seeded
+      // games.
+      .then((game) => createWorldInGame(httpUrl, game.id, ownerAccountId, "Starting World", "hilly", {}).then(() => game))
+      .then((game) => {
+        games.push(game);
+        newGameNameInput.value = "";
+        renderGamesList();
+      });
+  });
+
+  searchInput.addEventListener("input", renderGamesList);
 
   listEl.addEventListener("click", (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".play-btn");
-    const worldId = button?.dataset.worldId;
+    const gameId = button?.dataset.gameId;
     const account = accounts.find((a) => a.id === selectedAccountId);
-    const world = worlds.find((w) => w.id === worldId);
-    if (world && account) onPlay(world, account);
+    const game = games.find((g) => g.id === gameId);
+    if (!game || !account) return;
+    void fetchWorldsForGame(httpUrl, game.id).then((worlds) => {
+      const world = worlds[0];
+      if (!world) {
+        console.error(`[lobby] game "${game.name}" has no worlds to enter`);
+        return;
+      }
+      onPlay(game, world, account);
+    });
   });
 
   void (async () => {
@@ -112,6 +155,6 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (wor
       selectedAccountId = accounts[0]?.id ?? null;
     }
     renderAccountOptions();
-    await loadWorldsForSelectedAccount();
+    await loadGamesForSelectedAccount();
   })();
 }

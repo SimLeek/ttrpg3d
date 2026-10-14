@@ -1,34 +1,38 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { boot, type ColyseusTestServer } from "@colyseus/testing";
-import { decodeChunk } from "@ttrpg3d/shared";
+import { decodeChunk, AIR, DIRT } from "@ttrpg3d/shared";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { server } from "../server.js";
 import { WorldRoom } from "./WorldRoom.js";
 import { DEFAULT_WORLD_BOTTOM_Y } from "./WorldState.js";
-import { GROUND, AIR, AREA_SIZE } from "../world/testArea.js";
 import { store } from "../data/store.js";
 
-// Every room created below passes this same worldId -- WorldRoom's storage
-// isn't test-dir-injectable the way data/store.ts's createStore(baseDir)
-// is (a real Colyseus room doesn't take a constructor argument for that),
-// so it always writes a real .sqlite file under the server's real
-// data/worlds/ directory. Using one dedicated id (instead of letting rooms
-// fall back to "default") and cleaning up that one file in afterAll keeps
-// the real dev-data directory from accumulating a stray file on every test
-// run.
-const TEST_WORLD_ID = `test-world-${Date.now()}`;
+// A deterministic limestone_slab world (no noise, trivial bounded box --
+// see limestoneSlab.ts) replaces the old hand-built test area as this
+// suite's test fixture (games-and-world-generators PR; the hand-built
+// area was retired entirely). Real Game + World records, registered via
+// store.ts like any other world now has to be -- WorldRoom.onCreate looks
+// up store.getWorld(worldId) for real generator info, so a bare arbitrary
+// worldId with nothing registered would silently fall back to
+// DEFAULT_WORLD_GEN instead of this suite's own deterministic params.
+const SLAB_PARAMS = { width: 32, height: 8, depth: 32, voxelId: DIRT };
 
 describe("WorldRoom", () => {
   let colyseus: ColyseusTestServer;
+  let testWorldId: string;
 
   beforeAll(async () => {
     colyseus = await boot(server);
+    const owner = store.createAccount(`WorldRoom-test-owner-${Date.now()}`);
+    const game = store.createGame(`WorldRoom-test-game-${Date.now()}`, owner.id);
+    const world = store.createWorld(game.id, "Test Slab", "limestone_slab", SLAB_PARAMS);
+    testWorldId = world.id;
   });
 
   afterAll(async () => {
     await colyseus.shutdown();
-    rmSync(join(process.cwd(), "data", "worlds", `${TEST_WORLD_ID}.sqlite`), { force: true });
+    rmSync(join(process.cwd(), "data", "worlds", `${testWorldId}.sqlite`), { force: true });
   });
 
   it("worldBottomY (DEFAULT_WORLD_BOTTOM_Y, the real default for a genuinely bottomless generator) survives the actual binary Schema encode/decode round-trip to a connected client", async () => {
@@ -40,27 +44,26 @@ describe("WorldRoom", () => {
     // whatever JS value was set regardless of encoding -- the actual
     // thing worth checking is what a CONNECTED CLIENT receives after
     // @colyseus/testing's real (in-process, but genuine) encode/decode.
-    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: TEST_WORLD_ID });
+    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });
     const client = await colyseus.connectTo(room);
     await new Promise((resolve) => setTimeout(resolve, 50)); // let the initial state sync actually land
     expect((client.state as { worldBottomY: number }).worldBottomY).toBe(DEFAULT_WORLD_BOTTOM_Y);
   });
 
-  it("spawns a joining player inside the test area bounds", async () => {
-    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: TEST_WORLD_ID });
+  it("spawns a joining player at the deterministic safe-spawn-scan position (first 2-consecutive-air gap above the slab, at the fixed x=8,z=8 scan column)", async () => {
+    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });
     await colyseus.connectTo(room, { name: "Tester" });
 
     const players = Array.from(room.state.players.values());
     expect(players).toHaveLength(1);
     expect(players[0].name).toBe("Tester");
-    expect(players[0].x).toBeGreaterThanOrEqual(0);
-    expect(players[0].x).toBeLessThan(AREA_SIZE);
-    expect(players[0].z).toBeGreaterThanOrEqual(0);
-    expect(players[0].z).toBeLessThan(AREA_SIZE);
+    expect(players[0].x).toBe(8);
+    expect(players[0].y).toBe(SLAB_PARAMS.height); // first air voxel is exactly at y=height, since y < height is all solid
+    expect(players[0].z).toBe(8);
   });
 
-  it("generates the same deterministic chunk on request, with solid ground and a marker pillar", async () => {
-    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: TEST_WORLD_ID });
+  it("generates the same deterministic chunk on request, solid inside the slab bounds and air above it", async () => {
+    const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });
     const client = await colyseus.connectTo(room);
 
     // requestChunk is a small plain message (per the protocol split, chunk
@@ -76,28 +79,31 @@ describe("WorldRoom", () => {
     expect(decoded.cz).toBe(0);
     expect(decoded.voxels.length).toBe(32 * 32 * 32);
 
-    // Ground floor near the origin (y=0, well within the area's x/z bounds)
-    // should be solid; well above the floor should be air.
+    // (5,0,5) is inside the 32x8x32 slab -> solid DIRT; (5,10,5) is above
+    // height=8 -> air. Exact, not sampled -- limestone_slab has no noise.
     const idx = (i: number, j: number, k: number) => i * 32 * 32 + j * 32 + k;
-    expect(decoded.voxels[idx(5, 0, 5)]).toBe(GROUND);
+    expect(decoded.voxels[idx(5, 0, 5)]).toBe(DIRT);
     expect(decoded.voxels[idx(5, 10, 5)]).toBe(AIR);
   });
 
   describe("GM admin-override escape hatch + respawn anchor (core/mod-boundary)", () => {
-    // store.ts's own createAccount/createWorld (real, not test-isolated --
-    // see store.test.ts for the pure-logic coverage of isWorldAdmin itself;
-    // this suite only checks WorldRoom actually wires it up). Uses this
-    // real world's own id for the room, not TEST_WORLD_ID, since
-    // isWorldAdmin needs a world store.ts actually knows about.
+    // store.ts's own createAccount/createGame/createWorld (real, not
+    // test-isolated -- see store.test.ts for the pure-logic coverage of
+    // isGameAdmin/isWorldAdmin itself; this suite only checks WorldRoom
+    // actually wires it up). Uses this real world's own id for the room,
+    // not testWorldId above, since isWorldAdmin needs a world store.ts
+    // actually knows about and this describe block wants its own
+    // owner/stranger pair.
     const owner = store.createAccount(`WorldRoom-test-owner-${Date.now()}`);
     const stranger = store.createAccount(`WorldRoom-test-stranger-${Date.now()}`);
-    const world = store.createWorld(`WorldRoom-test-world-${Date.now()}`, owner.id);
+    const game = store.createGame(`WorldRoom-test-game-${Date.now()}`, owner.id);
+    const world = store.createWorld(game.id, "Admin Test World", "limestone_slab", SLAB_PARAMS);
 
     afterAll(() => {
       rmSync(join(process.cwd(), "data", "worlds", `${world.id}.sqlite`), { force: true });
     });
 
-    it("PlayerState.isAdmin is true for the world's owner, false for a stranger or no accountId -- present immediately on join, not a racy follow-up message", async () => {
+    it("PlayerState.isAdmin is true for the game's owner, false for a stranger or no accountId -- present immediately on join, not a racy follow-up message", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
 
       const ownerClient = await colyseus.connectTo(room, { accountId: owner.id });
@@ -127,11 +133,55 @@ describe("WorldRoom", () => {
       expect(room.state.respawnAnchorY).toBe(adminPos.y);
       expect(room.state.respawnAnchorZ).toBe(adminPos.z);
     });
+
+    it("setRespawnAnchor refuses a position inside solid terrain, even from an admin (real request: \"it shouldn't be able to be set underground\")", async () => {
+      // A dedicated fresh world, not the shared `world` above -- that one
+      // already has a real anchor persisted by an earlier test in this
+      // describe block (anchors persist across rooms now, that's the
+      // whole point of the fix), so asserting against it here would be
+      // testing stale cross-test state, not this message's own behavior.
+      const freshWorld = store.createWorld(game.id, "Underground Anchor Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: freshWorld.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+
+      // Move the admin's own synced position to y=2 -- solidly inside the
+      // slab's 0..height(8) solid region, reachable live via
+      // NoclipFlyProvider flying through terrain.
+      adminClient.send("pos", { x: 5, y: 2, z: 5, yaw: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      adminClient.send("setRespawnAnchor");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.hasRespawnAnchor).toBe(false);
+    });
+
+    it("the anchor survives the room being recreated (e.g. everyone leaving during a page switch, then switching back) -- persisted via store.ts, not just in-memory Schema state", async () => {
+      const firstRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const firstClient = await colyseus.connectTo(firstRoom, { accountId: owner.id });
+      firstClient.send("setRespawnAnchor");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(firstRoom.state.hasRespawnAnchor).toBe(true);
+      const anchorPos = { x: firstRoom.state.respawnAnchorX, y: firstRoom.state.respawnAnchorY, z: firstRoom.state.respawnAnchorZ };
+
+      // A brand-new room instance for the SAME worldId -- same situation
+      // as everyone leaving (Colyseus's default auto-dispose) and the
+      // next join creating a fresh room.
+      const secondRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      expect(secondRoom.state.hasRespawnAnchor).toBe(true);
+      expect(secondRoom.state.respawnAnchorX).toBe(anchorPos.x);
+      expect(secondRoom.state.respawnAnchorY).toBe(anchorPos.y);
+      expect(secondRoom.state.respawnAnchorZ).toBe(anchorPos.z);
+
+      // New joiners land AT the anchor, not the generic safe-spawn scan.
+      const secondClient = await colyseus.connectTo(secondRoom, { accountId: stranger.id });
+      const joined = secondRoom.state.players.get(secondClient.sessionId)!;
+      expect({ x: joined.x, y: joined.y, z: joined.z }).toEqual(anchorPos);
+    });
   });
 
   describe("block edits persist (real per-world storage)", () => {
     it("an edited block is visible to another client in the same room immediately (broadcast)", async () => {
-      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: TEST_WORLD_ID });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });
       const editor = await colyseus.connectTo(room);
       const observer = await colyseus.connectTo(room);
 
@@ -144,15 +194,14 @@ describe("WorldRoom", () => {
     });
 
     it("an edited block survives being re-requested as part of its chunk (persisted, not just broadcast)", async () => {
-      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: TEST_WORLD_ID });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });
       const client = await colyseus.connectTo(room);
 
-      // (16,0,16) is solid GROUND by default (same reasoning as the
-      // generation test above -- well within the floor, away from the
-      // gap/stairs/wall/markers) -- break it, then re-request the same
-      // chunk and confirm the edit, not the generator's default, comes
-      // back. Different coordinates from the "visible to another client"
-      // test above so the two tests can't interfere with each other.
+      // (16,0,16) is solid DIRT by default (inside the slab bounds) --
+      // break it, then re-request the same chunk and confirm the edit,
+      // not the generator's default, comes back. Different coordinates
+      // from the "visible to another client" test above so the two tests
+      // can't interfere with each other.
       client.send("editBlock", { x: 16, y: 0, z: 16, voxelId: AIR });
       // editBlock has no reply -- give it a tick to apply before asking
       // for the chunk again, same real room instance either way.
@@ -166,7 +215,7 @@ describe("WorldRoom", () => {
       const idx = (i: number, j: number, k: number) => i * 32 * 32 + j * 32 + k;
       expect(decoded.voxels[idx(16, 0, 16)]).toBe(AIR);
       // A neighboring, untouched cell should still be the generator's default.
-      expect(decoded.voxels[idx(17, 0, 16)]).toBe(GROUND);
+      expect(decoded.voxels[idx(17, 0, 16)]).toBe(DIRT);
     });
   });
 });

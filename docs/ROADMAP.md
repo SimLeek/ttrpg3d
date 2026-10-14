@@ -20,8 +20,23 @@ scannable phase list + standing decisions; it's not a narrative history.
   model: only edited chunks are ever stored, unmodified terrain always
   regenerates from the generator + seed.
 - **Auth**: dev-only named accounts, no passwords/OAuth yet. `root` is a
-  seeded implicit superuser (sees/admins every world). Real login is its
+  seeded implicit superuser (sees/admins every game). Real login is its
   own later research track.
+- **Games contain Worlds** (games-and-world-generators PR): a roll20-style
+  "campaign contains multiple pages" model, confirmed via real design
+  discussion ("one game can have many pcg voxel worlds in it"). `Game`
+  (`packages/server/src/data/store.ts`'s `GameRecord`) is the top-level
+  owned/administered unit the lobby lists/creates; `World` (`WorldRecord`)
+  is a page WITHIN a game, created/switched from an in-game admin-gated
+  panel (`pageManager.ts`), not the lobby -- it carries no owner/admin of
+  its own, permissions resolve through its parent game
+  (`isWorldAdmin` -> `isGameAdmin`). Switching pages is a full client-side
+  `stop()`+`startGame()` cycle against the new world, reusing the same
+  proven teardown/setup the lobby->game handoff already used, rather than
+  trying to clear noa's loaded chunks/entities in place. Real limitation:
+  no cross-client page-sync yet -- each client switches its own view
+  independently, the GM's active-page choice doesn't push to other
+  connected players automatically.
 - **Networking**: Colyseus rooms, one room instance per world
   (`WorldRoom.filterBy(['worldId'])`). Raw binary messages for chunk
   streaming/voxel edits; `@colyseus/schema` Schema state for player
@@ -75,6 +90,12 @@ scannable phase list + standing decisions; it's not a narrative history.
     territory above actually swappable at runtime (dynamic loading,
     per-world config, in-game toggle UI) is Phase 6's full scope, not
     assumed done just because the seam exists.
+- **Default world generator: switch to the less-hilly preset.** 2026-10-11
+  decision, aesthetics/marketability driven, not a gameplay change --
+  screenshots are selling material (reference images saved under
+  ~/claude_code/cad_pics: `ttrpg3dgame.png` is the current hilly default,
+  `ttrpg3dgame-newdef.png` is the less-hilly one to switch to). TODO: find
+  the actual default-generator wiring and swap it; not done yet.
 
 ## Phases
 
@@ -93,7 +114,7 @@ up during play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 1 | Testing infra (`@colyseus/testing`, Vitest) + Docker | DONE |
 | 2 | MVP -- full movement port, floating-origin shift, chunk streaming | DONE |
 | -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE |
-| 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break + real hilly terrain generator (textures, caves, ore, trees, foliage) DONE; DM world-create/admin-grant UI remains |
+| 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break + real hilly terrain generator (textures, caves, ore, trees, foliage) DONE; Game/World split (roll20-style campaigns containing multiple PCG pages), real generator catalog (hilly/plains/limestone_slab), real in-game world-create/switch UI, and retiring the Phase-2 hand-built test area all DONE (games-and-world-generators PR); per-world switching's remaining piece (`world_manager.gd`'s own scope) landed as part of the same PR; cross-client page-sync (GM's active page auto-following for every connected player), procedural skybox, and a dedicated DM admin-GRANT UI (adding a second admin by account, as opposed to creating/switching pages) remain |
 | 4 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | **PARTIAL** -- real hotbar + full inventory grid + multi-block-type placement (with real icons, a self-overlap placement guard, and a minimal input-capture layer), third-person zoom + universal xray-cutout shader + real water/quartz transparency + swimming, the core/mod-boundary movement-provider refactor (`CoreMovementProvider`/`NoclipFlyProvider`, `phasing_gloves_item.gd`/`wings_item.gd`'s fly/noclip ported as the first real non-core provider) DONE; dual-hand equip/hand-equipment dispatch, soft-body swap, health/fall-damage, and squeezer-rays remain |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** -- catalog + hotbar DONE (pulled forward, see Phase 4); character-sheet-based combat/health (a fresh design, NOT a port of the old game's stealth-platformer stamina/health system) and the DM-vs-player inventory split remain |
 | 6 | Mod system v2 -- per-world data-only AND behavior-mod registration (see Standing decisions' core/mod boundary) | **PARTIAL** -- the minimal `MovementProvider` seam + GM admin-override escape hatch + respawn core primitives exist (core/mod-boundary PR); dynamic mod loading/packaging, in-game mod-toggle UI, per-world persisted mod config, and widening the voxel wire format past 255 ids all remain |

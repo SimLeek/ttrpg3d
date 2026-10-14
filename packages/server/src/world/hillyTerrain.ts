@@ -62,7 +62,8 @@ const COPPER_THRESH = 0.85;
 const QUARTZ_THRESH = 0.9;
 const MAGNETITE_THRESH = 0.9;
 
-const HEIGHT_MIN = -32;
+// Exported for worldGen.ts's safe-spawn scan -- "below this, every column is solid" (caves can still hollow out pockets even here, but it's the right floor to start scanning up FROM, not a hard guarantee of solid rock).
+export const HEIGHT_MIN = -32;
 const HEIGHT_MAX = 96;
 
 const HEIGHT_FREQ = 1 / 128;
@@ -157,12 +158,22 @@ function smoothstep(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
-export function getHeightAt(worldId: string, x: number, z: number): number {
+/**
+ * `heightScale` (games-and-world-generators PR): the old game's real
+ * "plains" mod variant param, a post-curve midpoint squeeze -- 1.0
+ * (default) is unchanged "hilly" terrain; a small value like 0.12 pulls
+ * the eased height curve in toward its own midpoint, producing much
+ * flatter terrain from the exact same noise field (not a separate
+ * algorithm -- matches the old game's real mod structure, confirmed
+ * directly in mods/plains_biome/register.gd).
+ */
+export function getHeightAt(worldId: string, x: number, z: number, heightScale = 1): number {
   const noise = getNoiseChannels(worldId);
   const raw = fbm2D(noise.height, x, z, 4, HEIGHT_FREQ);
   const normalized = 0.5 + 0.5 * raw; // [0,1]
   const eased = smoothstep(normalized);
-  return Math.floor(HEIGHT_MIN + eased * (HEIGHT_MAX - HEIGHT_MIN));
+  const scaled = 0.5 + (eased - 0.5) * heightScale;
+  return Math.floor(HEIGHT_MIN + scaled * (HEIGHT_MAX - HEIGHT_MIN));
 }
 
 function getBaseVoxel(gy: number, surfaceHeight: number): number {
@@ -222,10 +233,10 @@ function applyCave(wx: number, wy: number, wz: number, voxel: number, noise: Noi
   return voxel;
 }
 
-/** World-voxel coords -> block id for the real hilly terrain (no trees -- see stampTrees). Pure function, same input always gives same output. */
-export function blockAt(worldId: string, wx: number, wy: number, wz: number): number {
+/** World-voxel coords -> block id for the real hilly terrain (no trees -- see stampTrees). Pure function, same input always gives same output. `heightScale` -- see getHeightAt's own doc. */
+export function blockAt(worldId: string, wx: number, wy: number, wz: number, heightScale = 1): number {
   const noise = getNoiseChannels(worldId);
-  const surfaceHeight = getHeightAt(worldId, wx, wz);
+  const surfaceHeight = getHeightAt(worldId, wx, wz, heightScale);
 
   // Surface decoration at these two Y levels, same as the old generator
   // (its decoration pass runs after, and overwrites, the main per-voxel
@@ -329,8 +340,11 @@ function treeAnchorForCell(worldId: string, cellX: number, cellZ: number): { x: 
  * Scans this chunk's cell plus its 8 neighbors (a tree anchored in a
  * neighboring cell can still have branches/leaves overhanging into this
  * chunk), matching the old generator's Moore-neighbor collection.
- * `insideHandBuiltArea(x,z)` lets the caller keep trees out of the
- * hand-built test area (testArea.ts) -- trees only belong in real terrain.
+ * `treesEnabled=false` (games-and-world-generators PR -- the "plains"
+ * variant's `trees_enabled=false` param) short-circuits immediately, no
+ * trees at all. `heightScale` -- see getHeightAt's own doc; must match
+ * whatever blockAt was called with for this same world, or a tree's
+ * anchor height won't line up with the terrain blockAt actually produced.
  */
 export function stampTrees(
   voxels: Uint8Array,
@@ -339,8 +353,11 @@ export function stampTrees(
   originY: number,
   originZ: number,
   worldId: string,
-  insideHandBuiltArea: (x: number, z: number) => boolean,
+  heightScale = 1,
+  treesEnabled = true,
 ): void {
+  if (!treesEnabled) return;
+
   const flatIndex = (i: number, j: number, k: number) => i * chunkSize * chunkSize + j * chunkSize + k;
   const cellX0 = Math.floor(originX / TREE_CELL_SIZE);
   const cellZ0 = Math.floor(originZ / TREE_CELL_SIZE);
@@ -351,9 +368,8 @@ export function stampTrees(
       const cellZ = cellZ0 + dcz;
       const anchor = treeAnchorForCell(worldId, cellX, cellZ);
       if (!anchor) continue;
-      if (insideHandBuiltArea(anchor.x, anchor.z)) continue;
 
-      const anchorY = getHeightAt(worldId, anchor.x, anchor.z);
+      const anchorY = getHeightAt(worldId, anchor.x, anchor.z, heightScale);
       if (anchorY < SEA_LEVEL) continue; // no trees in/under water
 
       // anchorY is the raw, un-carved heightmap value -- if a cave happens
