@@ -3,7 +3,6 @@ import { AIR, DIRT, GRASS, MUDSTONE, WATER_FULL, LOG, LEAVES } from "@ttrpg3d/sh
 import { blockAt, getHeightAt, stampTrees } from "./hillyTerrain.js";
 
 const CHUNK_SIZE = 32;
-const noArea = () => false; // "inside hand-built area" predicate that's always false, for tree tests that don't care about that boundary
 
 describe("hillyTerrain: height", () => {
   it("is deterministic -- same worldId and position always gives the same height", () => {
@@ -23,6 +22,18 @@ describe("hillyTerrain: height", () => {
   it("different world ids produce different terrain (not every world looks the same)", () => {
     const heights = ["world-a", "world-b", "world-c"].map((w) => getHeightAt(w, 100, 100));
     expect(new Set(heights).size).toBeGreaterThan(1);
+  });
+
+  it("heightScale (the 'plains' variant's real param) flattens terrain toward the midpoint, same noise field", () => {
+    const worldId = "world-flatten-check";
+    const full: number[] = [];
+    const flat: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      full.push(getHeightAt(worldId, i * 41, i * 59, 1));
+      flat.push(getHeightAt(worldId, i * 41, i * 59, 0.12));
+    }
+    const range = (arr: number[]) => Math.max(...arr) - Math.min(...arr);
+    expect(range(flat)).toBeLessThan(range(full));
   });
 });
 
@@ -102,7 +113,7 @@ describe("hillyTerrain: stampTrees", () => {
     const worldId = "world-tree-det";
     const make = () => {
       const voxels = new Uint8Array(CHUNK_SIZE ** 3);
-      stampTrees(voxels, CHUNK_SIZE, 0, 0, 0, worldId, noArea);
+      stampTrees(voxels, CHUNK_SIZE, 0, 0, 0, worldId);
       return voxels;
     };
     expect(make()).toEqual(make());
@@ -115,7 +126,7 @@ describe("hillyTerrain: stampTrees", () => {
     for (let cx = 0; cx < 10 && !(sawLog && sawLeaves); cx++) {
       for (let cz = 0; cz < 10 && !(sawLog && sawLeaves); cz++) {
         const voxels = new Uint8Array(CHUNK_SIZE ** 3);
-        stampTrees(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE, worldId, noArea);
+        stampTrees(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE, worldId);
         if (voxels.includes(LOG)) sawLog = true;
         if (voxels.includes(LEAVES)) sawLeaves = true;
       }
@@ -124,10 +135,10 @@ describe("hillyTerrain: stampTrees", () => {
     expect(sawLeaves).toBe(true);
   });
 
-  it("never places a tree when the hand-built-area predicate rejects every anchor", () => {
-    const worldId = "world-tree-presence"; // same world as above, which DOES place trees when allowed
+  it("treesEnabled=false (the 'plains' variant's real param) places no trees at all, even in an area that otherwise does", () => {
+    const worldId = "world-tree-presence"; // same world as above, which DOES place trees when enabled
     const voxels = new Uint8Array(CHUNK_SIZE ** 3);
-    stampTrees(voxels, CHUNK_SIZE, 0, 0, 0, worldId, () => true); // "everything is inside the hand-built area"
+    stampTrees(voxels, CHUNK_SIZE, 0, 0, 0, worldId, 1, false);
     expect(voxels.includes(LOG)).toBe(false);
     expect(voxels.includes(LEAVES)).toBe(false);
   });

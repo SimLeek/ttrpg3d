@@ -124,7 +124,13 @@ project, reiterated across the TODO docs — don't regress on these):
 - [x] `scripts/pcg/limestone_slab_generator.gd` — basis for the Phase 2 test
       area (steps/gap/wall), later extended into an infinite flat plane
       with grid pillars once the hand-built area proved too small to
-      exercise origin-shifting.
+      exercise origin-shifting. That hand-built area (`testArea.ts`) was
+      retired entirely in the games-and-world-generators PR (Phase 3,
+      confirmed explicitly) now that real per-world generator selection
+      exercises origin-shifting/movement instead -- this generator got a
+      real, clean, generic port at that point too (see Phase 3's own
+      limestone_slab_generator.gd entry) instead of staying loosely
+      approximated by the old test scaffolding.
 - [x] `scripts/items/voxelitem.gd`/`del_vox_item.gd` — collapsed to a single
       hardcoded block type initially; full multi-type system is Phase 4
       below.
@@ -135,16 +141,52 @@ project, reiterated across the TODO docs — don't regress on these):
       planned `better-sqlite3` — its native build failed outright in this
       sandbox) and basic place/break — both landed ahead of the real
       terrain generator below, since storage needs something to store.
-- [ ] `scripts/world/world_manager.gd` (167L) — **REDESIGN** → per-world
-      SQLite + `WorldRoom` mapping. World *registry* (list/owner/admin)
-      already shipped via the worlds lobby page; this is the remaining
-      per-world switching/management piece.
-- [ ] `scripts/pcg/world_generator_catalog.gd` (92L) — **PORT** the
-      repeatable/non_repeatable/finite classification concept.
-- [ ] `scripts/pcg/hilly_terrain_region_generator.gd` (464L) — **PORT**
-      algorithm (noise-based height + biome features), largest single
-      generator in the codebase. The real gameplay terrain, replacing
-      `testArea.ts`'s hand-built test area.
+- [x] `scripts/world/world_manager.gd` (167L) — **DONE**
+      (games-and-world-generators PR), reshaped: read in full, it turned
+      out to be "roll20-page-style: switch between [worlds] without
+      restarting the game" -- confirmed directly, not assumed. This is
+      the real origin of the Game/World split (`docs/ROADMAP.md`'s
+      Standing Decisions) -- `Game` is the new top-level owned/
+      administered unit (what `WorldRecord` used to be), `WorldRecord` is
+      a page within a game. `create_world`/`switch_to_world` are now
+      `store.createWorld` + `pageManager.ts`'s switch button (a full
+      client-side `stop()`+`startGame()` cycle against the new world, not
+      an in-place noa reset -- noa has no supported API for that, and the
+      existing teardown/setup pair was already proven). No cross-client
+      page-sync yet (a real, flagged limitation) -- unlike the old game's
+      single-process model, this one has independent clients, and nothing
+      pushes the GM's active-page choice to other connected players.
+- [x] `scripts/pcg/world_generator_catalog.gd` (92L) — **DONE**
+      (games-and-world-generators PR): read in full, confirmed
+      repeatable/non_repeatable/finite are classification TAGS on each
+      catalog entry (shown in the old DM creation UI), not the world
+      types themselves -- the real catalog had exactly 3 entries ("hilly"
+      repeatable, "limestone_slab" repeatable+finite, "plains" repeatable
+      -- see below), now `packages/shared/src/worldGenerators.ts`'s
+      `WORLD_GENERATORS` table, same shape as `voxelTypes.ts`'s shared-
+      table pattern. The "non_repeatable" category itself (WFC etc.) stays
+      empty, same as the old game -- see the DEFER/NEW bullet further down.
+- [x] `scripts/pcg/hilly_terrain_region_generator.gd` (464L) — **DONE**
+      (landed before this PR, see Phase 2; this PR added the real
+      `heightScale`/`treesEnabled` params `mods/plains_biome/register.gd`'s
+      real "plains" variant needs -- confirmed the old mod reused this
+      EXACT generator with `trees_enabled=false, height_scale=0.12`
+      fixed params, not a separate algorithm, so that's how it's modeled
+      here too: `worldGen.ts` dispatches "hilly" and "plains" to the same
+      `hillyTerrain.ts` functions with different fixed params). Previously
+      checked unboxed here by mistake -- corrected, it was already real
+      and live, just not yet selectable as one of several world types
+      until this PR.
+- [x] `scripts/pcg/limestone_slab_generator.gd` — **DONE**
+      (games-and-world-generators PR), read in full: a solid width x
+      height x depth slab of one configurable voxel type, no randomness,
+      bounded (not endless-streaming -- the "finite" classification tag).
+      `packages/server/src/world/limestoneSlab.ts`, a clean direct port --
+      separate from (and replacing, now that it's retired) `testArea.ts`'s
+      old hand-built area, which only ever loosely resembled this
+      generator's spirit, not its real params/behavior. Old default voxel
+      ("limestone") isn't a real block in this project's voxel table;
+      defaults to DIRT instead, noted directly in the new file.
 - [ ] `scripts/pcg/voxel_types.gd` (194L) — **PORT** the ~20 types actually
       wired to a display name/model today (not all ~59 reserved constants)
       — the real terrain generator needs more than one material.
@@ -163,9 +205,31 @@ project, reiterated across the TODO docs — don't regress on these):
       type table."
 - [ ] `scripts/world/procedural_skybox.gd` (56L) — **PORT** the
       direction→color algorithm, rebuild the actual sky as a Babylon shader.
-- [ ] World create/admin-grant management UI — deferred out of the worlds
-      lobby page on purpose; belongs here now that real per-world storage
-      exists to back it.
+      Not touched by the games-and-world-generators PR -- still just the
+      scene's default sky for every world. Found while researching that PR:
+      the old game only ever special-cased the sky for ONE generator id
+      (`levels/center_of_universe.gd`'s own `if gen_def.get("id","") ==
+      "limestone_slab"`, a purple procedural sky; every other type,
+      including "plains," kept the default `panini_sky.gdshader`) -- a
+      single hardcoded if-check, not a real per-generator sky config.
+      Worth deciding whether to port that exact hardcoded special case or
+      design a cleaner per-generator sky hook when this is actually built.
+- [x] World CREATE UI — **DONE** (games-and-world-generators PR), but not
+      where originally planned: NOT the outer worlds lobby page (that now
+      only lists/creates GAMES -- `lobby.ts`) -- it's an in-game, admin-
+      gated panel (`pageManager.ts`, direct UI-shape port of the old
+      game's real `scripts/ui/dm_world_menu.gd`: generator-type picker +
+      per-generator param fields + create button), since worlds are pages
+      WITHIN a game now, confirmed explicitly ("this is essentially the
+      'pages' in roll20"). The lobby's own "Create game" flow also auto-
+      creates one starter `hilly` world per new game (same pattern
+      `store.ensureSeedData()` already used for the seeded games), since
+      a world-less game would have nothing for `pageManager.ts` to be
+      reached from in the first place.
+- [ ] ADMIN-GRANT UI — still NOT built. `store.ts` has the real plumbing
+      (`grantGameAdmin`, renamed from `grantAdmin` to operate on games),
+      just no clickable UI calling it yet -- genuinely separate from
+      "create/switch pages," a small, focused follow-up.
 - [ ] **NEW** — Terraria-style depth-based skybox switch (underground vs.
       surface). Was never built in the old repo either.
 - [ ] **DEFER/NEW** — Poisson-disc-in-capsule biome-boundary system and the

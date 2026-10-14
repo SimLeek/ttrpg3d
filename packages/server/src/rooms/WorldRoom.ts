@@ -1,11 +1,14 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, encodeChunk, type ChunkRequest } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, AIR, encodeChunk, type ChunkRequest, type GeneratorId, type GeneratorParams } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, type WorldStateType } from "./WorldState.js";
-import { fillChunk, spawnPosition } from "../world/testArea.js";
+import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
 import { store } from "../data/store.js";
 import { join } from "node:path";
+
+/** Fallback used only if this room's worldId has no real WorldRecord in store.ts (e.g. a room created directly with an arbitrary id, no world ever registered) -- same "don't throw, work with a sensible default" spirit the old worldId fallback below already had. */
+const DEFAULT_WORLD_GEN: WorldGenInput = { generatorId: "hilly" as GeneratorId, params: {} as GeneratorParams };
 
 interface PlayerInput {
   x: number;
@@ -41,6 +44,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // still works rather than throwing -- real clients always pass one.
   worldId = "default";
   storage!: WorldStorage;
+  /** Looked up once in onCreate (store.getWorld), not re-fetched per chunk -- a world's generatorId/params don't change mid-session. Falls back to DEFAULT_WORLD_GEN if no real WorldRecord exists for this id (see that constant's own doc). */
+  worldGen: WorldGenInput = DEFAULT_WORLD_GEN;
 
   // GM admin-override escape hatch state (core/mod-boundary plan) -- which
   // currently-connected sessions are this world's owner/admin/root,
@@ -48,18 +53,32 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // once at join via store.isWorldAdmin, not re-derived per message).
   private adminSessionIds = new Set<string>();
 
-  // Respawn anchor itself is in-memory per room, NOT persisted to SQLite
-  // (a known limitation of this PR, not silently assumed durable: a
-  // server restart loses any admin-set anchor, resetting
-  // state.hasRespawnAnchor to false -- clients fall back to
-  // spawnPosition()). worldBottomY is a fixed schema default for every
-  // world today (see WorldState.ts's DEFAULT_WORLD_BOTTOM_Y doc) -- real
-  // per-world config is Phase 7 DM-tools scope.
+  // Respawn anchor: real bug found live ("the respawn anchor doesn't seem
+  // to persist when switching pages") -- it used to live ONLY in this
+  // room's in-memory Schema state. Colyseus disposes an empty room by
+  // default, which is exactly what happens leaving a page during a
+  // switch (pageManager.ts's stop()+startGame() cycle) in solo/small-
+  // group testing -- switching back created a FRESH room with the anchor
+  // silently reset. Now persisted to the WorldRecord itself
+  // (store.setWorldRespawnAnchor), seeded back into Schema state below on
+  // room creation so it survives a room being recreated. worldBottomY is
+  // still a fixed schema default for every world (see WorldState.ts's
+  // DEFAULT_WORLD_BOTTOM_Y doc) -- real per-world config is Phase 7
+  // DM-tools scope.
 
   onCreate(options?: { worldId?: string }) {
     this.worldId = options?.worldId || "default";
     this.storage = createWorldStorage(join(process.cwd(), "data", "worlds"), this.worldId);
     this.setState(new WorldState());
+
+    const world = store.getWorld(this.worldId);
+    if (world) this.worldGen = { generatorId: world.generatorId, params: world.params };
+    if (world?.respawnAnchor) {
+      this.state.hasRespawnAnchor = true;
+      this.state.respawnAnchorX = world.respawnAnchor.x;
+      this.state.respawnAnchorY = world.respawnAnchor.y;
+      this.state.respawnAnchorZ = world.respawnAnchor.z;
+    }
 
     // Admin-only: sets the shared respawn anchor (Schema fields, auto-
     // synced to every client -- same mechanism the "pos" handler below
@@ -73,10 +92,24 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       if (!this.adminSessionIds.has(client.sessionId)) return;
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+
+      // Real request: "it shouldn't be able to be set underground" --
+      // genuinely reachable even for an admin (NoclipFlyProvider's whole
+      // point is passing through terrain, so a GM setting an anchor mid-
+      // fly could easily be inside solid rock). Refuse rather than
+      // silently accept a bad anchor -- same two-voxels-of-headroom check
+      // worldGen.ts's own safe-spawn scan uses.
+      const px = Math.floor(player.x);
+      const py = Math.floor(player.y);
+      const pz = Math.floor(player.z);
+      const isSafe = genBlockAt(this.worldId, px, py, pz, this.worldGen) === AIR && genBlockAt(this.worldId, px, py + 1, pz, this.worldGen) === AIR;
+      if (!isSafe) return;
+
       this.state.hasRespawnAnchor = true;
       this.state.respawnAnchorX = player.x;
       this.state.respawnAnchorY = player.y;
       this.state.respawnAnchorZ = player.z;
+      store.setWorldRespawnAnchor(this.worldId, { x: player.x, y: player.y, z: player.z });
     });
 
     this.onMessage<ChunkRequest>("requestChunk", (client, { cx, cy, cz }) => {
@@ -89,7 +122,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       // Only edited chunks ever get persisted (the sparse-diff model the
       // architecture plan committed to from the start).
       const voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
-      fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId);
+      fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId, this.worldGen);
       client.sendBytes("chunk", encodeChunk(cx, cy, cz, voxels));
     });
 
@@ -107,7 +140,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       let voxels = this.storage.getChunk(cx, cy, cz);
       if (!voxels) {
         voxels = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
-        fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId);
+        fillChunk(voxels, CHUNK_SIZE, cx * CHUNK_SIZE, cy * CHUNK_SIZE, cz * CHUNK_SIZE, this.worldId, this.worldGen);
       } else {
         // getChunk returns the storage's own buffer -- copy before mutating
         // so a second edit to the same chunk can't corrupt anything still
@@ -141,7 +174,12 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   onJoin(client: Client, options?: JoinOptions) {
     const player = new PlayerState();
     player.name = options?.name || `Player-${client.sessionId.slice(0, 4)}`;
-    const [sx, sy, sz] = spawnPosition();
+    // Join at the admin-set anchor if one exists (a DM-prepared landing
+    // spot, e.g. "the party's camp," should apply to new joiners too, not
+    // only to explicit Shift+R respawns) -- otherwise the safe-spawn scan.
+    const [sx, sy, sz] = this.state.hasRespawnAnchor
+      ? [this.state.respawnAnchorX, this.state.respawnAnchorY, this.state.respawnAnchorZ]
+      : spawnPositionFor(this.worldId, this.worldGen);
     player.x = sx;
     player.y = sy;
     player.z = sz;
