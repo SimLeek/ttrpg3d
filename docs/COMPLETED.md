@@ -1,0 +1,300 @@
+# Completed work
+
+Everything already shipped, moved out of `docs/ROADMAP.md`/
+`docs/PORTING_CHECKLIST.md` so those stay scannable for what's actually
+left. Organized the same way those two docs are (standing-decision
+background first, then per-phase, same phase numbers/headers) — this file
+is pure history/reference, never a planning doc; don't add new work here.
+
+## Standing decisions — background
+
+The rules themselves live in `docs/ROADMAP.md`'s Standing Decisions. The
+detail behind two of them got long enough to move here:
+
+**Games contain Worlds** (games-and-world-generators PR): a roll20-style
+"campaign contains multiple pages" model, confirmed via real design
+discussion ("one game can have many pcg voxel worlds in it"). `Game`
+(`packages/server/src/data/store.ts`'s `GameRecord`) is the top-level
+owned/administered unit the lobby lists/creates; `World` (`WorldRecord`)
+is a page WITHIN a game, created/switched from an in-game admin-gated
+panel (`pageManager.ts`), not the lobby -- it carries no owner/admin of
+its own, permissions resolve through its parent game
+(`isWorldAdmin` -> `isGameAdmin`). Switching pages is a full client-side
+`stop()`+`startGame()` cycle against the new world, reusing the same
+proven teardown/setup the lobby->game handoff already used, rather than
+trying to clear noa's loaded chunks/entities in place. Real limitation:
+no cross-client page-sync yet -- each client switches its own view
+independently, the GM's active-page choice doesn't push to other
+connected players automatically.
+
+**Core/mod boundary.** This project's actual pitch is "roll20 for any
+tabletop system," not one fixed ruleset -- so gameplay RULES (combat,
+health, movement feel, respawn policy) need to be swappable per world,
+not hardcoded. Settled shape, confirmed through real design discussion
+(not aspirational):
+- **Core (engine infrastructure, never a mod):** voxel storage/
+  streaming/sync/persistence, accounts/world registry, the rendering
+  plumbing (atlas/shader registration *mechanism*, not any specific
+  shader), and the mod-registration seams themselves (e.g.
+  `MovementProvider`, `packages/client/src/movement/MovementProvider.ts`
+  -- the interface is core, what implements it isn't).
+- **Core primitives + mod/default-policy calling them:** a few systems
+  split cleanly this way -- the *functions* are core, *when/who calls
+  them* is policy. Respawn: `PlayerController.teleportTo` + the
+  world-bottom crossing-detector (`worldBottomCatch.ts`) are core;
+  deciding Shift+R manually respawns anyone and only an admin can set an
+  anchor (`respawnControl.ts`) is the one fixed default policy today
+  (not yet a swappable object -- revisit once a second policy actually
+  needs to differ). GM powers: a core, always-available admin-override
+  escape hatch (`gmOverride.ts`, gated on `PlayerState.isAdmin` --
+  reuses `store.ts`'s existing owner/admin/root model, nothing new
+  invented there) is core since every ruleset needs *some* GM safety
+  valve; the SPECIFIC powers bundled behind it today (fly, pass through
+  terrain, instant build/delete -- no "immortal", nothing to mean that
+  against yet, Phase 5 is NOT STARTED) are the default, not yet a
+  swappable set.
+- **Default-mod territory (ships out of the box, meant to become
+  swappable once Phase 6 exists):** movement feel beyond the core
+  walk/jump/fall/swim baseline (`CoreMovementProvider`) -- flying,
+  noclip, wall-jump, ledge-grab are all separate `MovementProvider`
+  implementations layered on the same seam, not special-cased into
+  `PlayerController.ts`. Combat/health (deliberately NOT a port of the
+  old game's stamina/health system -- that was built for a stealth
+  platformer, not a TTRPG; a real character-sheet-based model is new
+  design, Phase 5). Inventory rules (DM-vs-player stock split, equip
+  schemes).
+- **Not built yet, explicitly deferred:** making the default-mod
+  territory above actually swappable at runtime (dynamic loading,
+  per-world config, in-game toggle UI) is Phase 6's full scope, not
+  assumed done just because the seam exists.
+
+## Phase 2 — MVP
+
+- `scripts/movement_resource.gd`, `basic_jump_resource.gd`,
+  `fall_resource.gd`, `spring_arm_3d_look.gd`, `player_blob_ctrl.gd` —
+  walk/sprint/jump/fall/zoom, now `CoreMovementProvider` (core/mod-
+  boundary PR) — see the Phase 2 entry below for why this moved behind a
+  `MovementProvider` seam instead of being `PlayerController.ts`'s own
+  hardcoded logic. **Correction**: this bullet previously ALSO claimed
+  `wall_jump_resource.gd` and `ledge_safety_resource.gd`/`playable/
+  ledge_grabber.gd` as DONE — confirmed live (core/mod-boundary PR's
+  research) that was wrong, neither was ever actually built, only
+  mentioned in a comment as later work; moved back to
+  `PORTING_CHECKLIST.md` as NOT STARTED, scoped as future
+  `MovementProvider` implementations (same pattern `NoclipFlyProvider`
+  established). `stair_stepper_resource.gd` also NOT STARTED, same
+  reason — both still live in the checklist, not here.
+  Note: `spring_arm_3d_look.gd`'s own first/third-person zoom-distance
+  piece specifically landed LATER than the rest of this bullet (as part
+  of the xray-shader PR below) — its Ctrl+scroll binding and 0..8 zoom
+  range are a direct port, but its collision-raycast wall-avoidance was
+  deliberately NOT ported: noa-engine's own camera already clamps zoom
+  to avoid clipping into terrain, and that clamp was then found to
+  actively fight the xray-cutout shader (snapping to first person in
+  almost any tunnel) and disabled in favor of letting the shader handle
+  near-camera geometry.
+- `3dAssets/shaders/xray_if_behind_cutout.gdshader` /
+  `xray_if_behind_transparent.gdshader`, `playable/
+  player_camera_with_cutout.gd` — `packages/client/src/
+  blockShaders.ts`'s `XrayFadePlugin`, applied universally (every cube +
+  plant type, confirmed by grepping every real `shader_*.tres` in the
+  old repo, not just water/quartz). Real water/watertop/quartz
+  transparency (genuine alpha blend, not the atlas cutout path) landed
+  alongside it, fixing the "water invisible from inside" bug reported
+  during Phase 4 playtesting. **NEW** (no old-repo equivalent, grepped
+  `swim|underwater|in_water` across every `.gd` file — zero matches):
+  swimming controls (`movement/SwimResource.ts`, layered on noa's
+  already-real fluid buoyancy/drag physics) and an underwater fog effect
+  (`underwaterEffect.ts`). Also added: a visible local third-person
+  player body mesh (`playerBodyMesh.ts`) — previously nonexistent since
+  the camera could never leave the player's eye before this PR.
+- Core/mod-boundary PR — `packages/client/src/movement/
+  MovementProvider.ts` (the interface every movement mode implements:
+  update/reset/optional onActivate/onDeactivate), `CoreMovementProvider`
+  (today's walk/jump/fall/swim repackaged behind it, not rewritten — see
+  the bullet above), `NoclipFlyProvider` (direct port of `scripts/items/
+  phasing_gloves_item.gd`'s intangibility + `wings_item.gd`'s flying —
+  both used the same no-gravity, direct-vertical-control path in the old
+  game, confirmed directly). Also: the GM admin-override escape hatch
+  (`gmOverride.ts`, gated on `PlayerState.isAdmin` — server-side via
+  `store.isWorldAdmin`, reusing `store.ts`'s existing owner/admin/root
+  model, nothing new invented) toggling fly+noclip+instant-build/delete;
+  respawn core primitives (`worldBottomCatch.ts`, `PlayerController.
+  teleportTo`, `WorldRoom`'s respawn-anchor Schema fields) plus one fixed
+  default policy (`respawnControl.ts` — Shift+R for anyone, Shift+T
+  admin-only anchor-set; NOT Ctrl+T, a browser-reserved new-tab shortcut
+  a page can't intercept, caught live). See `docs/ROADMAP.md`'s Standing
+  Decisions (and this file's own background section above) for the full
+  core/mod boundary this PR established. Respawn anchors were in-memory
+  per room at this point, NOT yet persisted — fixed later, see the
+  games-and-world-generators entry under Phase 3 below.
+- `levels/center_of_universe.gd` — floating-origin re-anchoring concept;
+  turned out noa-engine already does this itself, so this became test
+  markers + console logging rather than new re-anchoring logic.
+- `scripts/pcg/limestone_slab_generator.gd` — basis for the Phase 2 test
+  area (steps/gap/wall), later extended into an infinite flat plane with
+  grid pillars once the hand-built area proved too small to exercise
+  origin-shifting. That hand-built area (`testArea.ts`) was retired
+  entirely in the games-and-world-generators PR (Phase 3, confirmed
+  explicitly) now that real per-world generator selection exercises
+  origin-shifting/movement instead -- this generator got a real, clean,
+  generic port at that point too (see Phase 3's own entry below) instead
+  of staying loosely approximated by the old test scaffolding.
+- `scripts/items/voxelitem.gd`/`del_vox_item.gd` — collapsed to a single
+  hardcoded block type initially; full multi-type system is Phase 4.
+
+## Phase 3 — Real world management
+
+- Per-world voxel storage (`node:sqlite`-backed, not the originally
+  planned `better-sqlite3` — its native build failed outright in this
+  sandbox) and basic place/break — both landed ahead of the real terrain
+  generator below, since storage needs something to store.
+- `scripts/world/world_manager.gd` (167L) — reshaped
+  (games-and-world-generators PR): read in full, it turned out to be
+  "roll20-page-style: switch between [worlds] without restarting the
+  game" -- confirmed directly, not assumed. This is the real origin of
+  the Game/World split (see this file's Standing Decisions background
+  above) -- `Game` is the new top-level owned/administered unit (what
+  `WorldRecord` used to be), `WorldRecord` is a page within a game.
+  `create_world`/`switch_to_world` are now `store.createWorld` +
+  `pageManager.ts`'s switch button (a full client-side
+  `stop()`+`startGame()` cycle against the new world, not an in-place
+  noa reset -- noa has no supported API for that, and the existing
+  teardown/setup pair was already proven). No cross-client page-sync yet
+  (a real, flagged limitation) -- unlike the old game's single-process
+  model, this one has independent clients, and nothing pushes the GM's
+  active-page choice to other connected players.
+- `scripts/pcg/world_generator_catalog.gd` (92L) — (games-and-world-
+  generators PR): read in full, confirmed repeatable/non_repeatable/
+  finite are classification TAGS on each catalog entry (shown in the old
+  DM creation UI), not the world types themselves -- the real catalog
+  had exactly 3 entries ("hilly" repeatable, "limestone_slab"
+  repeatable+finite, "plains" repeatable -- see below), now
+  `packages/shared/src/worldGenerators.ts`'s `WORLD_GENERATORS` table,
+  same shape as `voxelTypes.ts`'s shared-table pattern. The
+  "non_repeatable" category itself (WFC etc.) stays empty, same as the
+  old game -- see the DEFER/NEW bullet in the checklist.
+- `scripts/pcg/hilly_terrain_region_generator.gd` (464L) — landed before
+  the games-and-world-generators PR (see Phase 2 above); that PR added
+  the real `heightScale`/`treesEnabled` params `mods/plains_biome/
+  register.gd`'s real "plains" variant needs -- confirmed the old mod
+  reused this EXACT generator with `trees_enabled=false, height_scale=
+  0.12` fixed params, not a separate algorithm, so that's how it's
+  modeled here too: `worldGen.ts` dispatches "hilly" and "plains" to the
+  same `hillyTerrain.ts` functions with different fixed params.
+- `scripts/pcg/limestone_slab_generator.gd` — (games-and-world-
+  generators PR), read in full: a solid width x height x depth slab of
+  one configurable voxel type, no randomness, bounded (not
+  endless-streaming -- the "finite" classification tag).
+  `packages/server/src/world/limestoneSlab.ts`, a clean direct port --
+  separate from (and replacing, now that it's retired) `testArea.ts`'s
+  old hand-built area, which only ever loosely resembled this
+  generator's spirit, not its real params/behavior. Old default voxel
+  ("limestone") isn't a real block in this project's voxel table;
+  defaults to DIRT instead, noted directly in the new file.
+- World CREATE UI — (games-and-world-generators PR), but not where
+  originally planned: NOT the outer worlds lobby page (that now only
+  lists/creates GAMES -- `lobby.ts`) -- it's an in-game, admin-gated
+  panel (`pageManager.ts`, direct UI-shape port of the old game's real
+  `scripts/ui/dm_world_menu.gd`: generator-type picker + per-generator
+  param fields + create button), since worlds are pages WITHIN a game
+  now, confirmed explicitly ("this is essentially the 'pages' in
+  roll20"). The lobby's own "Create game" flow also auto-creates one
+  starter `hilly` world per new game (same pattern
+  `store.ensureSeedData()` already used for the seeded games), since a
+  world-less game would have nothing for `pageManager.ts` to be reached
+  from in the first place.
+- Real bugs found and fixed during the games-and-world-generators PR's
+  playtesting (kept here since they're done, not open work):
+  - The client never actually applied the server's computed spawn
+    position to the local player at all -- it sat at a hardcoded
+    cosmetic placeholder (`game.ts`'s old `SPAWN` constant) that only
+    ever coincidentally matched the old fixed test area. Every newly
+    created world appeared to spawn underground until this was traced
+    and fixed (`net.ts` now waits for the player's own synced state and
+    teleports there once via `PlayerController.teleportTo`, gated so the
+    position-send loop can't race and overwrite the correction).
+  - A fixed "surface height + 3" spawn guess wasn't actually safe for
+    arbitrary terrain/params -- replaced with a real safe-spawn scan
+    (first 2 consecutive air voxels, scanning up from a generator-
+    appropriate floor), per the user's own suggested algorithm
+    (`worldGen.ts`'s `spawnPositionFor`).
+  - Respawn anchors only lived in a room's in-memory Schema state, which
+    Colyseus disposes when a room empties (exactly what happens during a
+    page switch) -- now persisted to the world record itself
+    (`store.setWorldRespawnAnchor`), seeded back into Schema state on
+    room creation, and validated server-side so an anchor can't be set
+    inside solid terrain (reachable even for an admin via the noclip GM
+    override).
+  - A raw voxel-id number input in the create-page form showed
+    un-memorizable internal IDs -- replaced with a real named picker,
+    direct port of the old game's `voxel_catalog.gd` intent.
+  - Escape didn't close the page-management panel; Ctrl+T (an earlier
+    anchor-set binding) collided with the browser's own new-tab
+    shortcut, moved to Shift+T.
+
+## Phase 4 — Voxel interaction
+
+Movement moved to Phase 2 already. This phase extended Phase 2's single-
+hardcoded-block placement to the real multi-block-type system.
+
+- `scripts/item_resources/voxel_interactor.gd` (328L) — differently than
+  planned: its ~328 lines turned out to be mostly manual raycasting +
+  face-normal detection + placement-position math that noa-engine's own
+  `targetedBlock.position`/`.adjacent` already does for free (confirmed
+  by tracing noa's source) -- nothing to port there. What WAS worth
+  porting, and is: the character-overlap guard
+  (`_is_voxel_overlapping_character`), now `packages/shared/src/
+  collision.ts`'s `aabbsOverlap` + `voxelEditor.ts`'s use of it. The
+  placement-plane/targeting-beam *visuals* are still not ported (cosmetic
+  polish, deferred -- see the checklist).
+- `scripts/items/voxelitem.gd`, `del_vox_item.gd` — the "one generic
+  placer item, configured per catalog entry" pattern is
+  `packages/shared/src/items.ts`'s `Item`/`buildBlockCatalog`.
+  `del_vox_item.gd`'s type-agnostic delete was already how
+  `voxelEditor.ts`'s break ("fire") worked before this phase; unchanged.
+- `scripts/ui/player_inventory.gd` (368L, actually cataloged under
+  Phase 5 but pulled forward here) — `packages/client/src/hotbar.ts`, a
+  direct port of its real shape (10 hotbar slots, number keys +
+  mouse-wheel cycling, a toggleable full-inventory grid where clicking an
+  item loads it into the selected hotbar slot) -- not the originally-
+  planned smaller ad hoc "just a palette" version; corrected after it
+  became clear picking which block to place *is* the hotbar, not
+  separable, deferrable Phase 5 scope. Equip-into-hand is simplified to a
+  single equip slot read directly by voxelEditor.ts (no `HandController`/
+  dual-hand object) -- see the two_handed_resource/left_hand_gripper
+  entry in the checklist for why dual-hand itself stayed deferred.
+  Native-tooltip/hint text not ported (a plain `title` attribute stands
+  in).
+
+## Phase 5 — Inventory/items
+
+- `scripts/pcg/item_catalog.gd` (132L) — pulled forward into Phase 4:
+  `packages/shared/src/items.ts`.
+- `scripts/ui/player_inventory.gd` (368L) — pulled forward into Phase 4:
+  `packages/client/src/hotbar.ts`. See that phase's own entry above for
+  exactly what was/wasn't ported.
+- ~~**DEFER** — item icon polish~~ — done earlier than planned:
+  `scripts/build-block-icons.mjs` crops each block's real top-face
+  texture into a standalone icon (not the originally-cosmetic-deferred
+  rendered-emoji/3D-cube-render approach) -- cheap enough once the real
+  per-face block textures already existed that there was no reason to
+  ship flat color swatches first and redo this later.
+
+## Phase 8 — Lighting + voxel tick system
+
+- Check early: does Babylon.js have the same transparent-depth-write
+  quirk that forced an alpha-scissor-cutout workaround for glass/battle
+  waypoint lines in Godot? **Answered** (xray-shader PR): yes, a related
+  one — an alpha-blended, backface-uncull material can still cull its own
+  far faces when the camera is inside the mesh (confirmed live on water,
+  and via the Babylon forum, not Godot-specific). Fixed with
+  `material.separateCullingPass = true` + `forceDepthWrite = true`
+  (`game.ts`'s water/watertop/quartz materials) — so the alpha-scissor-
+  cutout *workaround itself* isn't needed, but real alpha-blended
+  geometry viewed from inside still needs this pair of flags set.
+
+## Cross-cutting
+
+- `scripts/dev/dev_console.gd` (760L) — its function is fully superseded
+  by `@colyseus/testing` (Phase 1, merged). No further porting needed.
