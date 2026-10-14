@@ -17,9 +17,12 @@
 // parameter values are from the old repo's actual .tres files (not the
 // shader's own generic uniform defaults): dirt/grass/water/watertop all
 // use cutoutRadius=1.5, cutoutPow=3.0, forwardPow=0.05, coneExtra=1.0,
-// floorFadeStart=0.0, floorFadeLength=0.25, cameraMinDist=0.5; alphaMin
-// varies (water/watertop 0.5, everything else 0.2) -- see
-// DEFAULT_XRAY_PARAMS below.
+// floorFadeStart=0.0, floorFadeLength=0.25; alphaMin varies (water/
+// watertop 0.5, everything else 0.2) -- see DEFAULT_XRAY_PARAMS below.
+// cameraMinDist is the one exception: the old game's own value (0.5) is
+// NOT used here -- see DEFAULT_XRAY_PARAMS's own doc comment for why
+// (a real bug found live, this project's player-position convention
+// differs from the old game's).
 //
 // AtlasSamplingPlugin -- a direct re-implementation of noa-engine's own
 // (internal, not exported) TerrainMaterialPlugin: samples the shared
@@ -53,7 +56,28 @@ export const DEFAULT_XRAY_PARAMS: XrayFadeParams = {
   floorFadeStart: 0.0,
   floorFadeLength: 0.25,
   alphaMin: 0.2,
-  cameraMinDist: 0.5,
+  // Real bug found live: "stuff above me cut out when I jump into a
+  // cavern, but fine when zoomed out just a bit." Root cause: noa's
+  // camera sits at the player's EYE (noa's own cameraTarget follows with
+  // offset [0, 0.9*height, 0]) even in pure first person
+  // (currentZoom=0), but xray_playerPos is the player's body CENTER
+  // (feet + height/2 -- a deliberate earlier fix in this same project, so
+  // the cone's apex matches where the body visually is, not the old
+  // feet-anchor convention). That's a FIXED vertical offset of
+  // 0.4*height (~0.72 units for the default 1.8-tall player) between
+  // camera and "player position" that exists even in true first person --
+  // comfortably ABOVE the old game's own ported value here (0.5), so the
+  // cutout math never actually early-exited in first person at all, just
+  // ran against a nearly-degenerate near-vertical cone (explains why it
+  // showed up specifically for geometry directly above the player).
+  // Rather than tune this to the exact offset (fragile -- height/eye
+  // convention could change), set it generously past it: real requested
+  // "wiggle room" so the early exit is robust against camera jitter/
+  // smoothing too, not just the one measured offset. Deliberately NOT
+  // the old game's literal 0.5 -- that value was calibrated against ITS
+  // OWN eye-based player-position convention, which this project doesn't
+  // use.
+  cameraMinDist: 2.0,
 };
 
 // Shared by every XrayFadePlugin instance -- set once per frame (see

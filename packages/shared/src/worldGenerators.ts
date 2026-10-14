@@ -33,6 +33,20 @@ export const WORLD_GENERATORS: readonly WorldGeneratorDef[] = [
   { id: "limestone_slab", name: "Limestone Slab", classifications: ["repeatable", "finite"] },
 ];
 
+/**
+ * 2026-10-11 decision: the auto-created starter world for a new game
+ * defaults to "plains", not "hilly" -- aesthetics/marketability driven,
+ * not a gameplay change (both stay fully selectable in the catalog).
+ * Confirmed by directly comparing the old (`ttrpg3dgame.png`) and new
+ * (`ttrpg3dgame-newdef.png`) reference screenshots: "hilly"'s default
+ * heightScale=1.0 produces dramatic, near-vertical mountains ("amplified
+ * minecraft"), while "plains" (heightScale=0.12, confirmed live as
+ * "more just normal gen") matches the gentler rolling-hills look the
+ * reference image shows -- including its lack of trees, consistent with
+ * plains' own `treesEnabled=false`.
+ */
+export const DEFAULT_GENERATOR_ID: GeneratorId = "plains";
+
 export function getGeneratorDef(id: GeneratorId): WorldGeneratorDef {
   const def = WORLD_GENERATORS.find((g) => g.id === id);
   if (!def) throw new Error(`Unknown generator id: ${id}`);

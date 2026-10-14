@@ -66,12 +66,12 @@ finished-work detail and bug postmortems live in
   - **Not built yet:** making default-mod territory actually swappable
     at runtime (dynamic loading, per-world config, toggle UI) is Phase
     6's full scope, not assumed done just because the seam exists.
-- **Default world generator: switch to the less-hilly preset.** 2026-10-11
-  decision, aesthetics/marketability driven, not a gameplay change --
-  screenshots are selling material (reference images saved under
-  ~/claude_code/cad_pics: `ttrpg3dgame.png` is the current hilly default,
-  `ttrpg3dgame-newdef.png` is the less-hilly one to switch to). TODO: find
-  the actual default-generator wiring and swap it; not done yet.
+- **Default world generator**: `DEFAULT_GENERATOR_ID` (`packages/shared/
+  src/worldGenerators.ts`) is `"plains"`, not `"hilly"` -- a 2026-10-11,
+  aesthetics/marketability-driven decision confirmed against real
+  reference screenshots (both catalog entries stay fully selectable; see
+  [COMPLETED.md](COMPLETED.md#phase-3--real-world-management) for the
+  detail).
 
 ## Phases
 
@@ -90,7 +90,7 @@ up during play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 1 | Testing infra (`@colyseus/testing`, Vitest) + Docker | DONE | -- |
 | 2 | MVP -- full movement port, floating-origin shift, chunk streaming | **PARTIAL** | wall-jump/ledge-grab/stair-stepper `MovementProvider`s |
 | -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE | -- |
-| 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | voxel_types/structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import, default-generator preset swap |
+| 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | voxel_types/structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import |
 | 4 | Voxel interaction -- multi-block placement, hand-equipment dispatch, soft-body swap | **PARTIAL** | dual-hand equip/dispatch, soft-body library spike, health/fall-damage, squeezer-rays, phasing-gloves-as-an-item |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | character-sheet combat/health, DM-vs-player stock split, item tooltip, dual-hand equip scheme |
 | 6 | Mod system v2 -- per-world data-only AND behavior-mod registration | **PARTIAL** | dynamic mod loading/packaging, in-game toggle UI, per-world persisted config, Uint16 wire-format widening |

@@ -240,6 +240,58 @@ not hardcoded. Settled shape, confirmed through real design discussion
   - Escape didn't close the page-management panel; Ctrl+T (an earlier
     anchor-set binding) collided with the browser's own new-tab
     shortcut, moved to Shift+T.
+- **Default world generator: switch to the less-hilly preset** (2026-10-11
+  user decision). Confirmed by directly comparing the real reference
+  screenshots (`~/claude_code/cad_pics/ttrpg3dgame.png` vs.
+  `ttrpg3dgame-newdef.png`): `"hilly"`'s default `heightScale=1.0`
+  produces dramatic, near-vertical mountains ("amplified minecraft" per
+  the user's own description); `"plains"` (`heightScale=0.12`, confirmed
+  live as "more just normal gen") matches the gentler rolling-hills look
+  of the new reference image, including its lack of trees (consistent
+  with plains' own `treesEnabled=false`). Fixed by adding
+  `packages/shared/src/worldGenerators.ts`'s `DEFAULT_GENERATOR_ID =
+  "plains"` as the single source of truth, used by every call site that
+  previously hardcoded `"hilly"` as an assumed default: `store.ts`'s
+  `ensureSeedData()`, `lobby.ts`'s "Create game" starter-world creation,
+  `pageManager.ts`'s create-page form's initially-selected generator, and
+  `WorldRoom.ts`'s own no-WorldRecord-found fallback. The catalog itself
+  is unchanged -- both `"hilly"` and `"plains"` stay fully selectable,
+  this only changes which one a NEW world defaults to.
+- **Games lobby couldn't scroll** -- found live once the games list grew
+  past one screen (search was the only way to reach an entry below the
+  fold). Root cause: `index.html`'s `html, body { overflow: hidden;
+  height: 100% }` (needed so the full-screen noa canvas never grows
+  document scrollbars) also blocked the lobby page's own document-level
+  scroll. Fixed by making `.lobby` a flex column with a bounded
+  `max-height` and only `#games-list` itself scrollable
+  (`overflow-y: auto; flex: 1 1 auto; min-height: 0`), keeping the
+  account/search controls always visible above it.
+- **Xray-cutout shader cut out world geometry right above the player**
+  when jumping into a cavern, going away once the camera zoomed out even
+  slightly. Root cause: noa's camera sits at the player's EYE
+  (`[0, 0.9*height, 0]`) even in pure first person, but the position fed
+  into the cutout shader (`blockShaders.ts`) is the player's body
+  CENTER -- a fixed ~0.4*height gap between "camera" and "player
+  position" that exists even standing still, bigger than the old game's
+  literal ported `cameraMinDist=0.5` (calibrated against that game's own
+  eye-based convention, not this project's body-center one). Fixed by
+  raising `DEFAULT_XRAY_PARAMS.cameraMinDist` to `2.0` so the shader
+  early-exits (no cutout at all) whenever the camera is this close to/
+  inside/in front of the player, with real headroom against the
+  intrinsic offset.
+- **`WorldRoom.test.ts` was leaking real accounts/games into the actual
+  dev data store on every test run** (`@colyseus/testing`'s `boot()`
+  boots the real `server.ts`, which imports the real `store` singleton --
+  no clean injection point to isolate it without a bigger DI
+  restructure). Found live once the lobby could finally scroll far enough
+  to reveal dozens of accumulated `WorldRoom-test-*` entries. Fixed at
+  the root: `WorldRoom.test.ts` now tracks every account/game/world id it
+  creates and removes them all in a single top-level `afterAll`; `store.ts`
+  gained real `deleteAccount`/`deleteGame` (cascades to that game's
+  worlds)/`deleteWorld` methods to make this possible -- also genuinely
+  useful on their own (a future DM delete-world tool needs exactly this).
+  The pre-existing cruft (33 accounts, 22 games) was removed from the real
+  dev store with a one-off script, not committed.
 
 ## Phase 4 — Voxel interaction
 
