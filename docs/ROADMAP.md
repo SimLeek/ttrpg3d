@@ -4,7 +4,9 @@ Full migration off Godot 4.6 + `godot_voxel` to a browser-native stack:
 **noa-engine (Babylon.js)** client + **Colyseus (Node.js)** server, porting
 the old game's systems from `/home/simleek/gamedev/ttrpg-3d` one by one --
 same rules/content, different implementation throughout. This doc is the
-scannable phase list + standing decisions; it's not a narrative history.
+scannable phase list + standing decisions; it's not a narrative history --
+finished-work detail and bug postmortems live in
+[`docs/COMPLETED.md`](COMPLETED.md), linked from here where relevant.
 
 ## Standing decisions
 
@@ -22,21 +24,14 @@ scannable phase list + standing decisions; it's not a narrative history.
 - **Auth**: dev-only named accounts, no passwords/OAuth yet. `root` is a
   seeded implicit superuser (sees/admins every game). Real login is its
   own later research track.
-- **Games contain Worlds** (games-and-world-generators PR): a roll20-style
-  "campaign contains multiple pages" model, confirmed via real design
-  discussion ("one game can have many pcg voxel worlds in it"). `Game`
-  (`packages/server/src/data/store.ts`'s `GameRecord`) is the top-level
-  owned/administered unit the lobby lists/creates; `World` (`WorldRecord`)
-  is a page WITHIN a game, created/switched from an in-game admin-gated
-  panel (`pageManager.ts`), not the lobby -- it carries no owner/admin of
-  its own, permissions resolve through its parent game
-  (`isWorldAdmin` -> `isGameAdmin`). Switching pages is a full client-side
-  `stop()`+`startGame()` cycle against the new world, reusing the same
-  proven teardown/setup the lobby->game handoff already used, rather than
-  trying to clear noa's loaded chunks/entities in place. Real limitation:
-  no cross-client page-sync yet -- each client switches its own view
-  independently, the GM's active-page choice doesn't push to other
-  connected players automatically.
+- **Games contain Worlds**: a roll20-style "campaign contains multiple
+  pages" model. `Game` is the top-level owned/administered unit the lobby
+  lists/creates; `World` is a page WITHIN a game, created/switched from an
+  in-game admin-gated panel, not the lobby -- it carries no owner/admin of
+  its own, permissions resolve through its parent game. No cross-client
+  page-sync yet (each client switches its own view independently) -- see
+  [COMPLETED.md](COMPLETED.md#standing-decisions--background) for the
+  full background/file references.
 - **Networking**: Colyseus rooms, one room instance per world
   (`WorldRoom.filterBy(['worldId'])`). Raw binary messages for chunk
   streaming/voxel edits; `@colyseus/schema` Schema state for player
@@ -53,43 +48,24 @@ scannable phase list + standing decisions; it's not a narrative history.
 - **Core/mod boundary.** This project's actual pitch is "roll20 for any
   tabletop system," not one fixed ruleset -- so gameplay RULES (combat,
   health, movement feel, respawn policy) need to be swappable per world,
-  not hardcoded. Settled shape, confirmed through real design discussion
-  (not aspirational):
-  - **Core (engine infrastructure, never a mod):** voxel storage/
-    streaming/sync/persistence, accounts/world registry, the rendering
-    plumbing (atlas/shader registration *mechanism*, not any specific
-    shader), and the mod-registration seams themselves (e.g.
-    `MovementProvider`, `packages/client/src/movement/MovementProvider.ts`
-    -- the interface is core, what implements it isn't).
-  - **Core primitives + mod/default-policy calling them:** a few systems
-    split cleanly this way -- the *functions* are core, *when/who calls
-    them* is policy. Respawn: `PlayerController.teleportTo` + the
-    world-bottom crossing-detector (`worldBottomCatch.ts`) are core;
-    deciding Shift+R manually respawns anyone and only an admin can set an
-    anchor (`respawnControl.ts`) is the one fixed default policy today
-    (not yet a swappable object -- revisit once a second policy actually
-    needs to differ). GM powers: a core, always-available admin-override
-    escape hatch (`gmOverride.ts`, gated on `PlayerState.isAdmin` --
-    reuses `store.ts`'s existing owner/admin/root model, nothing new
-    invented there) is core since every ruleset needs *some* GM safety
-    valve; the SPECIFIC powers bundled behind it today (fly, pass through
-    terrain, instant build/delete -- no "immortal", nothing to mean that
-    against yet, Phase 5 is NOT STARTED) are the default, not yet a
-    swappable set.
-  - **Default-mod territory (ships out of the box, meant to become
-    swappable once Phase 6 exists):** movement feel beyond the core
-    walk/jump/fall/swim baseline (`CoreMovementProvider`) -- flying,
-    noclip, wall-jump, ledge-grab are all separate `MovementProvider`
-    implementations layered on the same seam, not special-cased into
-    `PlayerController.ts`. Combat/health (deliberately NOT a port of the
-    old game's stamina/health system -- that was built for a stealth
-    platformer, not a TTRPG; a real character-sheet-based model is new
-    design, Phase 5). Inventory rules (DM-vs-player stock split, equip
-    schemes).
-  - **Not built yet, explicitly deferred:** making the default-mod
-    territory above actually swappable at runtime (dynamic loading,
-    per-world config, in-game toggle UI) is Phase 6's full scope, not
-    assumed done just because the seam exists.
+  not hardcoded. Settled shape (full background/file references in
+  [COMPLETED.md](COMPLETED.md#standing-decisions--background)):
+  - **Core (engine infrastructure, never a mod):** voxel storage/sync/
+    persistence, accounts/world registry, rendering plumbing, and the
+    mod-registration seams themselves (e.g. `MovementProvider`) -- the
+    interface is core, what implements it isn't.
+  - **Core primitives + mod/default-policy calling them:** respawn
+    (`PlayerController.teleportTo`/`worldBottomCatch.ts` are core; who
+    calls them is policy) and GM powers (the admin-override escape hatch
+    is core; the specific powers bundled behind it are the default, not
+    yet swappable) both split this way.
+  - **Default-mod territory**, meant to become swappable once Phase 6
+    exists: movement feel beyond the core walk/jump/fall/swim baseline,
+    combat/health (a fresh character-sheet design, NOT a port of the old
+    stealth-platformer stamina/health system), inventory rules.
+  - **Not built yet:** making default-mod territory actually swappable
+    at runtime (dynamic loading, per-world config, toggle UI) is Phase
+    6's full scope, not assumed done just because the seam exists.
 - **Default world generator: switch to the less-hilly preset.** 2026-10-11
   decision, aesthetics/marketability driven, not a gameplay change --
   screenshots are selling material (reference images saved under
@@ -108,21 +84,22 @@ later systems, invisible and unverifiable on their own until something
 actually uses them. Each now ships as part of the phase that makes it show
 up during play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 
-| # | Phase | Status |
-|---|---|---|
-| 0 | Scaffolding -- monorepo, client/server hello-world | DONE |
-| 1 | Testing infra (`@colyseus/testing`, Vitest) + Docker | DONE |
-| 2 | MVP -- full movement port, floating-origin shift, chunk streaming | DONE |
-| -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE |
-| 3 | Real world management -- real hilly terrain generator + voxel type catalog, DM world-create/admin-grant UI | **PARTIAL** -- per-world voxel storage + basic place/break + real hilly terrain generator (textures, caves, ore, trees, foliage) DONE; Game/World split (roll20-style campaigns containing multiple PCG pages), real generator catalog (hilly/plains/limestone_slab), real in-game world-create/switch UI, and retiring the Phase-2 hand-built test area all DONE (games-and-world-generators PR); per-world switching's remaining piece (`world_manager.gd`'s own scope) landed as part of the same PR; cross-client page-sync (GM's active page auto-following for every connected player), procedural skybox, and a dedicated DM admin-GRANT UI (adding a second admin by account, as opposed to creating/switching pages) remain |
-| 4 | Voxel interaction -- `voxel_interactor.gd` full multi-block placement, hand-equipment dispatch rework, soft-body-library swap for `blob_body_3d.gd` | **PARTIAL** -- real hotbar + full inventory grid + multi-block-type placement (with real icons, a self-overlap placement guard, and a minimal input-capture layer), third-person zoom + universal xray-cutout shader + real water/quartz transparency + swimming, the core/mod-boundary movement-provider refactor (`CoreMovementProvider`/`NoclipFlyProvider`, `phasing_gloves_item.gd`/`wings_item.gd`'s fly/noclip ported as the first real non-core provider) DONE; dual-hand equip/hand-equipment dispatch, soft-body swap, health/fall-damage, and squeezer-rays remain |
-| 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** -- catalog + hotbar DONE (pulled forward, see Phase 4); character-sheet-based combat/health (a fresh design, NOT a port of the old game's stealth-platformer stamina/health system) and the DM-vs-player inventory split remain |
-| 6 | Mod system v2 -- per-world data-only AND behavior-mod registration (see Standing decisions' core/mod boundary) | **PARTIAL** -- the minimal `MovementProvider` seam + GM admin-override escape hatch + respawn core primitives exist (core/mod-boundary PR); dynamic mod loading/packaging, in-game mod-toggle UI, per-world persisted mod config, and widening the voxel wire format past 255 ids all remain |
-| 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED |
-| 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED |
-| 9 | Battle mode / turn tracker, server-authoritative -- also where the distance math lands | NOT STARTED |
-| 10 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED |
-| 11+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED |
+| # | Phase | Status | Remaining |
+|---|---|---|---|
+| 0 | Scaffolding -- monorepo, client/server hello-world | DONE | -- |
+| 1 | Testing infra (`@colyseus/testing`, Vitest) + Docker | DONE | -- |
+| 2 | MVP -- full movement port, floating-origin shift, chunk streaming | **PARTIAL** | wall-jump/ledge-grab/stair-stepper `MovementProvider`s |
+| -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE | -- |
+| 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | voxel_types/structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import, default-generator preset swap |
+| 4 | Voxel interaction -- multi-block placement, hand-equipment dispatch, soft-body swap | **PARTIAL** | dual-hand equip/dispatch, soft-body library spike, health/fall-damage, squeezer-rays, phasing-gloves-as-an-item |
+| 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | character-sheet combat/health, DM-vs-player stock split, item tooltip, dual-hand equip scheme |
+| 6 | Mod system v2 -- per-world data-only AND behavior-mod registration | **PARTIAL** | dynamic mod loading/packaging, in-game toggle UI, per-world persisted config, Uint16 wire-format widening |
+| 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
+| 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
+| 9 | Battle mode / turn tracker, server-authoritative -- also where the distance math lands | NOT STARTED | everything |
+| 10 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED | everything |
+| 11+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED | everything |
 
 Per-file porting decisions (port/redesign/drop/defer for every old `.gd`
-file) live in `docs/PORTING_CHECKLIST.md`, not here.
+file) live in `docs/PORTING_CHECKLIST.md` (open items only); finished work
+is in `docs/COMPLETED.md`.
