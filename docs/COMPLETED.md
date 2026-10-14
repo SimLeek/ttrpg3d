@@ -182,6 +182,14 @@ not hardcoded. Settled shape, confirmed through real design discussion
   0.12` fixed params, not a separate algorithm, so that's how it's
   modeled here too: `worldGen.ts` dispatches "hilly" and "plains" to the
   same `hillyTerrain.ts` functions with different fixed params.
+- `scripts/pcg/tree_generator.gd` (73L) — landed alongside
+  `hilly_terrain_region_generator.gd` above, not separately called out at
+  the time: `hillyTerrain.ts`'s `generateTreeShape`/`stampTrees` are a
+  direct port of its real trunk/branch/leaf-shell algorithm, seeded from
+  `(worldId, anchor position)` instead of Godot's global (non-seeded) RNG
+  so a world's trees are stable across reloads. Found still listed as
+  open while scanning for "what's next" after the docs split -- real
+  work, just never marked done.
 - `scripts/pcg/limestone_slab_generator.gd` — (games-and-world-
   generators PR), read in full: a solid width x height x depth slab of
   one configurable voxel type, no randomness, bounded (not

@@ -84,7 +84,6 @@ all done — see
       `VoxelGeneratorScript` passthrough glue for Godot's generator plugin
       system; no equivalent indirection needed in TS.
 - [ ] `scripts/pcg/structure.gd` (3L) — **PORT** trivial data holder.
-- [ ] `scripts/pcg/tree_generator.gd` (73L) — **PORT** algorithm.
 - [ ] `scripts/pcg/windmill_generator.gd` (109L) — **PORT** algorithm.
 - [ ] `scripts/pcg/modified_block_tracker.gd` (73L) — **REDESIGN**, mostly
       done: the new SQLite `chunks` table already only stores edited
