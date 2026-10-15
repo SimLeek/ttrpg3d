@@ -18,21 +18,63 @@ import { store } from "../data/store.js";
 // DEFAULT_WORLD_GEN instead of this suite's own deterministic params.
 const SLAB_PARAMS = { width: 32, height: 8, depth: 32, voxelId: DIRT };
 
+// Real cruft found live: this suite creates real accounts/games/worlds
+// against the actual store singleton (not an isolated one -- @colyseus/
+// testing boots the real server.ts, and WorldRoom.ts imports the real
+// `store` directly, so there's no clean injection point without a bigger
+// restructure). Every test run was silently leaving more
+// "WorldRoom-test-*" games in the user's own real lobby, with no way to
+// clean them up until store.ts grew real delete methods. Every account/
+// game/world id created anywhere in this file is tracked here and swept
+// in the top-level afterAll below -- deleteGame cascades to its worlds,
+// so only accounts + games need tracking, not every world individually.
+const createdAccountIds: string[] = [];
+const createdGameIds: string[] = [];
+// Per-world .sqlite files (storage.ts, real per-world voxel data) are a
+// SEPARATE concern from store.ts's JSON registry -- deleting a
+// WorldRecord doesn't touch its sqlite file, and any worldId a real
+// WorldRoom was created against gets one regardless of whether store.ts
+// knows about it. Tracked separately, cleaned up the same way the
+// original single-world version of this suite already did.
+const createdWorldSqliteIds: string[] = [];
+
+function trackedAccount(name: string) {
+  const account = store.createAccount(name);
+  createdAccountIds.push(account.id);
+  return account;
+}
+
+function trackedGame(name: string, ownerAccountId: string) {
+  const game = store.createGame(name, ownerAccountId);
+  createdGameIds.push(game.id);
+  return game;
+}
+
+function trackedWorld(gameId: string, name: string, generatorId: "hilly" | "plains" | "limestone_slab", params: unknown) {
+  const world = store.createWorld(gameId, name, generatorId, params as never);
+  createdWorldSqliteIds.push(world.id);
+  return world;
+}
+
 describe("WorldRoom", () => {
   let colyseus: ColyseusTestServer;
   let testWorldId: string;
 
   beforeAll(async () => {
     colyseus = await boot(server);
-    const owner = store.createAccount(`WorldRoom-test-owner-${Date.now()}`);
-    const game = store.createGame(`WorldRoom-test-game-${Date.now()}`, owner.id);
-    const world = store.createWorld(game.id, "Test Slab", "limestone_slab", SLAB_PARAMS);
+    const owner = trackedAccount(`WorldRoom-test-owner-${Date.now()}`);
+    const game = trackedGame(`WorldRoom-test-game-${Date.now()}`, owner.id);
+    const world = trackedWorld(game.id, "Test Slab", "limestone_slab", SLAB_PARAMS);
     testWorldId = world.id;
   });
 
   afterAll(async () => {
     await colyseus.shutdown();
-    rmSync(join(process.cwd(), "data", "worlds", `${testWorldId}.sqlite`), { force: true });
+    for (const worldId of createdWorldSqliteIds) {
+      rmSync(join(process.cwd(), "data", "worlds", `${worldId}.sqlite`), { force: true });
+    }
+    for (const gameId of createdGameIds) store.deleteGame(gameId);
+    for (const accountId of createdAccountIds) store.deleteAccount(accountId);
   });
 
   it("worldBottomY (DEFAULT_WORLD_BOTTOM_Y, the real default for a genuinely bottomless generator) survives the actual binary Schema encode/decode round-trip to a connected client", async () => {
@@ -94,14 +136,10 @@ describe("WorldRoom", () => {
     // not testWorldId above, since isWorldAdmin needs a world store.ts
     // actually knows about and this describe block wants its own
     // owner/stranger pair.
-    const owner = store.createAccount(`WorldRoom-test-owner-${Date.now()}`);
-    const stranger = store.createAccount(`WorldRoom-test-stranger-${Date.now()}`);
-    const game = store.createGame(`WorldRoom-test-game-${Date.now()}`, owner.id);
-    const world = store.createWorld(game.id, "Admin Test World", "limestone_slab", SLAB_PARAMS);
-
-    afterAll(() => {
-      rmSync(join(process.cwd(), "data", "worlds", `${world.id}.sqlite`), { force: true });
-    });
+    const owner = trackedAccount(`WorldRoom-test-owner-${Date.now()}`);
+    const stranger = trackedAccount(`WorldRoom-test-stranger-${Date.now()}`);
+    const game = trackedGame(`WorldRoom-test-game-${Date.now()}`, owner.id);
+    const world = trackedWorld(game.id, "Admin Test World", "limestone_slab", SLAB_PARAMS);
 
     it("PlayerState.isAdmin is true for the game's owner, false for a stranger or no accountId -- present immediately on join, not a racy follow-up message", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
@@ -140,7 +178,7 @@ describe("WorldRoom", () => {
       // describe block (anchors persist across rooms now, that's the
       // whole point of the fix), so asserting against it here would be
       // testing stale cross-test state, not this message's own behavior.
-      const freshWorld = store.createWorld(game.id, "Underground Anchor Test World", "limestone_slab", SLAB_PARAMS);
+      const freshWorld = trackedWorld(game.id, "Underground Anchor Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: freshWorld.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
 

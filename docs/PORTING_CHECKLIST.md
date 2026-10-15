@@ -125,13 +125,6 @@ all done — see
       not a format that needs re-simulating). Worth doing: these worlds were
       built for/with the same movement systems the new client is porting, so
       they're free, already-designed content, not just test data.
-- [ ] **NEW** (2026-10-11, user decision) — default world generator: switch
-      to the less-hilly preset. Aesthetics/marketability driven, not a
-      gameplay change -- screenshots are selling material (reference images
-      saved under `~/claude_code/cad_pics`: `ttrpg3dgame.png` is the current
-      hilly default, `ttrpg3dgame-newdef.png` is the less-hilly one to
-      switch to). TODO: find the actual default-generator wiring and swap
-      it; not done yet.
 
 ## Phase 4 — Voxel interaction [PARTIAL]
 

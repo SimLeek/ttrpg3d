@@ -31,7 +31,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { GeneratorId, GeneratorParams } from "@ttrpg3d/shared";
+import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -111,7 +111,7 @@ export function createStore(baseDir: string) {
   }
 
   return {
-    /** Seeds a root account + a couple of test accounts/games (one starter "hilly" world each) on first boot, if the store is empty. Safe to call every boot -- no-ops once seeded. */
+    /** Seeds a root account + a couple of test accounts/games (one starter DEFAULT_GENERATOR_ID world each) on first boot, if the store is empty. Safe to call every boot -- no-ops once seeded. */
     ensureSeedData(): void {
       let accounts = loadAccounts();
       if (accounts.length === 0) {
@@ -133,7 +133,7 @@ export function createStore(baseDir: string) {
         ];
         saveGames(games);
         for (const game of games) {
-          createWorldInternal(game.id, "Starting World", "hilly", {});
+          createWorldInternal(game.id, "Starting World", DEFAULT_GENERATOR_ID, {});
         }
       }
     },
@@ -226,6 +226,31 @@ export function createStore(baseDir: string) {
       const world = loadWorlds().find((w) => w.id === worldId);
       if (!world) return false;
       return this.isGameAdmin(world.gameId, accountId);
+    },
+
+    /**
+     * Real gap found live: nothing could ever remove a game/world/account
+     * once created -- including this file's OWN test suite, which (like
+     * WorldRoom.test.ts) creates real fixtures against the real store
+     * rather than an isolated one, so every test run left more
+     * "WorldRoom-test-*" cruft in the actual lobby with no way to clean
+     * it up. Real, generally useful functionality either way (a future DM
+     * delete-world tool needs exactly this), not added JUST for tests.
+     * Cascading: deleting a game also deletes every world inside it (a
+     * world can't meaningfully outlive its parent -- there'd be no game
+     * left to resolve its admin permissions through).
+     */
+    deleteAccount(id: string): void {
+      saveAccounts(loadAccounts().filter((a) => a.id !== id));
+    },
+
+    deleteGame(id: string): void {
+      saveGames(loadGames().filter((g) => g.id !== id));
+      saveWorlds(loadWorlds().filter((w) => w.gameId !== id));
+    },
+
+    deleteWorld(id: string): void {
+      saveWorlds(loadWorlds().filter((w) => w.id !== id));
     },
   };
 }

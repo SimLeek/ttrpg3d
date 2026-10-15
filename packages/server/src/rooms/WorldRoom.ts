@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, AIR, encodeChunk, type ChunkRequest, type GeneratorId, type GeneratorParams } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, type WorldStateType } from "./WorldState.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
@@ -8,7 +8,7 @@ import { store } from "../data/store.js";
 import { join } from "node:path";
 
 /** Fallback used only if this room's worldId has no real WorldRecord in store.ts (e.g. a room created directly with an arbitrary id, no world ever registered) -- same "don't throw, work with a sensible default" spirit the old worldId fallback below already had. */
-const DEFAULT_WORLD_GEN: WorldGenInput = { generatorId: "hilly" as GeneratorId, params: {} as GeneratorParams };
+const DEFAULT_WORLD_GEN: WorldGenInput = { generatorId: DEFAULT_GENERATOR_ID, params: {} as GeneratorParams };
 
 interface PlayerInput {
   x: number;

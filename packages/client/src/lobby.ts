@@ -9,10 +9,10 @@
 // the in-game page-management panel (pageManager.ts) once a session is
 // active, not from here. Picking a game here resolves its first world
 // (every game is guaranteed at least one -- see the "Create game" handler
-// below, which auto-creates a starter "hilly" world the same way
-// store.ts's ensureSeedData() does for the seeded games) and enters it.
+// below, which auto-creates a starter DEFAULT_GENERATOR_ID world the same
+// way store.ts's ensureSeedData() does for the seeded games) and enters it.
 
-import { fuzzyMatch } from "@ttrpg3d/shared";
+import { fuzzyMatch, DEFAULT_GENERATOR_ID } from "@ttrpg3d/shared";
 import { fetchAccounts, fetchGames, fetchWorldsForGame, createAccount, createGame, createWorldInGame, ACCOUNT_STORAGE_KEY, type Account, type GameRecord, type WorldRecord } from "./api.js";
 
 export type { Account, GameRecord, WorldRecord };
@@ -20,11 +20,21 @@ export type { Account, GameRecord, WorldRecord };
 export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (game: GameRecord, world: WorldRecord, account: Account) => void): void {
   container.innerHTML = `
     <style>
-      .lobby { max-width: 640px; margin: 48px auto; font-family: system-ui, sans-serif; color: #eee; }
-      .lobby h1 { font-size: 1.5rem; }
-      .lobby .row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+      .lobby { max-width: 640px; margin: 48px auto; font-family: system-ui, sans-serif; color: #eee; max-height: calc(100vh - 96px); display: flex; flex-direction: column; }
+      .lobby h1 { font-size: 1.5rem; flex: none; }
+      .lobby .row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex: none; }
       .lobby input, .lobby select, .lobby button { font-size: 1rem; padding: 6px 10px; }
-      .lobby ul { list-style: none; padding: 0; margin: 0; }
+      /* Real bug found live: index.html sets html/body to overflow:
+         hidden + height:100% (needed so the full-screen noa canvas never
+         grows document scrollbars) -- that also blocked the lobby page's
+         own document-level scroll, so a games list longer than one
+         screen was simply unreachable past what fit, with fuzzy search as
+         the only way to narrow down to an otherwise-unreachable game.
+         Fixed by making the list itself (not the whole page) the
+         scrollable region -- .lobby's own max-height + flex column
+         above keeps the account/search controls always visible while
+         only #games-list scrolls. */
+      .lobby ul { list-style: none; padding: 0; margin: 0; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
       .lobby li { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; margin-bottom: 6px; background: #2a2a2a; border-radius: 6px; }
       .lobby li .game-meta { color: #999; font-size: 0.85rem; margin-left: 8px; }
       .lobby .play-btn { cursor: pointer; }
@@ -120,10 +130,10 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
       // in-game page-management panel (pageManager.ts) that would
       // otherwise create one can only be reached from inside an active
       // session, so a brand-new game can't be left empty the way a world-
-      // less game would be. Same "auto-create a starter hilly world"
-      // pattern store.ts's ensureSeedData() already uses for the seeded
-      // games.
-      .then((game) => createWorldInGame(httpUrl, game.id, ownerAccountId, "Starting World", "hilly", {}).then(() => game))
+      // less game would be. Same "auto-create a starter DEFAULT_GENERATOR_ID
+      // world" pattern store.ts's ensureSeedData() already uses for the
+      // seeded games.
+      .then((game) => createWorldInGame(httpUrl, game.id, ownerAccountId, "Starting World", DEFAULT_GENERATOR_ID, {}).then(() => game))
       .then((game) => {
         games.push(game);
         newGameNameInput.value = "";

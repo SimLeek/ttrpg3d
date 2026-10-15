@@ -19,7 +19,7 @@
 // sync yet (see the games-and-world-generators plan's explicit out-of-
 // scope note).
 
-import { WORLD_GENERATORS, VOXEL_TYPES, type GeneratorId, type GeneratorParams, type LimestoneSlabParams, DEFAULT_LIMESTONE_SLAB_PARAMS } from "@ttrpg3d/shared";
+import { WORLD_GENERATORS, VOXEL_TYPES, DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type LimestoneSlabParams, DEFAULT_LIMESTONE_SLAB_PARAMS } from "@ttrpg3d/shared";
 import { fetchWorldsForGame, createWorldInGame, type WorldRecord } from "./api.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
 
@@ -79,7 +79,7 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
   let worlds: WorldRecord[] = [];
   let open = false;
 
-  generatorSelect.innerHTML = WORLD_GENERATORS.map((g) => `<option value="${g.id}">${g.name} [${g.classifications.join(", ")}]</option>`).join("");
+  generatorSelect.innerHTML = WORLD_GENERATORS.map((g) => `<option value="${g.id}"${g.id === DEFAULT_GENERATOR_ID ? " selected" : ""}>${g.name} [${g.classifications.join(", ")}]</option>`).join("");
 
   function renderParamFields(): void {
     const generatorId = generatorSelect.value as GeneratorId;

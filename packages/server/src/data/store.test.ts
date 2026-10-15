@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore, type Store } from "./store.js";
+import { DEFAULT_GENERATOR_ID } from "@ttrpg3d/shared";
 
 describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit tests)", () => {
   let dir: string;
@@ -17,7 +18,7 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("seeds root + two test accounts, two test games, and one starter 'hilly' world per game on first call, and is idempotent", () => {
+  it("seeds root + two test accounts, two test games, and one starter DEFAULT_GENERATOR_ID world per game on first call, and is idempotent", () => {
     store.ensureSeedData();
     const accounts = store.listAccounts();
     expect(accounts.map((a) => a.id).sort()).toEqual(["root", "test1", "test2"]);
@@ -29,7 +30,7 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     for (const game of games) {
       const worlds = store.listWorldsForGame(game.id);
       expect(worlds).toHaveLength(1);
-      expect(worlds[0].generatorId).toBe("hilly");
+      expect(worlds[0].generatorId).toBe(DEFAULT_GENERATOR_ID);
     }
 
     store.ensureSeedData(); // calling again must not duplicate
@@ -150,6 +151,38 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
 
     expect(store.getGame(game.id)).toMatchObject({ id: game.id, name: "Lookup Game" });
     expect(store.getGame("not-a-real-game")).toBeUndefined();
+  });
+
+  it("deleteAccount removes the account; a no-op for an unknown id", () => {
+    const account = store.createAccount("Removable");
+    store.deleteAccount(account.id);
+    expect(store.getAccount(account.id)).toBeUndefined();
+    expect(() => store.deleteAccount("not-a-real-account")).not.toThrow();
+  });
+
+  it("deleteWorld removes just that world, leaving its siblings alone; a no-op for an unknown id", () => {
+    const owner = store.createAccount("Owner");
+    const game = store.createGame("Delete-world Game", owner.id);
+    const world1 = store.createWorld(game.id, "Keep", "hilly", {});
+    const world2 = store.createWorld(game.id, "Remove", "hilly", {});
+
+    store.deleteWorld(world2.id);
+    expect(store.listWorldsForGame(game.id).map((w) => w.id)).toEqual([world1.id]);
+    expect(() => store.deleteWorld("not-a-real-world")).not.toThrow();
+  });
+
+  it("deleteGame cascades to every world inside it, but leaves other games' worlds alone; a no-op for an unknown id", () => {
+    const owner = store.createAccount("Owner");
+    const gameToDelete = store.createGame("Delete-game Game", owner.id);
+    const otherGame = store.createGame("Other Game", owner.id);
+    store.createWorld(gameToDelete.id, "Page", "hilly", {});
+    const otherWorld = store.createWorld(otherGame.id, "Other Page", "hilly", {});
+
+    store.deleteGame(gameToDelete.id);
+    expect(store.getGame(gameToDelete.id)).toBeUndefined();
+    expect(store.listWorldsForGame(gameToDelete.id)).toEqual([]);
+    expect(store.listWorldsForGame(otherGame.id)).toEqual([otherWorld]);
+    expect(() => store.deleteGame("not-a-real-game")).not.toThrow();
   });
 
   it("persists across separate createStore calls pointed at the same directory", () => {
