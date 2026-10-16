@@ -21,7 +21,7 @@
 
 import { WORLD_GENERATORS, VOXEL_TYPES, DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type LimestoneSlabParams, DEFAULT_LIMESTONE_SLAB_PARAMS } from "@ttrpg3d/shared";
 import { fetchWorldsForGame, createWorldInGame, type WorldRecord } from "./api.js";
-import { requestCapture, releaseCapture } from "./inputCapture.js";
+import { requestCapture, releaseCapture, isCaptured } from "./inputCapture.js";
 
 export interface PageManagerOptions {
   httpUrl: string;
@@ -163,6 +163,9 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
   });
 
   function onKeydown(event: KeyboardEvent): void {
+    // See hotbar.ts's identical guard for the real bug this fixes
+    // (chat typing would otherwise also toggle this panel).
+    if (isCaptured() && !open) return;
     if (event.code === "Escape" && open) {
       setOpen(false);
       return;

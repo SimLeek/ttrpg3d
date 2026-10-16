@@ -16,6 +16,7 @@ import type { Engine } from "noa-engine";
 import type { Room } from "@colyseus/sdk";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { WorldBottomCatch } from "./worldBottomCatch.js";
+import { isCaptured } from "./inputCapture.js";
 
 interface WorldStateLike {
   worldBottomY: number;
@@ -56,6 +57,9 @@ export function installRespawnControl(noa: Engine, room: Room, playerController:
 
   window.addEventListener("keydown", (event) => {
     if (event.repeat) return;
+    // See hotbar.ts's identical guard -- this panel has no "open" state
+    // of its own to except, so a bare check is enough.
+    if (isCaptured()) return;
     if (event.code === "KeyR" && event.shiftKey) {
       playerController.teleportTo(respawnTargetPosition());
     } else if (event.code === "KeyT" && event.shiftKey) {

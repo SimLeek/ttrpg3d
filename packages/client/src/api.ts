@@ -35,6 +35,13 @@ export interface WorldRecord {
   createdAt: number;
 }
 
+export interface ChatMessage {
+  id: number;
+  senderName: string;
+  text: string;
+  createdAt: number;
+}
+
 export const ACCOUNT_STORAGE_KEY = "ttrpg3d.accountId";
 
 export async function fetchAccounts(httpUrl: string): Promise<Account[]> {
@@ -77,5 +84,15 @@ export async function createWorldInGame(httpUrl: string, gameId: string, account
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accountId, name, generatorId, params }),
   });
+  return res.json();
+}
+
+/** Reads only -- sends go through the live GameRoom connection (chatNet.ts), never REST. `beforeId` fetches an older scrollback page instead of the most recent messages. */
+export async function fetchGameChat(httpUrl: string, gameId: string, options?: { limit?: number; beforeId?: number }): Promise<ChatMessage[]> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.beforeId !== undefined) params.set("before", String(options.beforeId));
+  const query = params.toString();
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/chat${query ? `?${query}` : ""}`);
   return res.json();
 }

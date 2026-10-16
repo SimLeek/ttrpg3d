@@ -68,6 +68,90 @@ not hardcoded. Settled shape, confirmed through real design discussion
   per-world config, in-game toggle UI) is Phase 6's full scope, not
   assumed done just because the seam exists.
 
+## MVP goal item 0 — Chat + dice rolling
+
+The first item in `docs/ROADMAP.md`'s MVP goal section (added this
+session after "what's next" had drifted into small phase-table
+leftovers instead of the actual north star -- a working multiplayer VTT,
+not just a voxel sandbox). Genuinely new design, no old-game equivalent
+at all -- its own TODO docs only ever floated "character actions...
+maybe via a character-sheet mod" as an unbuilt idea.
+
+- **New `GameRoom`** (`packages/server/src/rooms/GameRoom.ts`), one per
+  Game (not per World/page) via `.filterBy(["gameId"])` -- mirrors
+  `WorldRoom`'s existing room-per-scope pattern. Deliberately NO Colyseus
+  Schema state (`HelloRoom.ts` is direct proof `extends Room` with no
+  generic is already a normal pattern here) -- chat is a discrete event
+  log (broadcast + persist), not continuously-synced live state.
+- **Rejected an initial design** before writing any code: pushing chat
+  history via a `client.send(...)` from `onJoin`. `WorldState.ts`'s own
+  header comment documents this exact codebase already having hit and
+  fixed that bug class (a message sent from `onJoin` can arrive before
+  the client's own listener is registered) -- so ALL history (initial +
+  scrollback) goes through a new REST endpoint instead
+  (`GET /games/:id/chat`, `server.ts`), and the room only ever
+  broadcasts NEW messages.
+- **Dice rolls are server-authoritative only** -- `packages/server/src/
+  chat/diceRoll.ts` wraps `@dice-roller/rpg-dice-roller` (real, maintained
+  npm package, confirmed directly: `new DiceRoll(notation)` throws a real
+  `peg$SyntaxError`/`RequiredArgumentError` on bad input, not assumed from
+  its docs), added as a server-only dependency -- the client never computes
+  a roll, only ever sends raw chat text. `/roll <bad notation>` errors to
+  the SENDER ONLY, never broadcast/persisted; a bad `[[...]]` segment
+  inside an otherwise-fine message degrades to an inline
+  `[invalid dice: ...]` marker, delivering the rest of the message rather
+  than dropping it entirely.
+- **Chat persistence**: `packages/server/src/chat/chatStorage.ts`, a
+  direct structural mirror of `world/storage.ts`'s per-world voxel
+  storage (`node:sqlite` `DatabaseSync`, one file per `gameId`).
+- **Detection vs. evaluation split**: `packages/shared/src/
+  chatCommands.ts`'s `parseSlashRoll`/`findInlineRolls` are pure string
+  logic (no dependency on the dice library) and shared; the actual RNG
+  execution stays server-only.
+- **Client**: a SECOND, independent Colyseus room connection
+  (`chatNet.ts`) alongside `net.ts`'s existing per-world one -- Colyseus
+  supports concurrent room connections per tab with no special handling.
+  Deliberately NOT opened inside `main.ts`'s `launchGame` (confirmed that
+  function is called fresh on every page switch, via its own
+  `onSwitchWorld` closure) -- a second persistent reference (`runningChat`)
+  is opened/closed by a new `enterGame()` wrapper instead, only
+  reconnecting when actually entering/leaving a game, not on a page
+  switch within one.
+- **Chat panel** (`chatPanel.ts`, same DOM-overlay pattern as
+  `hotbar.ts`/`pageManager.ts`): docked right, drag-resizable via a
+  handle on its left edge (real user correction -- an earlier version
+  only had a click-to-collapse toggle between two fixed sizes, which
+  wasn't what was wanted; the toggle still exists separately for a full
+  quick-collapse, remembering the dragged width to restore on expand).
+  Enter with nothing focused opens the compose box; Enter while
+  composing sends and blurs back to gameplay; Escape while composing
+  clears without closing the whole panel.
+- **Real bug found live**: the chat panel's container is created in
+  `main.ts` BEFORE a game session's `startGame()` ever runs (so it
+  survives page switches) -- meaning noa's own canvas is always a LATER
+  DOM sibling on every page switch and painted over it with no explicit
+  z-index set, reproduced live as "no chat panel visible at all" (it was
+  there, just hidden). Fixed with `z-index: 50` on the panel.
+  `pageManager.ts` needed the identical fix for an unrelated reason (its
+  own `z-index: 10`), confirmed by reading it directly rather than
+  guessing at a cause.
+- **Real, newly-discovered gap, fixed alongside this**: `inputCapture.ts`'s
+  `isCaptured()` had ZERO consumers anywhere in the client before chat --
+  none of the existing single-key `keydown` listeners (`hotbar.ts`'s
+  inventory/hotbar-slots, `pageManager.ts`'s panel toggle,
+  `respawnControl.ts`'s respawn/anchor-set, `gmOverride.ts`'s noclip
+  toggle) guarded against it, so typing a chat message containing "e", a
+  digit, "m", or "g" would ALSO have fired those hotkeys. Added a one-line
+  guard to each (excepting a panel's own already-open state, so Escape
+  still closes it even while that's the thing holding capture). Also
+  elevated to in-scope per explicit direction: `PlayerController.ts`'s
+  tick handler now treats movement input as fully released whenever
+  anything has capture, REGARDLESS of noa's own raw input state (noa's
+  listener still sees keystrokes typed into an unrelated text field,
+  since nothing calls `stopPropagation` on them) -- a held-key move in
+  progress winds down through the same deceleration blending a normal
+  key-release already uses, not a new halt mechanism.
+
 ## Phase 2 — MVP
 
 - `scripts/movement_resource.gd`, `basic_jump_resource.gd`,

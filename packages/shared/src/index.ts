@@ -114,3 +114,4 @@ export * from "./voxelTypes.js";
 export * from "./items.js";
 export * from "./collision.js";
 export * from "./worldGenerators.js";
+export * from "./chatCommands.js";

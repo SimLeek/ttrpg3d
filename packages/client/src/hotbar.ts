@@ -19,7 +19,7 @@
 // the `Item` union later without any change to this file's logic.
 
 import type { Item } from "@ttrpg3d/shared";
-import { requestCapture, releaseCapture } from "./inputCapture.js";
+import { requestCapture, releaseCapture, isCaptured } from "./inputCapture.js";
 
 const HOTBAR_SIZE = 10;
 
@@ -158,6 +158,14 @@ export function mountHotbar(container: HTMLElement, options: HotbarOptions): Hot
   }
 
   function onKeydown(event: KeyboardEvent): void {
+    // Real gap found live: isCaptured() had zero consumers anywhere
+    // until chat (the first real free-text input in this game) needed
+    // it -- without this guard, typing "e" or a digit while composing a
+    // chat message would ALSO toggle the inventory/select a hotbar
+    // slot. Skipped only when captured by something OTHER than this
+    // panel's own "inventory" reason, so Escape/KeyE still close the
+    // inventory normally even while it's the thing holding capture.
+    if (isCaptured() && !inventoryOpen) return;
     if (event.code === "KeyE") {
       setInventoryOpen(!inventoryOpen);
       return;

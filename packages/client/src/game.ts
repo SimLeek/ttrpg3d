@@ -74,6 +74,15 @@ export interface RunningGame {
    * live via the browser back button.
    */
   stop(): void;
+  /**
+   * Suspends/restores pointer-lock mouse-look -- exposed outward so
+   * main.ts's chat panel (mounted independently of this per-page
+   * session, surviving page switches that tear this whole RunningGame
+   * down and rebuild it) can suspend mouse-look while its compose box
+   * is focused, the same way hotbar.ts's own onInventoryOpenChange
+   * callback already does from inside this file.
+   */
+  setPointerLock(locked: boolean): void;
 }
 
 export function startGame(
@@ -337,6 +346,10 @@ export function startGame(
         console.error("[game] error disposing Babylon scene/engine:", err);
       }
       noa.container.element.remove();
+    },
+
+    setPointerLock(locked: boolean): void {
+      noa.container.setPointerLock(locked);
     },
   };
 }

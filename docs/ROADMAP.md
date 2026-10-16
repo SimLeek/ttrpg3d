@@ -24,11 +24,12 @@ idea (`TODO_modding_and_worlds.md`), confirmed by reading it directly.
 This is genuinely new, foundational design work, scoped via direct user
 discussion (2026-10-15), in dependency order:
 
-0. **Chat + dice rolling** -- build this FIRST, everything below depends
-   on it. A persistent chat panel for the whole game, plus dice-roll
-   syntax: `/roll 2d20kh1+2` as a slash command, and inline `[[2d20kh1+
-   var]]` syntax that can reference a character sheet's own variables
-   and auto-posts the result to chat.
+0. ~~**Chat + dice rolling**~~ -- **DONE** (2026-10-15, see
+   [COMPLETED.md](COMPLETED.md#mvp-goal-item-0--chat--dice-rolling) for
+   the full implementation). The `[[notation+var]]` character-sheet
+   variable reference specifically is NOT done -- character sheets
+   (item 1 below) don't exist yet; `[[...]]` today only evaluates plain
+   dice notation, no variable interpolation.
 1. **Character sheets** -- the actual VTT-core data model (per-system
    stats, not the old game's stealth-platformer health/stamina). Blocks
    real combat, blocks anything "roll20-like" being true of this
