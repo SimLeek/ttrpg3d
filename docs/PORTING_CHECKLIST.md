@@ -248,12 +248,32 @@ still this phase's full scope.
       in the old repo, never built). Needs detection + an air-fallback +
       a UI link to re-enable the missing mod. Worth building correctly this
       time now that mods are properly per-world scoped.
-- [ ] **DEFER** — in-game mod-toggle UI (currently hand-edited JSON in the
-      old repo, still true here for v1 — fine for now, not permanent).
-- [ ] Carry forward as design principle: new world generators should
-      register as mods rather than being hardcoded into the catalog
-      (aspirational in the old repo, never fully enforced — worth actually
-      holding to this time).
+- [ ] **NEW, un-deferred** (user request, 2026-10-16 -- was `DEFER` here
+      until then) — in-game mod-management settings tab, inside the
+      chat panel (`packages/client/src/chatPanel.ts`), not hand-edited
+      JSON. Lets a Game configure which mod files it includes (the
+      default-blocks/default-generators mods below, and eventually
+      character-sheet-template mods, `docs/ROADMAP.md`'s MVP goal item
+      1). This is the first real UI consumer of "a Game includes these
+      mod files" -- the two extraction items below need it to make their
+      own mods actually selectable/deselectable per game, not just
+      technically real files.
+- [ ] **NEW, un-deferred** (user request, 2026-10-16 -- was an
+      aspirational "carry forward as design principle" note here until
+      then, never actually enforced) — pull the CURRENT built-in
+      terrain generator catalog (`packages/shared/src/
+      worldGenerators.ts`'s hilly/plains/limestone_slab, hardcoded in
+      the shared package) out into a real default-generators mod file.
+      Operationalizes the old repo's own real `mods/plains_biome/
+      register.gd` structure (hilly/plains sharing one algorithm with
+      different fixed params, already confirmed and ported that way --
+      see `docs/COMPLETED.md`'s Phase 3 entry) for the first time as an
+      actual mod file rather than a hardcoded catalog entry.
+- [ ] **NEW** (user request, 2026-10-16) — pull the CURRENT built-in
+      voxel type catalog (`packages/shared/src/voxelTypes.ts`'s
+      `VOXEL_TYPES`, hardcoded in the shared package) out into a real
+      default-blocks mod file, same treatment and same underlying
+      mod-file mechanism as the generators item above.
 
 ## Phase 7 — DM tools [NOT STARTED]
 
