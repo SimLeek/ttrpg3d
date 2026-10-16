@@ -135,6 +135,18 @@ export function startGame(
     false,
     BABYLON.Texture.NEAREST_SAMPLINGMODE,
   );
+  // hasAlpha=true: real bug found porting GLASS (voxelTypes.ts) -- every
+  // other cutout-mode type's real source texture is fully opaque
+  // (alpha=255 throughout), so the base material's own alpha handling
+  // never mattered until a type with real alpha variance (GLASS's
+  // opaque-border/transparent-center cutout pattern) needed it actually
+  // read from the atlas rather than assumed 1.0. AtlasSamplingPlugin
+  // below samples the atlas's real RGBA (including alpha) into
+  // `baseColor`, but Babylon's own base fragment shader only carries
+  // that into its `alpha` variable when the diffuse texture itself is
+  // marked as having alpha -- XrayFadePlugin's cutout discard reads that
+  // same `alpha` value, so without this, glass rendered fully opaque.
+  coreAtlasTexture.hasAlpha = true;
   coreAtlasMaterial.diffuseTexture = coreAtlasTexture;
   coreAtlasMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
   new AtlasSamplingPlugin(coreAtlasMaterial, coreAtlasTexture);
