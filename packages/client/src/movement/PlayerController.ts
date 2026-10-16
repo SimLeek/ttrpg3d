@@ -17,6 +17,7 @@ import type { Engine } from "noa-engine";
 import type { MovementProvider, MovementInput } from "./MovementProvider.js";
 import { CoreMovementProvider } from "./CoreMovementProvider.js";
 import { NoclipFlyProvider } from "./NoclipFlyProvider.js";
+import { isCaptured } from "../inputCapture.js";
 
 export interface PlayerController {
   core: CoreMovementProvider;
@@ -118,7 +119,20 @@ export function installPlayerController(noa: Engine): PlayerController {
     const b = noa.entities.getPhysicsBody(noa.playerEntity);
     if (!b) return;
 
-    const input = noa.inputs.state as Record<string, boolean>;
+    // Real gap found live (chat's own compose box exposed it -- the
+    // first real free-text input this game has ever had): noa's own
+    // keydown listener still sees every keystroke typed into an
+    // unrelated text input (nothing calls stopPropagation on it), so
+    // without this, typing a chat message containing "w"/"a"/"s"/"d"
+    // also moved the player, and the word itself could hold a
+    // direction key "down" the whole time it was typed. Whenever
+    // something has capture (chat focused, inventory open, etc.),
+    // treat input as fully released -- same code path a normal
+    // key-RELEASE already goes through (CoreMovementProvider's own
+    // deceleration blending), so a held-key move in progress winds down
+    // exactly like letting go of the key would, not a new halt
+    // mechanism.
+    const input = (isCaptured() ? {} : noa.inputs.state) as Record<string, boolean>;
     const movementInput: MovementInput = {
       inputX: (input.right ? 1 : 0) - (input.left ? 1 : 0),
       inputY: (input.forward ? 1 : 0) - (input.backward ? 1 : 0),

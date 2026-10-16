@@ -7,7 +7,10 @@ import { defineServer, defineRoom, createEndpoint, createRouter } from "colyseus
 import { APIError } from "@colyseus/better-call";
 import { HelloRoom } from "./rooms/HelloRoom.js";
 import { WorldRoom } from "./rooms/WorldRoom.js";
+import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
+import { createChatStorage } from "./chat/chatStorage.js";
+import { join } from "node:path";
 
 store.ensureSeedData();
 
@@ -70,7 +73,29 @@ const postGameWorld = createEndpoint("/games/:id/worlds", { method: "POST", scop
   return store.createWorld(gameId, name, generatorId, params);
 });
 
-const routes = createRouter({ getAccounts, postAccount, getGames, postGame, getGameWorlds, postGameWorld });
+// Chat scrollback -- reads only (sends only ever go through the live
+// GameRoom's "chatSend" message, never REST, so there's exactly one
+// place chat text is ever evaluated). Same trust level as
+// getGameWorlds above (no admin/account gate) -- a client that already
+// knows a gameId can list its worlds with no check today, and reading
+// its chat history is no more sensitive than that. Opens its own
+// ChatStorage handle per request rather than keeping one open
+// long-term (node:sqlite supports concurrent readers against the same
+// file -- this and a live GameRoom instance can both have it open at
+// once) and closes it before returning, so a burst of scrollback
+// requests can't leak file handles.
+const getGameChat = createEndpoint("/games/:id/chat", { method: "GET", scope: "http" }, async (ctx) => {
+  const limit = Math.min(Number(ctx.query?.limit) || 50, 200);
+  const beforeId = typeof ctx.query?.before === "string" ? Number(ctx.query.before) : undefined;
+  const storage = createChatStorage(join(process.cwd(), "data", "chat"), ctx.params.id);
+  try {
+    return beforeId !== undefined ? storage.before(beforeId, limit) : storage.recent(limit);
+  } finally {
+    storage.close();
+  }
+});
+
+const routes = createRouter({ getAccounts, postAccount, getGames, postGame, getGameWorlds, postGameWorld, getGameChat });
 
 export const server = defineServer({
   rooms: {
@@ -83,6 +108,11 @@ export const server = defineServer({
     // plan's "instantiated on first join with {worldId}" room-per-world
     // design.
     world: defineRoom(WorldRoom).filterBy(["worldId"]),
+    // Same filterBy reasoning, scoped one level up: one GameRoom instance
+    // per Game (not per World/page), so chat survives this project's
+    // existing per-page stop()+startGame() client teardown/rebuild cycle
+    // instead of reconnecting/flickering on every page switch.
+    game: defineRoom(GameRoom).filterBy(["gameId"]),
   },
   routes,
 });

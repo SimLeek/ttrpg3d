@@ -15,6 +15,7 @@
 import type { Engine } from "noa-engine";
 import type { Room } from "@colyseus/sdk";
 import type { PlayerController } from "./movement/PlayerController.js";
+import { isCaptured } from "./inputCapture.js";
 
 export interface GmOverride {
   isActive(): boolean;
@@ -35,6 +36,10 @@ export function installGmOverride(noa: Engine, room: Room, playerController: Pla
   }
 
   window.addEventListener("keydown", (event) => {
+    // See hotbar.ts's identical guard -- this toggle has no "open"
+    // state of its own to except (gmOverride never requests capture
+    // itself), so a bare check is enough.
+    if (isCaptured()) return;
     if (event.code !== "KeyG" || event.repeat) return;
     if (!active && !isAdmin()) return; // can't turn ON without being admin; always allowed to turn back off
     active = !active;

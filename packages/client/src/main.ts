@@ -14,7 +14,9 @@
 import Navigo from "navigo";
 import { mountLobby, type Account, type GameRecord, type WorldRecord } from "./lobby.js";
 import { startGame, type RunningGame } from "./game.js";
-import { fetchAccounts, fetchGames, fetchWorldsForGame, ACCOUNT_STORAGE_KEY } from "./api.js";
+import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, ACCOUNT_STORAGE_KEY } from "./api.js";
+import { connectChat, type ChatConnection } from "./chatNet.js";
+import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
 
 const wsUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
 const httpUrl = wsUrl.replace(/^ws/, "http");
@@ -48,9 +50,50 @@ function launchGame(game: GameRecord, worldId: string, worldName: string, accoun
     // Page-management panel's "switch" action -- same proven teardown/
     // setup this file already uses for the lobby->game handoff, just
     // without navigating the route or re-showing the lobby in between.
+    // Deliberately only ever calls launchGame (not enterGame below) --
+    // chat must NOT reconnect/flicker on a page switch, only on
+    // actually entering/leaving a game.
     stopRunningGameIfAny();
     launchGame(game, newWorldId, newWorldName, account);
   });
+}
+
+// Chat is scoped to the whole GAME, not a single World/page -- it must
+// survive launchGame's own teardown/rebuild cycle above (every page
+// switch), so it's a SEPARATE persistent reference, opened/closed
+// independently of runningGame. See docs/ROADMAP.md's MVP goal section
+// (item 0) and chatNet.ts/chatPanel.ts's own headers for the full
+// reasoning.
+let runningChat: { connection: ChatConnection; panel: ChatPanelController; container: HTMLDivElement; gameId: string } | null = null;
+
+function stopRunningChatIfAny(): void {
+  if (runningChat) {
+    runningChat.panel.destroy();
+    runningChat.container.remove();
+    runningChat.connection.leave();
+    runningChat = null;
+  }
+}
+
+/** Connects/mounts chat for `game` if not already connected to this exact game (a page switch calls launchGame directly and never reaches here, so this only (re)connects on a genuine game entry or a switch between two different games), then runs the normal launchGame flow. */
+function enterGame(game: GameRecord, worldId: string, worldName: string, account: Account): void {
+  if (!runningChat || runningChat.gameId !== game.id) {
+    stopRunningChatIfAny();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    void (async () => {
+      const [connection, history] = await Promise.all([connectChat(wsUrl, game.id, account.displayName, account.id), fetchGameChat(httpUrl, game.id)]);
+      const panel = mountChatPanel(container, {
+        initialMessages: history,
+        onSend: (text) => connection.send(text),
+        onFocusChange: (focused) => runningGame?.setPointerLock(!focused),
+      });
+      connection.onMessage((message) => panel.addMessage(message));
+      connection.onError((reason) => panel.showError(reason));
+      runningChat = { connection, panel, container, gameId: game.id };
+    })();
+  }
+  launchGame(game, worldId, worldName, account);
 }
 
 router.on("/", () => {
@@ -60,6 +103,7 @@ router.on("/", () => {
   // live, "stays in the world scene" until a hard refresh. Tear it down
   // explicitly instead.
   stopRunningGameIfAny();
+  stopRunningChatIfAny();
   lobbyEl.hidden = false;
   mountLobby(lobbyEl, httpUrl, (game, world, account) => {
     pendingPlay = { game, world, account };
@@ -75,7 +119,7 @@ router.on("/game/:id", (match) => {
   }
 
   if (pendingPlay && pendingPlay.game.id === gameId) {
-    launchGame(pendingPlay.game, pendingPlay.world.id, pendingPlay.world.name, pendingPlay.account);
+    enterGame(pendingPlay.game, pendingPlay.world.id, pendingPlay.world.name, pendingPlay.account);
     return;
   }
 
@@ -116,7 +160,7 @@ router.on("/game/:id", (match) => {
       return;
     }
     pendingPlay = { game, world, account };
-    launchGame(game, world.id, world.name, account);
+    enterGame(game, world.id, world.name, account);
   })();
 });
 
