@@ -22,7 +22,15 @@ const TILE_SIZE = 16;
 // Matches build-block-atlas.mjs's own "py" (+Y / top face) region.
 const CROP_REGION = { x: 0, y: 0, w: TILE_SIZE, h: TILE_SIZE };
 
-const STANDALONE_TYPES = ["water", "watertop", "quartz"];
+// "glass" joined this list for a different reason than water/watertop/
+// quartz: those are mesh:"cube"/transparencyMode:"transparent" (still on
+// the greedy terrain mesher, just off the shared atlas). Glass is
+// mesh:"cube-object" (voxelTypes.ts) -- an object-mesh block, which
+// always loads its texture directly at runtime like "cross" types do,
+// never through the atlas-slicing pipeline at all. Same crop mechanics
+// apply either way since glass's own 6 faces are already confirmed
+// byte-identical (same "uniform texture" shortcut this script exists for).
+const STANDALONE_TYPES = ["water", "watertop", "quartz", "glass"];
 
 for (const name of STANDALONE_TYPES) {
   const srcPath = join(SOURCE_DIR, `${name}.png`);

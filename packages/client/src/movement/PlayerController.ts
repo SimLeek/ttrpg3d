@@ -52,8 +52,14 @@ export function installPlayerController(noa: Engine): PlayerController {
   const body = noa.entities.getPhysicsBody(noa.playerEntity);
   if (body) body.friction = 0; // all deceleration comes from CoreMovementProvider's own moveToward blending, not the engine's built-in surface friction
 
-  noa.inputs.bind("sprint", "ShiftLeft", "ShiftRight");
-  noa.inputs.bind("slow", "ControlLeft", "ControlRight");
+  // Sprint used to be a held Shift; slow-walk used to be a held Ctrl.
+  // Reported live: holding Ctrl alongside WASD collides with real browser
+  // shortcuts (Ctrl+W closes the tab, Ctrl+S saves the page, etc.) --
+  // annoying enough mid-game to fix outright, not just rebind around.
+  // Ctrl is now unused entirely; slow-walk takes over sprint's old Shift
+  // binding, and sprint itself becomes double-tap-WASD (tracked in the
+  // tick handler below) rather than a held key at all.
+  noa.inputs.bind("slow", "ShiftLeft", "ShiftRight");
 
   function setProvider(provider: MovementProvider): void {
     if (provider === activeProvider) return;
@@ -61,6 +67,39 @@ export function installPlayerController(noa: Engine): PlayerController {
     activeProvider = provider;
     activeProvider.reset();
     activeProvider.onActivate?.(noa);
+  }
+
+  // Double-tap-WASD-to-sprint (replaces the old held-Shift sprint -- see
+  // the "slow" bind comment above for why). Tracks each of the 4
+  // directional inputs' own last rising-edge (key-just-pressed) timestamp;
+  // a second rising edge on ANY of them within DOUBLE_TAP_WINDOW_MS of its
+  // own previous one starts sprinting, same general "double tap a
+  // movement key" idea as common voxel-game conventions, just not
+  // restricted to forward only, matching how this game's WASD is already
+  // omni-directional (not just forward/back). Sprinting then persists
+  // until every movement key is released (not on direction change --
+  // strafing/backpedaling mid-sprint should feel continuous, not cancel
+  // sprint every time the held key set changes).
+  const DOUBLE_TAP_WINDOW_MS = 300;
+  const MOVEMENT_KEYS = ["forward", "backward", "left", "right"] as const;
+  const lastTapAt: Record<(typeof MOVEMENT_KEYS)[number], number> = { forward: -Infinity, backward: -Infinity, left: -Infinity, right: -Infinity };
+  const wasDown: Record<(typeof MOVEMENT_KEYS)[number], boolean> = { forward: false, backward: false, left: false, right: false };
+  let sprinting = false;
+
+  function updateSprintState(input: Record<string, boolean>): boolean {
+    const now = performance.now();
+    let anyHeld = false;
+    for (const key of MOVEMENT_KEYS) {
+      const down = !!input[key];
+      anyHeld = anyHeld || down;
+      if (down && !wasDown[key]) {
+        if (now - lastTapAt[key] <= DOUBLE_TAP_WINDOW_MS) sprinting = true;
+        lastTapAt[key] = now;
+      }
+      wasDown[key] = down;
+    }
+    if (!anyHeld) sprinting = false;
+    return sprinting;
   }
 
   function teleportTo(pos: readonly [number, number, number]): void {
@@ -85,7 +124,7 @@ export function installPlayerController(noa: Engine): PlayerController {
       inputY: (input.forward ? 1 : 0) - (input.backward ? 1 : 0),
       jumpHeld: !!input.jump,
       slowHeld: !!input.slow,
-      sprintHeld: !!input.sprint,
+      sprintHeld: updateSprintState(input),
       grounded: b.atRestY() < 0,
       // body.inFluid is real, already-maintained state (set every physics
       // tick by voxel-physics-engine's applyFluidForces, which also already

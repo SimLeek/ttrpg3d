@@ -1,11 +1,13 @@
 // Ported from the old repo's scripts/movement_resource.gd (MoverResource).
-// Deviation from the original: the old game triggered sprint via a
-// double-tap gesture on a movement key (InputController.was_double_tapped),
-// tracked by a separate input system this port doesn't have yet. For now
-// sprint is just a held key (see PlayerController) -- simpler, and the
-// resource's actual speed/stamina logic below (the part that was actually
-// called out as "really good") is otherwise a straight port. Worth
-// revisiting double-tap-to-sprint later if it's missed during playtesting.
+// The old game triggered sprint via a double-tap gesture on a movement key
+// (InputController.was_double_tapped) -- this port initially used a simpler
+// held-Shift sprint instead, deferring double-tap. Reported live once
+// Ctrl (slow-walk's own old key) kept colliding with real browser
+// shortcuts: double-tap-WASD-to-sprint is now implemented after all
+// (PlayerController's updateSprintState), freeing Shift to take over
+// slow-walk's binding instead. `sprintHeld` below is just whatever
+// PlayerController computes either way -- this resource's own speed/
+// stamina logic doesn't know or care which input scheme produced it.
 
 export class MoverResource {
   normalSpeed = 7.5;
