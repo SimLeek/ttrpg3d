@@ -77,9 +77,6 @@ Per-world storage, the Game/World split, the real generator catalog
 all done — see
 [COMPLETED.md#phase-3--real-world-management](COMPLETED.md#phase-3--real-world-management).
 
-- [ ] `scripts/pcg/voxel_types.gd` (194L) — **PORT** the ~20 types actually
-      wired to a display name/model today (not all ~59 reserved constants)
-      — the real terrain generator needs more than one material.
 - [ ] `scripts/pcg/generator_main.gd` (41L) — **DROP**. Pure
       `VoxelGeneratorScript` passthrough glue for Godot's generator plugin
       system; no equivalent indirection needed in TS.

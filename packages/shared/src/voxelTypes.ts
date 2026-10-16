@@ -112,6 +112,8 @@ export const LOG = 9;
 export const LEAVES = 10;
 export const TALL_GRASS = 11;
 export const DEAD_SHRUB = 12;
+export const GRANITE = 14;
+export const LIMESTONE = 15;
 export const MUDSTONE = 16;
 export const PLASTIGLOMERATE = 17;
 export const COAL_ORE = 18;
@@ -120,6 +122,7 @@ export const HALITE_ORE = 20;
 export const COPPER_ORE = 21;
 export const QUARTZ = 22;
 export const MAGNETITE = 23;
+export const GLASS = 24;
 
 // ttrpg3d-specific QA block, not from the old game. NOT 998 anymore --
 // found live (R&D session, see docs/PORTING_CHECKLIST.md's mod-id-base
@@ -148,6 +151,14 @@ export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
   { id: LEAVES, name: "leaves", mesh: "cube", textureFile: "leaves.png", transparencyMode: "cutout", color: [0.2, 0.45, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   { id: TALL_GRASS, name: "tallgrass", mesh: "cross", textureFile: "tallgrass.png", transparencyMode: "cutout", color: [0.35, 0.6, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
   { id: DEAD_SHRUB, name: "deadshrub", mesh: "cross", textureFile: "deadshrub.png", transparencyMode: "cutout", color: [0.5, 0.4, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: false, fluid: false },
+  // granite/limestone: real "host rock" ids per the old catalog, but
+  // never actually wired into the old generator's own terrain logic
+  // either (confirmed directly in hilly_terrain_region_generator.gd --
+  // only DIRT/MUDSTONE are used as base rock there) -- placeable catalog
+  // entries only, same as the old game's own real behavior, not a new
+  // terrain-generation hookup.
+  { id: GRANITE, name: "granite", mesh: "cube", textureFile: "granite.png", transparencyMode: "cutout", color: [0.55, 0.5, 0.5], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  { id: LIMESTONE, name: "limestone", mesh: "cube", textureFile: "limestone.png", transparencyMode: "cutout", color: [0.75, 0.72, 0.65], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   { id: MUDSTONE, name: "mudstone", mesh: "cube", textureFile: "mudstone.png", transparencyMode: "cutout", color: [0.4, 0.38, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   { id: PLASTIGLOMERATE, name: "plastiglomerate", mesh: "cube", textureFile: "plastiglomerate.png", transparencyMode: "cutout", color: [0.3, 0.3, 0.35], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   { id: COAL_ORE, name: "coal_ore", mesh: "cube", textureFile: "coal.png", transparencyMode: "cutout", color: [0.15, 0.15, 0.15], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
@@ -160,6 +171,18 @@ export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
   // flagged earlier this session as an approximation that didn't match.
   { id: QUARTZ, name: "quartz", mesh: "cube", textureFile: "quartz.png", transparencyMode: "transparent", color: [0.8, 0.8, 0.85], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   { id: MAGNETITE, name: "magnetite", mesh: "cube", textureFile: "magnetite.png", transparencyMode: "cutout", color: [0.2, 0.2, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  // glass: real cutout alpha texture (opaque cell border, fully
+  // transparent interior -- confirmed directly against the old source
+  // PNG's actual alpha channel, not guessed), reusing the SAME shared
+  // cutout material/atlas as every other cube type above -- no new
+  // engine/shader work needed, since the xray shader's own alpha
+  // computation (blockShaders.ts) already discards non-opaque pixels
+  // when not fading, it just needs the base material to actually read
+  // the atlas's real alpha channel (coreAtlasTexture.hasAlpha, game.ts)
+  // rather than assuming opaque -- true for every OTHER cutout type
+  // already (fully opaque alpha=255 throughout), so this was previously
+  // a no-op difference until glass's own real alpha variance exercised it.
+  { id: GLASS, name: "glass", mesh: "cube", textureFile: "glass.png", transparencyMode: "cutout", color: [0.8, 0.9, 0.95], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", transparencyMode: "cutout", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: false, solid: true, fluid: false },
 ];
 

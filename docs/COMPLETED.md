@@ -292,6 +292,33 @@ not hardcoded. Settled shape, confirmed through real design discussion
   useful on their own (a future DM delete-world tool needs exactly this).
   The pre-existing cruft (33 accounts, 22 games) was removed from the real
   dev store with a one-off script, not committed.
+- `scripts/pcg/voxel_types.gd` (194L) — **PORT**ed the ~20 types actually
+  wired to a real display name/model in the old game's own
+  `voxel_catalog.gd` (its `DISPLAY_NAMES` dict, confirmed directly, not
+  guessed), not all ~59 reserved constants there: 16 of those 20 were
+  already in `voxelTypes.ts` from earlier phases; this added the
+  remaining `GRANITE`/`LIMESTONE` (real source textures copied from
+  `3dAssets/blocks/stone/16x{granite,limestone}.png`) and `GLASS` (`16x
+  glass.png`, a real alpha-cutout texture -- opaque cell border, fully
+  transparent interior, confirmed by reading its actual alpha channel).
+  Granite/limestone are placeable-only, matching the old game's own real
+  behavior -- confirmed directly in `hilly_terrain_region_generator.gd`
+  that neither was ever actually wired into terrain generation there
+  either (only DIRT/MUDSTONE are used as base rock), despite their
+  PCG-flavor doc comments in `voxel_types.gd` describing intended rules
+  that were never built. `LIGHT` (the 20th wired type) is deliberately
+  NOT ported yet -- its only real behavior (lighting up surroundings) is
+  Phase 8 (lighting) territory, not built; adding the block now with no
+  working behavior would be a half-finished feature, not a real port.
+  Real bug found live porting GLASS: the shared core-atlas material
+  (`game.ts`) never set `hasAlpha` on its atlas texture, since every
+  other cutout-mode type's source texture happened to be fully opaque
+  (alpha=255 throughout) -- harmless until GLASS's own real alpha
+  variance needed it actually read instead of assumed 1.0, which silently
+  rendered it fully opaque. Fixed with `coreAtlasTexture.hasAlpha = true`;
+  confirmed live afterward that glass renders as a real see-through
+  cutout cube, not opaque, and that nothing regressed for the other
+  (uniformly-opaque) cutout types.
 
 ## Phase 4 — Voxel interaction
 
