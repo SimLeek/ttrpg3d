@@ -28,6 +28,12 @@
 
 import type { ChatMessage } from "./api.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
+import { PERSISTENT_PANEL_Z_INDEX, SAFE_AREA_RIGHT_VAR, setSafeAreaInset } from "./panelLayout.js";
+
+const MIN_WIDTH = 180;
+const MAX_WIDTH = 640;
+const DEFAULT_WIDTH = 320;
+const COLLAPSED_WIDTH = 28;
 
 export interface ChatPanelOptions {
   initialMessages: ChatMessage[];
@@ -64,8 +70,8 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
          (applyWidth below), which is the single source of truth while
          expanded; .collapsed overrides it back down to a fixed tab
          width, cleared again on expand. */
-      .chat-panel { position: fixed; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; background: rgba(20,20,24,0.85); border-left: 2px solid rgba(200,200,200,0.4); font-family: system-ui, sans-serif; color: #eee; z-index: 50; }
-      .chat-panel.collapsed { width: 28px !important; }
+      .chat-panel { position: fixed; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; background: rgba(20,20,24,0.85); border-left: 2px solid rgba(200,200,200,0.4); font-family: system-ui, sans-serif; color: #eee; z-index: ${PERSISTENT_PANEL_Z_INDEX}; }
+      .chat-panel.collapsed { width: ${COLLAPSED_WIDTH}px !important; }
       .chat-panel.collapsed .chat-body { display: none; }
       .chat-panel.collapsed .chat-resize-handle { display: none; }
       .chat-resize-handle { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: ew-resize; }
@@ -99,16 +105,13 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   const messagesEl = container.querySelector<HTMLDivElement>("#chat-messages")!;
   const input = container.querySelector<HTMLInputElement>("#chat-input")!;
 
-  const MIN_WIDTH = 180;
-  const MAX_WIDTH = 640;
-  const DEFAULT_WIDTH = 320;
-
   let collapsed = false;
   let currentWidth = DEFAULT_WIDTH;
 
   function applyWidth(width: number): void {
     currentWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
     panel.style.width = `${currentWidth}px`;
+    setSafeAreaInset(SAFE_AREA_RIGHT_VAR, currentWidth);
   }
   applyWidth(DEFAULT_WIDTH);
 
@@ -160,6 +163,10 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
     // (currentWidth) as the single thing to restore from on expand,
     // rather than two competing numbers.
     panel.style.width = collapsed ? "" : `${currentWidth}px`;
+    // Keep the CSS var honest about the panel's ACTUAL current edge
+    // regardless of collapse state, for quickActionsPanel.ts/
+    // partyListPanel.ts's own width math.
+    setSafeAreaInset(SAFE_AREA_RIGHT_VAR, collapsed ? COLLAPSED_WIDTH : currentWidth);
   }
   toggle.addEventListener("click", () => setCollapsed(!collapsed));
 

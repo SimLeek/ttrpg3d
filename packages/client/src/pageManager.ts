@@ -22,6 +22,7 @@
 import { WORLD_GENERATORS, VOXEL_TYPES, DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type LimestoneSlabParams, DEFAULT_LIMESTONE_SLAB_PARAMS } from "@ttrpg3d/shared";
 import { fetchWorldsForGame, createWorldInGame, type WorldRecord } from "./api.js";
 import { requestCapture, releaseCapture, isCaptured } from "./inputCapture.js";
+import { SAFE_AREA_LEFT_VAR, SAFE_AREA_RIGHT_VAR, SAFE_AREA_TOP_VAR, SAFE_AREA_BOTTOM_VAR } from "./panelLayout.js";
 
 export interface PageManagerOptions {
   httpUrl: string;
@@ -41,7 +42,12 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
 
   container.innerHTML = `
     <style>
-      .page-mgr-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; font-family: system-ui, sans-serif; z-index: 10; }
+      /* Real user correction: this used to be inset:0 (the raw
+         viewport), which centered the panel at the visible screen's
+         center rather than the center of the actual free UI space
+         between the side panels -- positioned via the same safe-area
+         contract (panelLayout.ts) hotbar.ts's own row/grid already use. */
+      .page-mgr-overlay { position: fixed; left: var(${SAFE_AREA_LEFT_VAR}, 0px); right: var(${SAFE_AREA_RIGHT_VAR}, 0px); top: var(${SAFE_AREA_TOP_VAR}, 0px); bottom: var(${SAFE_AREA_BOTTOM_VAR}, 0px); background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; font-family: system-ui, sans-serif; z-index: 10; }
       .page-mgr-overlay.open { display: flex; }
       .page-mgr-panel { background: rgba(30,30,36,0.95); border: 2px solid rgba(200,200,200,0.7); border-radius: 6px; padding: 16px; min-width: 420px; max-width: 80vw; color: #eee; }
       .page-mgr-panel h2 { margin: 0 0 10px; font-size: 16px; font-weight: normal; }

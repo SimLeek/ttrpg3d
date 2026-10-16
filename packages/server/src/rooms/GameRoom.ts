@@ -1,23 +1,29 @@
-// Chat room: one instance per Game (not per World/page -- see
-// server.ts's `.filterBy(["gameId"])` registration), so chat survives
-// this project's existing per-page stop()+startGame() client teardown/
-// rebuild cycle instead of flickering/reconnecting on every page switch.
+// Chat + presence room: one instance per Game (not per World/page --
+// see server.ts's `.filterBy(["gameId"])` registration), so both
+// survive this project's existing per-page stop()+startGame() client
+// teardown/rebuild cycle instead of flickering/reconnecting on every
+// page switch.
 //
-// Deliberately NO Colyseus Schema state (`extends Room`, no generic,
-// never calls setState -- same shape HelloRoom.ts already uses) -- chat
-// is a discrete event log (broadcast + persist), not continuously-synced
-// live state like WorldRoom's player positions.
-//
-// Real bug class THIS CODEBASE HAS ALREADY HIT, deliberately avoided
-// here: WorldState.ts's own header comment documents moving data out of
-// an onJoin-sent message into Schema specifically because a message
-// sent from onJoin can arrive before the client's own onMessage listener
-// is registered. Rather than push chat history via such a message, ALL
-// history (initial load + scrollback) goes through the REST endpoint
-// (server.ts's getGameChat) instead -- this room only ever broadcasts
-// NEW messages, via onMessage handlers registered synchronously in
-// onCreate, the same safe timing WorldRoom's own handlers already rely
-// on (no `await` between room creation and handler registration).
+// Two deliberately different state mechanisms for two different kinds
+// of data (panel UI chrome PR, 2026-10-16):
+// - CHAT is a discrete event log (broadcast + persist), not
+//   continuously-synced live state -- NOT Schema. ALL history (initial
+//   load + scrollback) goes through the REST endpoint (server.ts's
+//   getGameChat) instead of a join-time message; this room only ever
+//   broadcasts NEW messages, via onMessage handlers registered
+//   synchronously in onCreate (no `await` between room creation and
+//   handler registration -- the same safe timing WorldRoom's own
+//   handlers already rely on). Real bug class THIS CODEBASE HAS ALREADY
+//   HIT, deliberately avoided: WorldState.ts's own header comment
+//   documents moving data out of an onJoin-sent message into Schema
+//   specifically because such a message can arrive before the client's
+//   own onMessage listener is registered.
+// - PRESENCE (who's currently in this game, driving the party-list
+//   panel) is the OPPOSITE shape -- genuinely continuously-synced live
+//   state, exactly what Schema is for (GameState.ts, direct structural
+//   mirror of WorldState.ts's own PlayerState/WorldState pair). Giving
+//   presence a join-time message instead would reintroduce the exact
+//   race described above; Schema's initial snapshot has no such race.
 //
 // Dice rolls are evaluated HERE, server-side only, never trusting a
 // client-reported result -- matches this project's established
@@ -29,6 +35,7 @@ import { Room, type Client } from "colyseus";
 import { parseSlashRoll, findInlineRolls } from "@ttrpg3d/shared";
 import { createChatStorage, type ChatStorage } from "../chat/chatStorage.js";
 import { rollNotation } from "../chat/diceRoll.js";
+import { GameState, PlayerPresence, type GameStateType } from "./GameState.js";
 import { join } from "node:path";
 
 interface JoinOptions {
@@ -57,19 +64,19 @@ function resolveInlineRolls(text: string): string {
   return result;
 }
 
-export class GameRoom extends Room {
+export class GameRoom extends Room<{ state: GameStateType }> {
   gameId = "default";
   storage!: ChatStorage;
-  private playerNames = new Map<string, string>();
 
   onCreate(options?: { gameId?: string }) {
     this.gameId = options?.gameId || "default";
     this.storage = createChatStorage(join(process.cwd(), "data", "chat"), this.gameId);
+    this.setState(new GameState());
 
     this.onMessage<ChatSendMessage>("chatSend", (client, message) => {
       const text = message.text?.trim();
       if (!text) return;
-      const senderName = this.playerNames.get(client.sessionId) ?? "Unknown";
+      const senderName = this.state.players.get(client.sessionId)?.name ?? "Unknown";
 
       const rollArg = parseSlashRoll(text);
       if (rollArg !== null) {
@@ -95,13 +102,15 @@ export class GameRoom extends Room {
 
   onJoin(client: Client, options?: JoinOptions) {
     const name = options?.name || `Player-${client.sessionId.slice(0, 4)}`;
-    this.playerNames.set(client.sessionId, name);
-    console.log(`[GameRoom:${this.gameId}] ${name} (${client.sessionId}) joined chat`);
+    const presence = new PlayerPresence();
+    presence.name = name;
+    this.state.players.set(client.sessionId, presence);
+    console.log(`[GameRoom:${this.gameId}] ${name} (${client.sessionId}) joined`);
   }
 
   onLeave(client: Client) {
-    this.playerNames.delete(client.sessionId);
-    console.log(`[GameRoom:${this.gameId}] ${client.sessionId} left chat`);
+    this.state.players.delete(client.sessionId);
+    console.log(`[GameRoom:${this.gameId}] ${client.sessionId} left`);
   }
 
   onDispose() {

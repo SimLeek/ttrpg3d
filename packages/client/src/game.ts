@@ -21,6 +21,7 @@ import { installOriginShiftLogger } from "./originShiftLogger.js";
 import { buildCrossPlantMesh } from "./plantMesh.js";
 import { buildCubeObjectMesh } from "./cubeObjectMesh.js";
 import { mountHotbar } from "./hotbar.js";
+import { mountModePanel } from "./modePanel.js";
 import { installCameraZoom } from "./cameraZoom.js";
 import { installUnderwaterEffect } from "./underwaterEffect.js";
 import { installPlayerBodyMesh } from "./playerBodyMesh.js";
@@ -83,6 +84,18 @@ export interface RunningGame {
    * callback already does from inside this file.
    */
   setPointerLock(locked: boolean): void;
+  /** Current pointer-lock state, read directly off noa's own real `hasPointerLock` flag -- not tracked separately here, so it can never drift out of sync with reality. */
+  isPointerLocked(): boolean;
+  /**
+   * Relays noa.container's own real `gainedPointerLock`/`lostPointerLock`
+   * events (confirmed directly in noa-engine's container.d.ts -- it
+   * `extends EventEmitter`, driven by the actual browser pointer-lock-
+   * change detection) so modePanel.ts's Default/Select buttons can stay
+   * highlighted correctly even when the BROWSER force-exits lock via
+   * Escape, not just when this file's own setPointerLock is called.
+   * Returns an unsubscribe function.
+   */
+  onPointerLockChange(cb: (locked: boolean) => void): () => void;
 }
 
 export function startGame(
@@ -315,6 +328,28 @@ export function startGame(
     onInventoryOpenChange: (open) => noa.container.setPointerLock(!open),
   });
 
+  // Left mode-select panel (modePanel.ts) -- per-page lifecycle, same as
+  // hotbar above (see that file's own header for why). Wired directly to
+  // noa.container here (not through the RunningGame interface below,
+  // which is only for EXTERNAL callers like main.ts) -- same direct
+  // pattern hotbar's own onInventoryOpenChange already uses.
+  const modePanelContainer = document.createElement("div");
+  document.body.appendChild(modePanelContainer);
+  const modePanel = mountModePanel(modePanelContainer, {
+    isPointerLocked: () => noa.container.hasPointerLock,
+    setPointerLock: (locked) => noa.container.setPointerLock(locked),
+    onPointerLockChange: (cb) => {
+      const onGained = () => cb(true);
+      const onLost = () => cb(false);
+      noa.container.on("gainedPointerLock", onGained);
+      noa.container.on("lostPointerLock", onLost);
+      return () => {
+        noa.container.off("gainedPointerLock", onGained);
+        noa.container.off("lostPointerLock", onLost);
+      };
+    },
+  });
+
   // Resolves to the real server connection once joinOrCreate() completes --
   // stop() below chains onto this (rather than needing its own connected/
   // not-yet-connected branch) so leaving works correctly whether the
@@ -335,6 +370,8 @@ export function startGame(
 
       hotbar.destroy();
       hotbarContainer.remove();
+      modePanel.destroy();
+      modePanelContainer.remove();
 
       noa.setPaused(true);
       try {
@@ -350,6 +387,21 @@ export function startGame(
 
     setPointerLock(locked: boolean): void {
       noa.container.setPointerLock(locked);
+    },
+
+    isPointerLocked(): boolean {
+      return noa.container.hasPointerLock;
+    },
+
+    onPointerLockChange(cb: (locked: boolean) => void): () => void {
+      const onGained = () => cb(true);
+      const onLost = () => cb(false);
+      noa.container.on("gainedPointerLock", onGained);
+      noa.container.on("lostPointerLock", onLost);
+      return () => {
+        noa.container.off("gainedPointerLock", onGained);
+        noa.container.off("lostPointerLock", onLost);
+      };
     },
   };
 }

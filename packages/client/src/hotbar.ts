@@ -20,6 +20,7 @@
 
 import type { Item } from "@ttrpg3d/shared";
 import { requestCapture, releaseCapture, isCaptured } from "./inputCapture.js";
+import { SAFE_AREA_LEFT_VAR, SAFE_AREA_RIGHT_VAR, SAFE_AREA_TOP_VAR, SAFE_AREA_BOTTOM_VAR } from "./panelLayout.js";
 
 const HOTBAR_SIZE = 10;
 
@@ -73,9 +74,22 @@ export function mountHotbar(container: HTMLElement, options: HotbarOptions): Hot
       .slot.selected { border-color: rgb(255,217,51); }
       .slot .icon { position: absolute; inset: 5px; width: calc(100% - 10px); height: calc(100% - 10px); object-fit: fill; image-rendering: pixelated; border-radius: 2px; }
       .slot .num { position: absolute; top: 1px; left: 3px; font-size: 11px; color: #ddd; text-shadow: 1px 1px 0 #000; }
-      .hotbar { position: fixed; left: 0; right: 0; bottom: 16px; display: flex; justify-content: center; gap: 6px; pointer-events: none; font-family: system-ui, sans-serif; }
+      /* Real bug found live: this used to be left:0;right:0;bottom:16px
+         (relative to the raw viewport), which put it directly behind
+         the new bottom party-list panel once that existed. Positioned
+         relative to the "safe area" the side/top/bottom panels leave
+         free instead (panelLayout.ts's own contract) -- centers within
+         whatever space is actually free, and re-flows automatically as
+         any panel resizes/collapses, rather than needing its own fix
+         every time a new panel is added. */
+      .hotbar { position: fixed; left: var(${SAFE_AREA_LEFT_VAR}, 0px); right: var(${SAFE_AREA_RIGHT_VAR}, 0px); bottom: calc(var(${SAFE_AREA_BOTTOM_VAR}, 0px) + 16px); display: flex; justify-content: center; gap: 6px; pointer-events: none; font-family: system-ui, sans-serif; }
       .hotbar .slot { pointer-events: auto; }
-      .inventory-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+      /* Real user correction: this used to be inset:0 (the raw
+         viewport), which centered the grid at the visible screen's
+         center rather than the center of the actual free UI space
+         between the side panels -- positioned via the same safe-area
+         contract (panelLayout.ts) hotbar's own row already uses. */
+      .inventory-overlay { position: fixed; left: var(${SAFE_AREA_LEFT_VAR}, 0px); right: var(${SAFE_AREA_RIGHT_VAR}, 0px); top: var(${SAFE_AREA_TOP_VAR}, 0px); bottom: var(${SAFE_AREA_BOTTOM_VAR}, 0px); background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
       .inventory-overlay.open { display: flex; }
       .inventory-panel { background: rgba(30,30,36,0.95); border: 2px solid rgba(200,200,200,0.7); border-radius: 6px; padding: 14px; max-width: 80vw; }
       .inventory-panel h2 { margin: 0 0 10px; font-size: 16px; color: #eee; font-weight: normal; }
