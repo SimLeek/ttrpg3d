@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { server } from "../server.js";
 import { GameRoom } from "./GameRoom.js";
+import type { GameStateType } from "./GameState.js";
 
 // GameRoom takes a bare gameId directly (no store.ts lookup, unlike
 // WorldRoom) -- the only real filesystem artifact a test run leaves
@@ -110,6 +111,37 @@ describe("GameRoom", () => {
     expect(message.text).toContain("roll");
     expect(message.text).toContain("please");
     expect(message.text).toContain("[invalid dice: garbage]");
+  });
+
+  it("a joining client's presence is visible to an already-connected client via Schema, with the real display name", async () => {
+    const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+    const first = await colyseus.connectTo(room, { name: "Alice" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const second = await colyseus.connectTo(room, { name: "Bob" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const bobAsSeenByFirst = Array.from((first.state as GameStateType).players.values()).find((p) => p.name === "Bob");
+    expect(bobAsSeenByFirst).toBeDefined();
+    expect((second.state as GameStateType).players.get(first.sessionId)?.name).toBe("Alice");
+  });
+
+  it("presence is removed when a client leaves", async () => {
+    const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+    const leaver = await colyseus.connectTo(room, { name: "Leaver" });
+    const observer = await colyseus.connectTo(room, { name: "Observer" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((observer.state as GameStateType).players.has(leaver.sessionId)).toBe(true);
+
+    await leaver.leave();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((observer.state as GameStateType).players.has(leaver.sessionId)).toBe(false);
+  });
+
+  it("a joining client defaults to a Player-<id> name when none is given", async () => {
+    const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+    const anon = await colyseus.connectTo(room);
+    expect(room.state.players.get(anon.sessionId)?.name).toMatch(/^Player-/);
   });
 
   it("a blank message is silently ignored -- no broadcast, no error", async () => {

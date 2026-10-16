@@ -61,26 +61,33 @@ discussion (2026-10-15), in dependency order:
    port); add HP/MP/etc. bars shown on the token itself (new, no old
    equivalent); right-click your own character (zoomed out, or after
    Esc) opens a dialog to edit that 3D token's own details.
-3. **Full panel UI chrome**, each side collapsible/draggable outward from
-   its own edge. Sized by actual information density (2026-10-15,
-   corrected from an earlier draft of this same list): chat (right) is
-   OUTERMOST and gets the most room, since it's the most important/
-   highest-volume panel; top and bottom panels are mid-sized; left
-   (mode select) is INNERMOST and smallest, since there are only a
-   handful of core modes to switch between, freeing space for the
-   higher-value panels elsewhere.
-   - **Right (outermost): chat** (item 0 above).
-   - **Left (innermost): mode selection**, including an upgraded version
-     of the old game's real 3D yellow-line distance/battle-mode overlay
-     -- with a way to explicitly FINALIZE a measurement and start a new
-     one, not just end-turn to reset it (the old game only had the
-     latter).
-   - **Bottom (mid): party list** -- clicking a player's icon snaps the
-     camera to them and shows them through terrain (an x-ray highlight
-     for that specific character, distinct from the existing per-player
-     near-camera xray-cutout effect).
-   - **Top (mid): quick actions**, defined by the character sheet's own
-     template (item 1 above).
+3. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
+   [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
+   the full implementation) for the chrome itself: all 4 panels exist
+   and are correctly positioned/collapsible/resizable. Still open within
+   this item:
+   - The mode panel's **Distance-measurement/Turn-tracker buttons are
+     intentionally stubbed** (visible, disabled, no logic) -- their
+     real behavior (the old game's real 3D yellow-line distance/battle-
+     mode overlay, upgraded with an explicit FINALIZE-and-restart
+     action instead of just end-turn-to-reset) is Phase 9 (item 4
+     below), not built yet.
+   - **Party-list click-to-focus is NOT built**: clicking a player's
+     icon to snap the camera to them and show them through terrain (an
+     x-ray highlight for that specific character, distinct from the
+     existing per-player near-camera xray-cutout effect) -- the panel
+     today only displays who's present, with a generic placeholder
+     avatar per player, no click interaction yet.
+   - **NEW follow-up, explicitly scoped as not-this-PR** (user request,
+     2026-10-16): once characters (item 1's per-user character sheets)
+     exist, a user should be able to SELECT which character they're
+     currently playing via a chat command/UI (from their own list of
+     characters), and their party-list avatar should switch to reflect
+     that selected character -- "a lot for right now," depends on item
+     1 existing first.
+   - Quick actions (top panel) is built but still genuinely empty --
+     content is item 1's own character-sheet-template scope, not this
+     item's.
 4. **A turn-based battle system**, more detailed than the old Godot
    game's (which deliberately didn't even enforce turn order -- see
    Phase 9 below) -- its own UI lives inside the left mode-select panel

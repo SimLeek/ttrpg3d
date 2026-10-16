@@ -152,6 +152,121 @@ maybe via a character-sheet mod" as an unbuilt idea.
   progress winds down through the same deceleration blending a normal
   key-release already uses, not a new halt mechanism.
 
+## MVP goal item 3 — Panel UI chrome
+
+The three remaining panels around the already-shipped chat panel
+(item 0), user's own layout spec (2026-10-16): left panel (full height)
+for mode-select buttons, top panel (spanning mode-panel's right edge to
+chat's live left edge) for quick actions, bottom panel (same horizontal
+span) for the party list.
+
+- **Scope decision, confirmed via AskUserQuestion**: the mode panel's
+  Distance-measurement and Turn-tracker buttons are real Phase 9
+  (battle system) features that don't exist yet -- shipped VISIBLE but
+  STUBBED (disabled, no handler, a tooltip naming what they're for)
+  rather than half-building battle-mode logic just because a button
+  exists for it.
+- **New `GameState.ts`** (direct structural mirror of `WorldState.ts`'s
+  `PlayerState`/`WorldState` pair) -- real Colyseus Schema state added
+  to `GameRoom.ts` for presence (who's currently in this game), a
+  DELIBERATELY different mechanism from chat itself (still a discrete
+  event log, broadcast+persisted, unchanged). Rejected pushing presence
+  via a join-time message for the same reason chat's own history
+  already avoided it: `WorldState.ts`'s own header documents this exact
+  codebase having hit that race once already (a message sent from
+  `onJoin` can arrive before the client's listener is registered) --
+  Schema's initial snapshot has no such race.
+- **Mode-select panel** (`modePanel.ts`) is mounted INSIDE `game.ts`'s
+  `startGame()`, same per-page lifecycle as `hotbar.ts` -- NOT in
+  `main.ts` like chat/quick-actions/party-list. Justified by its own
+  real content: pointer-lock is inherently a per-noa-session concept,
+  and the future real battle-mode buttons will be per-world/page too.
+  Default/Select are real, wired to a new `RunningGame.setPointerLock`/
+  `isPointerLocked`/`onPointerLockChange` -- the last one relays noa's
+  own real `gainedPointerLock`/`lostPointerLock` events (confirmed
+  directly in noa-engine's `container.d.ts`: it `extends EventEmitter`,
+  driven by actual browser pointer-lock-change detection) so the panel
+  stays correctly highlighted even when the BROWSER force-exits lock
+  via Escape, not just when one of its own buttons is clicked --
+  nothing in this codebase listened to those events before this.
+- **Quick-actions panel** (`quickActionsPanel.ts`) and **party-list
+  panel** (`partyListPanel.ts`) are mounted in `main.ts` alongside chat
+  (game-scoped, surviving page switches) -- party-list's data source
+  (the new presence Schema) is game-scoped by the same reasoning chat
+  itself already established; quick-actions is empty today (content is
+  item 1's character-sheet scope) but mounted the same way for
+  consistency with the panel sharing its horizontal span. Party list
+  shows a generic placeholder avatar (initial letter) per connected
+  player -- NOT character-token-driven yet, see the new follow-up noted
+  directly in `docs/ROADMAP.md`'s MVP goal section.
+- **Chat panel's drag-resizable width exposed via a CSS custom
+  property** (`panelLayout.ts`'s `SAFE_AREA_RIGHT_VAR`, set on
+  `document.documentElement` from inside `chatPanel.ts`'s own
+  `applyWidth`/`setCollapsed`) -- the top/bottom panels' own CSS just
+  reads it (`left`/`right` with no explicit `width`, letting the
+  browser compute the gap), zero JS coupling to chat's internals.
+  Chosen over a ResizeObserver per panel (would lag a frame behind a
+  live drag) or an exported getter (no natural subscription point for
+  a value that changes continuously during a drag) -- this one variable
+  later became the first of a real 4-sided contract once more panels
+  needed the same treatment, see the follow-up round below.
+- **New shared `panelLayout.ts`**: a z-index constant (two independently
+  -chosen magic numbers already existed -- `pageManager.ts`'s `10`,
+  chat's `50` -- before any shared source of truth did) and the mode
+  panel's fixed, non-resizable width. Deliberately NOT a shared
+  "collapsible docked panel" component -- only chat has that exact
+  toggle+drag+collapse mechanic; the new panels are each their own file,
+  per this project's "three similar things before abstracting"
+  principle (and aren't even all the same sub-pattern as chat).
+- **Real bug found live while building this**: `partyListPanel.ts`'s
+  first draft interpolated player display names (user-set at account
+  creation) directly into `innerHTML` -- a real XSS hole, caught before
+  ever running rather than live. Fixed by building DOM nodes via
+  `createElement`/`textContent` instead, same safe pattern
+  `chatPanel.ts`'s own message rendering already used.
+- **Follow-up round, reported live**: the mode-select and party-list
+  panels initially shipped without a collapse toggle at all (chat and
+  quick-actions already had one) -- added the same toggle-tab mechanic
+  to both.
+  - **Real bug this surfaced**: with the bottom party-list panel now
+    real screen real estate, `hotbar.ts`'s own row (the 0-9 slot bar)
+    turned out to be hardcoded to `bottom: 16px` (the raw viewport
+    edge), so it rendered BEHIND the new panel. Generalized the fix
+    rather than patching hotbar alone, per direct request: the
+    one-off `--chat-width` CSS variable chat's own drag-resize already
+    published became a real 4-sided contract
+    (`panelLayout.ts`'s `SAFE_AREA_LEFT/RIGHT/TOP/BOTTOM_VAR` +
+    `setSafeAreaInset`) -- every docked panel publishes its own live
+    occupied inset, and hotbar's row (plus the `E`/`M` modal overlays,
+    see below) reads all four instead of raw screen edges, so it
+    automatically re-flows as any panel resizes/collapses without
+    needing its own fix the next time a panel is added.
+  - **Second real bug, reported live** ("repeatable... only need to add
+    a first check upon game load-in"): the initial safe-area
+    measurement (`getBoundingClientRect()` right after mounting) could
+    land before the browser had actually finished laying out a panel
+    mounted asynchronously (quick-actions/party-list, gated on
+    `main.ts`'s chat-connection network round-trip) -- baking in a
+    wrong value nothing then corrected, until an unrelated resize
+    happened to force a fresh (correct) measurement and masked the real
+    bug rather than fixed it. Fixed generally with
+    `panelLayout.ts`'s `observeSafeAreaInset` -- a `ResizeObserver`
+    per panel that re-measures (via `getBoundingClientRect`, not the
+    observer's own `contentRect`, which excludes borders) on its
+    guaranteed initial callback and on every later real size change, a
+    permanent self-correcting backstop instead of another one-shot
+    measurement that could race the same way. Not available in this
+    project's jsdom test environment (confirmed directly, not assumed)
+    -- degrades to a no-op there; real browsers have had
+    `ResizeObserver` support for years, and the existing manual
+    measurement calls stay in place as an immediate (if occasionally
+    premature) first value.
+  - **Third real correction**: the `E` (inventory grid) and `M`
+    (page-manager) modal overlays centered on the raw viewport, not the
+    actual free space between the side panels -- `hotbar.ts`/
+    `pageManager.ts`'s overlay `inset: 0` replaced with the same four
+    safe-area variables.
+
 ## Phase 2 — MVP
 
 - `scripts/movement_resource.gd`, `basic_jump_resource.gd`,

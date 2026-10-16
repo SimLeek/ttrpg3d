@@ -17,6 +17,8 @@ import { startGame, type RunningGame } from "./game.js";
 import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, ACCOUNT_STORAGE_KEY } from "./api.js";
 import { connectChat, type ChatConnection } from "./chatNet.js";
 import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
+import { mountQuickActionsPanel, type QuickActionsPanelController } from "./quickActionsPanel.js";
+import { mountPartyListPanel, type PartyListPanelController } from "./partyListPanel.js";
 
 const wsUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
 const httpUrl = wsUrl.replace(/^ws/, "http");
@@ -58,39 +60,63 @@ function launchGame(game: GameRecord, worldId: string, worldName: string, accoun
   });
 }
 
-// Chat is scoped to the whole GAME, not a single World/page -- it must
-// survive launchGame's own teardown/rebuild cycle above (every page
-// switch), so it's a SEPARATE persistent reference, opened/closed
-// independently of runningGame. See docs/ROADMAP.md's MVP goal section
-// (item 0) and chatNet.ts/chatPanel.ts's own headers for the full
-// reasoning.
-let runningChat: { connection: ChatConnection; panel: ChatPanelController; container: HTMLDivElement; gameId: string } | null = null;
+// Chat + quick-actions + party-list are all scoped to the whole GAME,
+// not a single World/page -- they must survive launchGame's own
+// teardown/rebuild cycle above (every page switch), so this is a
+// SEPARATE persistent reference, opened/closed independently of
+// runningGame. See docs/ROADMAP.md's MVP goal section (items 0 and 3)
+// and chatNet.ts/chatPanel.ts/quickActionsPanel.ts/partyListPanel.ts's
+// own headers for the full reasoning (the left mode-select panel is
+// NOT here -- it's per-page, mounted inside game.ts's startGame()
+// instead, same lifecycle as hotbar.ts, since pointer-lock is
+// inherently a per-noa-session concept).
+let runningChat: {
+  connection: ChatConnection;
+  chatPanel: ChatPanelController;
+  quickActionsPanel: QuickActionsPanelController;
+  partyListPanel: PartyListPanelController;
+  containers: HTMLDivElement[];
+  gameId: string;
+} | null = null;
 
 function stopRunningChatIfAny(): void {
   if (runningChat) {
-    runningChat.panel.destroy();
-    runningChat.container.remove();
+    runningChat.chatPanel.destroy();
+    runningChat.quickActionsPanel.destroy();
+    runningChat.partyListPanel.destroy();
+    for (const container of runningChat.containers) container.remove();
     runningChat.connection.leave();
     runningChat = null;
   }
 }
 
-/** Connects/mounts chat for `game` if not already connected to this exact game (a page switch calls launchGame directly and never reaches here, so this only (re)connects on a genuine game entry or a switch between two different games), then runs the normal launchGame flow. */
+/** Connects/mounts chat + quick-actions + party-list for `game` if not already connected to this exact game (a page switch calls launchGame directly and never reaches here, so this only (re)connects on a genuine game entry or a switch between two different games), then runs the normal launchGame flow. */
 function enterGame(game: GameRecord, worldId: string, worldName: string, account: Account): void {
   if (!runningChat || runningChat.gameId !== game.id) {
     stopRunningChatIfAny();
-    const container = document.createElement("div");
-    document.body.appendChild(container);
+    const chatContainer = document.createElement("div");
+    const quickActionsContainer = document.createElement("div");
+    const partyListContainer = document.createElement("div");
+    document.body.appendChild(chatContainer);
+    document.body.appendChild(quickActionsContainer);
+    document.body.appendChild(partyListContainer);
     void (async () => {
       const [connection, history] = await Promise.all([connectChat(wsUrl, game.id, account.displayName, account.id), fetchGameChat(httpUrl, game.id)]);
-      const panel = mountChatPanel(container, {
+      const chatPanel = mountChatPanel(chatContainer, {
         initialMessages: history,
         onSend: (text) => connection.send(text),
         onFocusChange: (focused) => runningGame?.setPointerLock(!focused),
       });
-      connection.onMessage((message) => panel.addMessage(message));
-      connection.onError((reason) => panel.showError(reason));
-      runningChat = { connection, panel, container, gameId: game.id };
+      connection.onMessage((message) => chatPanel.addMessage(message));
+      connection.onError((reason) => chatPanel.showError(reason));
+
+      const quickActionsPanel = mountQuickActionsPanel(quickActionsContainer);
+      const partyListPanel = mountPartyListPanel(partyListContainer, {
+        initialPlayers: [],
+        onPresenceChange: connection.onPresenceChange,
+      });
+
+      runningChat = { connection, chatPanel, quickActionsPanel, partyListPanel, containers: [chatContainer, quickActionsContainer, partyListContainer], gameId: game.id };
     })();
   }
   launchGame(game, worldId, worldName, account);
