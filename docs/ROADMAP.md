@@ -28,62 +28,29 @@ discussion (2026-10-15), in dependency order:
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-0--chat--dice-rolling) for
    the full implementation). The `[[notation+var]]` character-sheet
    variable reference specifically is NOT done -- character sheets
-   (item 1 below) don't exist yet; `[[...]]` today only evaluates plain
+   (item 3 below) don't exist yet; `[[...]]` today only evaluates plain
    dice notation, no variable interpolation.
-1. **Character sheets** -- the actual VTT-core data model (per-system
-   stats, not the old game's stealth-platformer health/stamina). Blocks
-   real combat, blocks anything "roll20-like" being true of this
-   project yet. **Real dependency found via direct discussion
-   (2026-10-16), splits this item into two sub-phases that do NOT build
-   in top-to-bottom order** -- the token/billboard visuals (item 2
-   below) are what a player actually SEES first, the instant they load
-   into a game, before any character-sheet UI is ever opened; they only
-   need a small DATA CONTRACT (owner, a token/model reference, HP/MP
-   current+max, status effects), not the full authoring system below.
-   So **1a ships before item 2; 1b ships after item 2**, not before it:
-   - **1a (build FIRST, minimal -- unblocks item 2)**: a minimal
-     per-user Character record: `ownerAccountId`, a reference to that
-     character's token/model (what item 2 actually renders), HP
-     current/max, MP current/max (or whatever stat pair a system
-     needs), a status-effect list. Fixed shape for now, not yet the
-     mod-based template below -- just enough real data for item 2's
-     bars/billboard to bind to instead of inventing placeholder state.
-   - **1b (the rest -- the full authoring system, ships AFTER item 2)**:
-     - **Mod-system-based templates**: a Game picks/configures a
-       character-sheet template the same way it already picks a world
-       generator -- NOT one hardcoded schema, since the pitch is
-       "roll20 for any tabletop system."
-     - Template authored in a safe markup format (markdown/RST-like,
-       supports images) -- never raw HTML/script injection.
-     - **Paginated, typed variable system**: a sheet has N pages, each
-       with any number of named/typed variables. Input widget follows
-       the type: a wide numeric range gets a scrollbar/slider; a
-       fractional or x-of-y value (e.g. current/max HP) gets two boxes;
-       a plain single value gets one box. (1a's HP/MP pair is the
-       first real instance of the "x-of-y" case -- 1b's general
-       variable system should subsume it, not duplicate it.)
-     - **A safe/sandboxed scripting system** for calculated variables
-       (e.g. a derived modifier) and RNG-driven attacks that auto-roll
-       and post to the chat above.
-     - **Ownership: per-USER (account), not per-game** (already true of
-       1a's minimal record too). A character is portable across games
-       by construction, rather than needing an export/import step
-       between two games.
-     - **Importing** is also mod-based: rather than bespoke native
-       parsers for every external format (Excel sheets from paid
-       westmarches servers, Roll20/Foundry JSON exports, etc.), the
-       import mechanism itself is a pluggable mod interface -- a
-       handful of built-in importer mods to start, swappable/
-       extensible later.
-2. **Character 3D token representation** -- depends ONLY on item 1a
-   above (the minimal record), not 1b. Scope, including new interaction
-   requirements from direct discussion (2026-10-16):
+1. **Minimal character record** -- a small data contract, split out
+   from the full character-sheet system (item 3 below) via direct
+   discussion (2026-10-16): item 2's token/billboard visuals are what a
+   player actually SEES first, the instant they load into a game,
+   before any character-sheet UI is ever opened, and only need this
+   much, not item 3's full authoring system. A per-user Character
+   record: `ownerAccountId`, a reference to that character's
+   token/model (what item 2 renders), HP current/max, MP current/max
+   (or whatever stat pair a system needs), a status-effect list. Fixed
+   shape for now, not yet item 3's mod-based template -- just enough
+   real data for item 2's bars/billboard to bind to instead of
+   inventing placeholder state.
+2. **Character 3D token representation** -- depends ONLY on item 1
+   above, not item 3. Scope, including new interaction requirements
+   from direct discussion (2026-10-16):
    - Keep the old game's real billboard dialog system for NPC dialog
      (`billboard` system, direct port).
    - **HP/MP/etc. bars** shown on the token's billboard (new, no old
-     equivalent) -- READ from 1a's character record, never duplicated
-     local state; editing a bar writes back to that same record (see
-     the click-to-edit requirement below).
+     equivalent) -- READ from item 1's character record, never
+     duplicated local state; editing a bar writes back to that same
+     record (see the click-to-edit requirement below).
    - **NEW -- status-effect icon billboard**: an additional billboard
      element, placed above the HP/MP/etc. bars, showing one equal-sized
      icon per active status effect (32x32 raster or SVG), fit into a
@@ -100,19 +67,49 @@ discussion (2026-10-15), in dependency order:
        currently controlling/viewing from, for a user who owns more
        than one character.
      - Right-click opens a context menu on that token:
-       **"Open character sheet"** (1b, once it exists), **"Edit token
-       properties"** (replaces this item's own earlier single-action
-       "right-click opens an edit dialog" bullet -- now one of several
-       menu choices, not the only thing right-click does), **"Select
-       status effects"** (edits the list the icon billboard above
-       renders).
+       **"Open character sheet"** (item 3, once it exists), **"Edit
+       token properties"** (replaces this item's own earlier single-
+       action "right-click opens an edit dialog" bullet -- now one of
+       several menu choices, not the only thing right-click does),
+       **"Select status effects"** (edits the list the icon billboard
+       above renders).
    - The party-list panel's existing placeholder avatars (already
      shipped, `docs/COMPLETED.md`'s panel-UI-chrome entry) should
-     switch to each player's real token image once 1a's record exists
-     -- same dependency as the separate "switch avatar by selecting a
-     character in chat" follow-up already noted below, just the
-     simpler "show the token you already have" half of it.
-3. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
+     switch to each player's real token image once item 1's record
+     exists -- same dependency as the separate "switch avatar by
+     selecting a character in chat" follow-up noted under item 4 below,
+     just the simpler "show the token you already have" half of it.
+3. **Full character-sheet authoring system** -- ships AFTER item 2
+   (not before it -- see item 1's own note on why). The actual
+   VTT-core data model (per-system stats, not the old game's stealth-
+   platformer health/stamina). Blocks real combat, blocks anything
+   "roll20-like" being true of this project yet. Scoped shape:
+   - **Mod-system-based templates**: a Game picks/configures a
+     character-sheet template the same way it already picks a world
+     generator -- NOT one hardcoded schema, since the pitch is "roll20
+     for any tabletop system."
+   - Template authored in a safe markup format (markdown/RST-like,
+     supports images) -- never raw HTML/script injection.
+   - **Paginated, typed variable system**: a sheet has N pages, each
+     with any number of named/typed variables. Input widget follows the
+     type: a wide numeric range gets a scrollbar/slider; a fractional
+     or x-of-y value (e.g. current/max HP) gets two boxes; a plain
+     single value gets one box. (Item 1's HP/MP pair is the first real
+     instance of the "x-of-y" case -- this general variable system
+     should subsume it, not duplicate it.)
+   - **A safe/sandboxed scripting system** for calculated variables
+     (e.g. a derived modifier) and RNG-driven attacks that auto-roll and
+     post to the chat above.
+   - **Ownership: per-USER (account), not per-game** (already true of
+     item 1's minimal record too). A character is portable across
+     games by construction, rather than needing an export/import step
+     between two games.
+   - **Importing** is also mod-based: rather than bespoke native parsers
+     for every external format (Excel sheets from paid westmarches
+     servers, Roll20/Foundry JSON exports, etc.), the import mechanism
+     itself is a pluggable mod interface -- a handful of built-in
+     importer mods to start, swappable/extensible later.
+4. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
    the full implementation) for the chrome itself: all 4 panels exist
    and are correctly positioned/collapsible/resizable. Still open within
@@ -121,7 +118,7 @@ discussion (2026-10-15), in dependency order:
      intentionally stubbed** (visible, disabled, no logic) -- their
      real behavior (the old game's real 3D yellow-line distance/battle-
      mode overlay, upgraded with an explicit FINALIZE-and-restart
-     action instead of just end-turn-to-reset) is Phase 9 (item 4
+     action instead of just end-turn-to-reset) is Phase 9 (item 5
      below), not built yet.
    - **Party-list click-to-focus is NOT built**: clicking a player's
      icon to snap the camera to them and show them through terrain (an
@@ -130,57 +127,59 @@ discussion (2026-10-15), in dependency order:
      today only displays who's present, with a generic placeholder
      avatar per player, no click interaction yet.
    - **NEW follow-up, explicitly scoped as not-this-PR** (user request,
-     2026-10-16): once characters exist (item 1a's minimal record is
-     enough for this, not all of 1b), a user should be able to SELECT
-     which character they're currently playing via a chat command/UI
-     (from their own list of characters), and their party-list avatar
-     should switch to reflect that selected character's real token
-     image -- "a lot for right now," depends on 1a + item 2 (the token
-     image itself) existing first.
+     2026-10-16): once characters exist (item 1's minimal record is
+     enough for this, not item 3's full system), a user should be able
+     to SELECT which character they're currently playing via a chat
+     command/UI (from their own list of characters), and their
+     party-list avatar should switch to reflect that selected
+     character's real token image -- "a lot for right now," depends on
+     items 1 + 2 (the token image itself) existing first.
    - Quick actions (top panel) is built but still genuinely empty --
-     content is item 1b's own character-sheet-template scope, not this
+     content is item 3's own character-sheet-template scope, not this
      item's.
-4. **A turn-based battle system**, more detailed than the old Godot
+5. **A turn-based battle system**, more detailed than the old Godot
    game's (which deliberately didn't even enforce turn order -- see
    Phase 9 below) -- its own UI lives inside the left mode-select panel
-   (item 3 above) and it integrates with chat/dice (item 0) and the
-   full character-sheet system (item 1b specifically -- real stats to
-   act on, not just 1a's minimal record), so it's sequenced after chat,
-   tokens, and the full character-sheet system all exist.
-5. **Default blocks as a real mod** -- pull the current built-in voxel
+   (item 4 above) and it integrates with chat/dice (item 0) and the
+   full character-sheet system (item 3 specifically -- real stats to
+   act on, not just item 1's minimal record), so it's sequenced after
+   chat, tokens, and the full character-sheet system all exist.
+6. **Default blocks as a real mod** -- pull the current built-in voxel
    type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
    hardcoded in the shared package) out into an actual mod file. Full
    scope in `docs/PORTING_CHECKLIST.md`'s Phase 6. Operationalizes a
    design principle this project has carried since Phase 6 was first
    scoped but never actually enforced.
-6. **Default terrain generators as a real mod** -- same treatment for
+7. **Default terrain generators as a real mod** -- same treatment for
    the current built-in generator catalog
    (`packages/shared/src/worldGenerators.ts`'s hilly/plains/
    limestone_slab). Full scope in `docs/PORTING_CHECKLIST.md`'s Phase 6.
-   Together with item 5, this is also what makes item 1b's "a Game
+   Together with item 6, this is also what makes item 3's "a Game
    picks a character-sheet template the same way it already picks a
    world generator" literally true (today's generator "picking" is
    just a hardcoded 3-entry catalog, not a real mod file) rather than
    just an analogy.
-7. **Mod-management settings tab, inside the chat panel** (user
+8. **Mod-management settings tab, inside the chat panel** (user
    request, 2026-10-16) -- a Game's set of included mod files
-   (including items 5/6's default mods, and eventually character-sheet-
+   (including items 6/7's default mods, and eventually character-sheet-
    template mods) is configured from a new settings tab inside the
    already-shipped chat panel (item 0), not hand-edited JSON. Full
    scope in `docs/PORTING_CHECKLIST.md`'s Phase 6 -- this is also the
    first real consumer of "a Game includes these mod files," which
-   items 5/6 need to actually be selectable/deselectable per game, not
+   items 6/7 need to actually be selectable/deselectable per game, not
    just technically extracted.
 
 Everything else currently sequenced into Phase 2/3/4/7/8/10/11+ below
 is real, worth doing, and NOT dropped -- but it's supporting/polish work
-relative to 0-7 above, not a substitute for them (Phase 6 itself is now
-fully covered by items 5-7). When picking what to work on next, default
-to advancing 0-7 in order, WITH ONE EXCEPTION (2026-10-16 correction):
-item 1 is split into 1a/1b, and 1a interleaves with item 2 rather than
-finishing first -- 1a, then item 2, then 1b, not 1 (whole) then 2.
-Detour for any other specific reason (a live-reported bug, a small
-blocking dependency) as before.
+relative to 0-8 above, not a substitute for them (Phase 6 itself is now
+fully covered by items 6-8). When picking what to work on next, default
+to advancing 0-8 in strict order -- this list IS the build order now
+(2026-10-16 correction: an earlier draft numbered this as 0,1,2,3,4...
+with 1 split into non-adjacent 1a/1b sub-parts around item 2, which
+wasn't actually sequential despite the numbers; this version renumbers
+everything so top-to-bottom reading is literally the order to build in,
+no sub-letters). Detour only for a specific reason (a live-reported bug,
+a small blocking dependency).
 
 ## Standing decisions
 
@@ -268,11 +267,11 @@ play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | -- | Worlds lobby (accounts, per-world registry, fuzzy search) -- pulled forward from Phase 3 | DONE | -- |
 | 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import |
 | 4 | Voxel interaction -- multi-block placement, hand-equipment dispatch, soft-body swap | **PARTIAL** | dual-hand equip/dispatch, soft-body library spike, health/fall-damage, squeezer-rays, phasing-gloves-as-an-item |
-| 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | **⭐ MVP: character sheets** -- full scope in the MVP goal section above, item 1, split into two sub-phases that do NOT build in order: 1a (a small data contract -- owner, token reference, HP/MP, status effects) ships BEFORE item 2 (tokens/billboards, which only need 1a); 1b (the full mod-based-template/scripting/import authoring system) ships AFTER item 2. Chat/dice (item 0) comes first either way; combat/health is built on 1b once it exists; DM-vs-player stock split, item tooltip, dual-hand equip scheme |
-| 6 | **⭐ MVP: Mod system v2** -- per-world data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 5-7 above: default-blocks mod, default-generators mod, mod-management settings tab in the chat panel; also dynamic mod loading/packaging, per-world persisted config, Uint16 wire-format widening |
+| 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | **⭐ MVP: character sheets** -- full scope in the MVP goal section above, now split into item 1 (a small data contract -- owner, token reference, HP/MP, status effects, ships BEFORE item 2), item 2 (tokens/billboards, which only need item 1), and item 3 (the full mod-based-template/scripting/import authoring system, ships AFTER item 2). Chat/dice (item 0) comes first either way; combat/health is built on item 3 once it exists; DM-vs-player stock split, item tooltip, dual-hand equip scheme |
+| 6 | **⭐ MVP: Mod system v2** -- per-world data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 6-8 above: default-blocks mod, default-generators mod, mod-management settings tab in the chat panel; also dynamic mod loading/packaging, per-world persisted config, Uint16 wire-format widening |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
 | 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
-| 9 | **⭐ MVP: Battle mode / turn tracker, server-authoritative, more detailed than the old game's** -- also where the distance math lands; full scope (item 4 in the MVP goal section above) depends on chat/dice, character sheets, and the panel UI chrome (items 0-3) existing first | NOT STARTED | everything |
+| 9 | **⭐ MVP: Battle mode / turn tracker, server-authoritative, more detailed than the old game's** -- also where the distance math lands; full scope (item 5 in the MVP goal section above) depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | NOT STARTED | everything |
 | 10 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED | everything |
 | 11+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED | everything |
 
