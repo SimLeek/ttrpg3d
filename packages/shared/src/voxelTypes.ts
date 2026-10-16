@@ -43,8 +43,27 @@ export interface VoxelTypeDef {
    *   texture-array system.
    * - "none": no texture, flat color only (e.g. the ttrpg3d-specific
    *   MARKER QA block, which never existed in the old game).
+   * - "cube-object": a full 6-face cube, same shape as "cube" but
+   *   registered via noa's object-mesher (`blockMesh`, same mechanism
+   *   "cross" uses) instead of the greedy terrain mesher. Real bug found
+   *   live: the greedy mesher only draws a face between two voxels when
+   *   at least one side is opaque (or literal air) -- confirmed directly
+   *   in noa-engine's own mesher source and GitHub history (issue #184,
+   *   where the maintainer calls this "a general problem" with
+   *   non-opaque terrain neighbors). A SOLID-but-see-through block like
+   *   GLASS needs `opaque: false` so neighboring SOLID blocks still show
+   *   their own face (see `opaque`'s own doc), but that same flag means
+   *   GLASS gets no face of its OWN against other non-opaque neighbors
+   *   (water) -- it was invisible underwater, and only showed its
+   *   air-adjacent faces at the waterline. `cube-object` sidesteps this
+   *   entirely: object-mesh blocks render all 6 of their own faces
+   *   unconditionally, regardless of any neighbor's opacity (confirmed in
+   *   noa's objectMesher.js -- no neighbor-culling logic there at all).
+   *   `textureFile` for this kind works like "cross": a standalone,
+   *   already-cropped runtime texture loaded directly from
+   *   public/textures/blocks/, not a 3x2-grid atlas source to slice.
    */
-  mesh: "cube" | "cross" | "none";
+  mesh: "cube" | "cross" | "cube-object" | "none";
   /** Source atlas filename (see `mesh` for exactly how/where it's used), or null for "none". */
   textureFile: string | null;
   /**
@@ -191,18 +210,14 @@ export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
   { id: MAGNETITE, name: "magnetite", mesh: "cube", textureFile: "magnetite.png", transparencyMode: "cutout", color: [0.2, 0.2, 0.25], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
   // glass: real cutout alpha texture (opaque cell border, fully
   // transparent interior -- confirmed directly against the old source
-  // PNG's actual alpha channel, not guessed), reusing the SAME shared
-  // cutout material/atlas as every other cube type above -- no new
-  // engine/shader work needed, since the xray shader's own alpha
-  // computation (blockShaders.ts) already discards non-opaque pixels
-  // when not fading, it just needs the base material to actually read
-  // the atlas's real alpha channel (coreAtlasTexture.hasAlpha, game.ts)
-  // rather than assuming opaque -- true for every OTHER cutout type
-  // already (fully opaque alpha=255 throughout), so this was previously
-  // a no-op difference until glass's own real alpha variance exercised it.
-  // opaque:false -- see VoxelTypeDef.opaque's own doc for the real
-  // "can see into the ground through glass" bug this fixes, found live.
-  { id: GLASS, name: "glass", mesh: "cube", textureFile: "glass.png", transparencyMode: "cutout", color: [0.8, 0.9, 0.95], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false, opaque: false },
+  // PNG's actual alpha channel, not guessed). mesh: "cube-object" (see
+  // that field's own doc) -- NOT on the shared atlas, a standalone
+  // runtime texture instead, same as "cross" types -- so textureFile here
+  // is just "glass.png" (no atlasUrl/atlasBaseLayer, both stay null).
+  // opaque:false still matters independently of the mesh kind -- it's
+  // what makes a SOLID NEIGHBOR (e.g. dirt) correctly show its own face
+  // against glass (see VoxelTypeDef.opaque's own doc for that bug).
+  { id: GLASS, name: "glass", mesh: "cube-object", textureFile: "glass.png", transparencyMode: "cutout", color: [0.8, 0.9, 0.95], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false, opaque: false },
   { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", transparencyMode: "cutout", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: false, solid: true, fluid: false },
 ];
 

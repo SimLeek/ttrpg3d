@@ -19,6 +19,7 @@ import { connectAndStreamWorld } from "./net.js";
 import { installPlayerController } from "./movement/PlayerController.js";
 import { installOriginShiftLogger } from "./originShiftLogger.js";
 import { buildCrossPlantMesh } from "./plantMesh.js";
+import { buildCubeObjectMesh } from "./cubeObjectMesh.js";
 import { mountHotbar } from "./hotbar.js";
 import { installCameraZoom } from "./cameraZoom.js";
 import { installUnderwaterEffect } from "./underwaterEffect.js";
@@ -230,6 +231,14 @@ export function startGame(
       // these were registered as opaque solid cubes (where the culling
       // was actually correct). Must be explicit false here.
       noa.registry.registerBlock(type.id, { blockMesh: mesh, solid: type.solid, fluid: type.fluid, opaque: false });
+    } else if (type.mesh === "cube-object" && type.textureFile) {
+      // GLASS today -- see voxelTypes.ts's `mesh` doc for why a
+      // see-through SOLID block needs noa's object-mesher (bypasses the
+      // greedy terrain mesher's neighbor-culling entirely) rather than
+      // the shared atlas-cube path every other solid cube type above
+      // uses.
+      const mesh = buildCubeObjectMesh(scene, type.name, `/textures/blocks/${type.textureFile}`);
+      noa.registry.registerBlock(type.id, { blockMesh: mesh, solid: type.solid, fluid: type.fluid, opaque: type.opaque ?? true });
     } else {
       noa.registry.registerMaterial(type.name, { color: type.color });
       noa.registry.registerBlock(type.id, { material: type.name, solid: type.solid, fluid: type.fluid });

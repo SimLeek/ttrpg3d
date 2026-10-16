@@ -348,6 +348,38 @@ not hardcoded. Settled shape, confirmed through real design discussion
   shows the solid block behind it correctly, same as looking through
   water/quartz (which already had `opaque: false` via their own separate
   registration branch).
+  **Second follow-up bug reported live**: `opaque: false` fixed glass
+  against SOLID neighbors, but glass placed in or at the surface of water
+  was partially/fully invisible instead -- "just in the water cull
+  group." Root cause, confirmed directly against noa-engine's own bundled
+  mesher source (`constructMeshMask`) and its real GitHub history
+  (`fenomas/noa` issue #184, where the maintainer calls this "a general
+  problem" with non-opaque terrain neighbors they hadn't resolved): the
+  greedy mesher only ever draws a face between two voxels when at least
+  ONE side is opaque or literal air -- two DIFFERENT non-opaque types
+  (glass, water) fall through every branch and get no face on EITHER
+  side. Not fixable via any `registerBlock` option; the real fix (new
+  `packages/client/src/cubeObjectMesh.ts`, GLASS's `mesh` changed to a
+  new `"cube-object"` kind in `voxelTypes.ts`) takes glass out of the
+  greedy-meshed terrain grid entirely, registering it via noa's
+  object-mesher instead (`blockMesh`, the same mechanism the cross/plant
+  meshes already use) -- object-mesh blocks render all 6 of their own
+  faces unconditionally, with no neighbor-culling logic at all. Hit a
+  second real bug immediately after, also found live: the cube mesh's
+  material initially copied plant mesh's `backFaceCulling = false`
+  (needed there for a double-sided flat sprite), which on a real
+  watertight cube meant two adjacent glass blocks' exactly-coincident
+  internal faces (the top block's bottom face and the block below it's
+  top face) each rendered both their front AND back, producing visible
+  z-fighting through the cutout gaps. Fixed by leaving Babylon's own
+  default (`backFaceCulling: true`) and rebuilding the cube from
+  Babylon's own `CreateBoxVertexData` primitive instead of hand-wound
+  quads, to remove any risk of getting the winding backwards by hand
+  (confirmed directly in Babylon's real source: its default
+  `sideOrientation` and per-face `faceUV` of `(0,0,1,1)` already match
+  exactly what a uniform, non-atlas cube texture needs). Confirmed live
+  afterward: glass renders correctly fully submerged, at the waterline,
+  and stacked against other glass, with no z-fighting.
 
 ## Phase 4 — Voxel interaction
 
