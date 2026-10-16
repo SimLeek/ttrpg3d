@@ -144,41 +144,58 @@ discussion (2026-10-15), in dependency order:
    full character-sheet system (item 3 specifically -- real stats to
    act on, not just item 1's minimal record), so it's sequenced after
    chat, tokens, and the full character-sheet system all exist.
-6. **Default blocks as a real mod** -- pull the current built-in voxel
+6. **Mod load/unload mechanism, with a minimal (not yet polished) UI**
+   -- split out of the settings-tab item below (2026-10-16 correction)
+   because items 7/8 need SOME real way to load/unload a mod before
+   they're meaningfully testable at all, by BOTH a script test AND a
+   person manually trying one -- a person can't drive a server-side
+   function call directly, so some UI (even a crude, no-styling one --
+   a plain list with load/unload buttons is enough) is genuinely
+   required here, not deferred to item 9. Just the mechanism and that
+   bare-minimum UI: a Game's list of included mod files, real load/
+   unload calls a test can call directly, and a rough manual control
+   for a person to do the same thing -- NOT item 9's polished,
+   integrated settings tab inside the chat panel, which replaces this
+   item's crude UI afterward rather than building on top of it.
+7. **Default blocks as a real mod** -- pull the current built-in voxel
    type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
-   hardcoded in the shared package) out into an actual mod file. Full
-   scope in `docs/PORTING_CHECKLIST.md`'s Phase 6. Operationalizes a
-   design principle this project has carried since Phase 6 was first
-   scoped but never actually enforced.
-7. **Default terrain generators as a real mod** -- same treatment for
+   hardcoded in the shared package) out into an actual mod file, using
+   item 6's load/unload mechanism to verify it actually works as a mod
+   (not just that the file exists). Full scope in
+   `docs/PORTING_CHECKLIST.md`'s Phase 6. Operationalizes a design
+   principle this project has carried since Phase 6 was first scoped
+   but never actually enforced.
+8. **Default terrain generators as a real mod** -- same treatment for
    the current built-in generator catalog
    (`packages/shared/src/worldGenerators.ts`'s hilly/plains/
    limestone_slab). Full scope in `docs/PORTING_CHECKLIST.md`'s Phase 6.
-   Together with item 6, this is also what makes item 3's "a Game
+   Together with item 7, this is also what makes item 3's "a Game
    picks a character-sheet template the same way it already picks a
    world generator" literally true (today's generator "picking" is
    just a hardcoded 3-entry catalog, not a real mod file) rather than
    just an analogy.
-8. **Mod-management settings tab, inside the chat panel** (user
-   request, 2026-10-16) -- a Game's set of included mod files
-   (including items 6/7's default mods, and eventually character-sheet-
-   template mods) is configured from a new settings tab inside the
-   already-shipped chat panel (item 0), not hand-edited JSON. Full
-   scope in `docs/PORTING_CHECKLIST.md`'s Phase 6 -- this is also the
-   first real consumer of "a Game includes these mod files," which
-   items 6/7 need to actually be selectable/deselectable per game, not
-   just technically extracted.
+9. **Mod-management settings tab, inside the chat panel** (user
+   request, 2026-10-16) -- replaces item 6's crude manual UI with a
+   polished one integrated into the chat panel, on the SAME underlying
+   load/unload mechanism: a Game's set of included mod files
+   (including items 7/8's default mods, and eventually character-
+   sheet-template mods) is configured from a new settings tab inside
+   the already-shipped chat panel (item 0), not hand-edited JSON or a
+   test-only call. Full scope in `docs/PORTING_CHECKLIST.md`'s Phase 6.
 
 Everything else currently sequenced into Phase 2/3/4/7/8/10/11+ below
 is real, worth doing, and NOT dropped -- but it's supporting/polish work
-relative to 0-8 above, not a substitute for them (Phase 6 itself is now
-fully covered by items 6-8). When picking what to work on next, default
-to advancing 0-8 in strict order -- this list IS the build order now
+relative to 0-9 above, not a substitute for them (Phase 6 itself is now
+fully covered by items 6-9). When picking what to work on next, default
+to advancing 0-9 in strict order -- this list IS the build order now
 (2026-10-16 correction: an earlier draft numbered this as 0,1,2,3,4...
 with 1 split into non-adjacent 1a/1b sub-parts around item 2, which
 wasn't actually sequential despite the numbers; this version renumbers
 everything so top-to-bottom reading is literally the order to build in,
-no sub-letters). Detour only for a specific reason (a live-reported bug,
+no sub-letters -- and a second 2026-10-16 correction split the old last
+item into a minimal mechanism, item 6, that now comes BEFORE the
+extraction items it unblocks, with the polished UI moved to the new
+last item, 9). Detour only for a specific reason (a live-reported bug,
 a small blocking dependency).
 
 ## Standing decisions
@@ -268,7 +285,7 @@ play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import |
 | 4 | Voxel interaction -- multi-block placement, hand-equipment dispatch, soft-body swap | **PARTIAL** | dual-hand equip/dispatch, soft-body library spike, health/fall-damage, squeezer-rays, phasing-gloves-as-an-item |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | **⭐ MVP: character sheets** -- full scope in the MVP goal section above, now split into item 1 (a small data contract -- owner, token reference, HP/MP, status effects, ships BEFORE item 2), item 2 (tokens/billboards, which only need item 1), and item 3 (the full mod-based-template/scripting/import authoring system, ships AFTER item 2). Chat/dice (item 0) comes first either way; combat/health is built on item 3 once it exists; DM-vs-player stock split, item tooltip, dual-hand equip scheme |
-| 6 | **⭐ MVP: Mod system v2** -- per-world data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 6-8 above: default-blocks mod, default-generators mod, mod-management settings tab in the chat panel; also dynamic mod loading/packaging, per-world persisted config, Uint16 wire-format widening |
+| 6 | **⭐ MVP: Mod system v2** -- per-world data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 6-9 above: a minimal load/unload mechanism first, then default-blocks mod, default-generators mod, and the mod-management settings tab in the chat panel; also dynamic mod loading/packaging, per-world persisted config, Uint16 wire-format widening |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
 | 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
 | 9 | **⭐ MVP: Battle mode / turn tracker, server-authoritative, more detailed than the old game's** -- also where the distance math lands; full scope (item 5 in the MVP goal section above) depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | NOT STARTED | everything |
