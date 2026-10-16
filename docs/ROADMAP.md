@@ -93,13 +93,37 @@ discussion (2026-10-15), in dependency order:
    Phase 9 below) -- its own UI lives inside the left mode-select panel
    (item 3 above) and it integrates with chat/dice (item 0) and
    character sheets (item 1), so it's sequenced after all three.
+5. **Default blocks as a real mod** -- pull the current built-in voxel
+   type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
+   hardcoded in the shared package) out into an actual mod file. Full
+   scope in `docs/PORTING_CHECKLIST.md`'s Phase 6. Operationalizes a
+   design principle this project has carried since Phase 6 was first
+   scoped but never actually enforced.
+6. **Default terrain generators as a real mod** -- same treatment for
+   the current built-in generator catalog
+   (`packages/shared/src/worldGenerators.ts`'s hilly/plains/
+   limestone_slab). Full scope in `docs/PORTING_CHECKLIST.md`'s Phase 6.
+   Together with item 5, this is also what makes item 1's "a Game
+   picks a character-sheet template the same way it already picks a
+   world generator" literally true (today's generator "picking" is
+   just a hardcoded 3-entry catalog, not a real mod file) rather than
+   just an analogy.
+7. **Mod-management settings tab, inside the chat panel** (user
+   request, 2026-10-16) -- a Game's set of included mod files
+   (including items 5/6's default mods, and eventually character-sheet-
+   template mods) is configured from a new settings tab inside the
+   already-shipped chat panel (item 0), not hand-edited JSON. Full
+   scope in `docs/PORTING_CHECKLIST.md`'s Phase 6 -- this is also the
+   first real consumer of "a Game includes these mod files," which
+   items 5/6 need to actually be selectable/deselectable per game, not
+   just technically extracted.
 
-Everything else currently sequenced into Phase 2/3/4/6/7/8/10/11+ below
+Everything else currently sequenced into Phase 2/3/4/7/8/10/11+ below
 is real, worth doing, and NOT dropped -- but it's supporting/polish work
-relative to 0-4 above, not a substitute for them. When picking what to
-work on next, default to advancing 0-4 in order unless there's a
-specific reason (a live-reported bug, a small blocking dependency) to
-detour.
+relative to 0-7 above, not a substitute for them (Phase 6 itself is now
+fully covered by items 5-7). When picking what to work on next, default
+to advancing 0-7 in order unless there's a specific reason (a
+live-reported bug, a small blocking dependency) to detour.
 
 ## Standing decisions
 
@@ -188,7 +212,7 @@ play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import |
 | 4 | Voxel interaction -- multi-block placement, hand-equipment dispatch, soft-body swap | **PARTIAL** | dual-hand equip/dispatch, soft-body library spike, health/fall-damage, squeezer-rays, phasing-gloves-as-an-item |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | **⭐ MVP: character sheets** -- full scope (mod-based templates, per-user ownership, pluggable import) in the MVP goal section above, item 1; chat/dice (item 0) comes first; combat/health is built on this once it exists; DM-vs-player stock split, item tooltip, dual-hand equip scheme |
-| 6 | Mod system v2 -- per-world data-only AND behavior-mod registration | **PARTIAL** | dynamic mod loading/packaging, in-game toggle UI, per-world persisted config, Uint16 wire-format widening |
+| 6 | **⭐ MVP: Mod system v2** -- per-world data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 5-7 above: default-blocks mod, default-generators mod, mod-management settings tab in the chat panel; also dynamic mod loading/packaging, per-world persisted config, Uint16 wire-format widening |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
 | 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
 | 9 | **⭐ MVP: Battle mode / turn tracker, server-authoritative, more detailed than the old game's** -- also where the distance math lands; full scope (item 4 in the MVP goal section above) depends on chat/dice, character sheets, and the panel UI chrome (items 0-3) existing first | NOT STARTED | everything |
