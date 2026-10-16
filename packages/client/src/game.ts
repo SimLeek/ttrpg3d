@@ -181,7 +181,10 @@ export function startGame(
       FACE_ORDER.forEach((face, i) => {
         noa.registry.registerMaterial(materialNames[i], { renderMaterial: coreAtlasMaterial, atlasIndex: atlasBaseLayer + i });
       });
-      noa.registry.registerBlock(type.id, { material: materialNames, solid: type.solid, fluid: type.fluid });
+      // opaque: type.opaque ?? true -- see VoxelTypeDef.opaque's own doc.
+      // Only GLASS sets this false today; every other cutout type keeps
+      // noa's normal neighbor-face-culling behavior.
+      noa.registry.registerBlock(type.id, { material: materialNames, solid: type.solid, fluid: type.fluid, opaque: type.opaque ?? true });
     } else if (type.mesh === "cube" && type.transparencyMode === "transparent" && type.textureFile) {
       // water/watertop/quartz: off the atlas, own small standalone
       // texture+material (XrayFadePlugin("transparent", ...) -- real soft

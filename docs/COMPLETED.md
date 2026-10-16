@@ -142,6 +142,18 @@ not hardcoded. Settled shape, confirmed through real design discussion
   of staying loosely approximated by the old test scaffolding.
 - `scripts/items/voxelitem.gd`/`del_vox_item.gd` — collapsed to a single
   hardcoded block type initially; full multi-type system is Phase 4.
+- **Sprint/slow-walk keybind fix** (reported live): held-Ctrl for
+  slow-walk collided with real browser shortcuts (Ctrl+W closes the tab,
+  Ctrl+S saves the page, etc.) while holding it alongside WASD. Ctrl is
+  now unused entirely -- slow-walk moved onto sprint's old held-Shift
+  binding, and sprint itself became the old game's own real mechanic
+  after all: double-tap any movement key (`PlayerController.
+  updateSprintState`), not a held key, cancelling only once every
+  movement key is released (not on direction change, so
+  strafing/backpedaling mid-sprint doesn't interrupt it). `MoverResource.
+  ts`'s header comment had flagged this exact double-tap port as
+  deferred ("worth revisiting... if it's missed during playtesting") --
+  it was.
 
 ## Phase 3 — Real world management
 
@@ -319,6 +331,23 @@ not hardcoded. Settled shape, confirmed through real design discussion
   confirmed live afterward that glass renders as a real see-through
   cutout cube, not opaque, and that nothing regressed for the other
   (uniformly-opaque) cutout types.
+  **Follow-up bug reported live**: looking through a placed glass block
+  showed straight into the ground/unrelated far geometry where a solid
+  neighbor block should have been visible instead. Root cause was a
+  separate concern from the alpha fix above -- noa's terrain mesher culls
+  the shared face between two NEIGHBORING blocks whenever both are
+  `opaque` (the standard greedy-mesher optimization: that face can never
+  be seen, so don't render it), and GLASS defaulted to `opaque: true`
+  same as every other cutout type, so the mesher culled the face of
+  whatever solid block sat behind it -- but glass's own shader lets the
+  camera see past its near face, turning that culled neighbor face into
+  a real hole straight through to whatever wasn't culled further away.
+  Fixed by adding a new `VoxelTypeDef.opaque` field (defaults true,
+  independent of `transparencyMode`), set `false` only for GLASS, threaded
+  into `game.ts`'s `registerBlock` call; confirmed live that glass now
+  shows the solid block behind it correctly, same as looking through
+  water/quartz (which already had `opaque: false` via their own separate
+  registration branch).
 
 ## Phase 4 — Voxel interaction
 

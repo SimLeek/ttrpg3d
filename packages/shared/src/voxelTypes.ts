@@ -101,6 +101,24 @@ export interface VoxelTypeDef {
    * block that was never part of the old game.
    */
   placeable: boolean;
+  /**
+   * Whether noa's terrain mesher treats this type as opaque for NEIGHBOR
+   * face-culling purposes -- a real, separate concern from
+   * `transparencyMode` (which only controls which xray-fade shader
+   * variant the block's OWN material uses). Defaults to true (every
+   * "cutout"-mode type before GLASS happened to have a fully opaque
+   * source texture, so this never mattered until now). Real bug found
+   * live porting GLASS: left at the true default, the mesher culled the
+   * face of whatever solid block sat behind it (two "opaque" neighbors
+   * never render the shared face between them, the standard greedy-mesher
+   * optimization) -- but glass's own shader DOES let the camera see past
+   * its near face, so that culled neighbor face left a hole straight
+   * through to unrelated, further-away geometry ("looking into the
+   * ground" through a glass block, reported live) instead of showing the
+   * solid block that should visually be right behind it. Set false only
+   * for GLASS below; every other cutout type keeps the true default.
+   */
+  opaque?: boolean;
 }
 
 export const AIR = 0;
@@ -182,7 +200,9 @@ export const VOXEL_TYPES: readonly VoxelTypeDef[] = [
   // rather than assuming opaque -- true for every OTHER cutout type
   // already (fully opaque alpha=255 throughout), so this was previously
   // a no-op difference until glass's own real alpha variance exercised it.
-  { id: GLASS, name: "glass", mesh: "cube", textureFile: "glass.png", transparencyMode: "cutout", color: [0.8, 0.9, 0.95], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false },
+  // opaque:false -- see VoxelTypeDef.opaque's own doc for the real
+  // "can see into the ground through glass" bug this fixes, found live.
+  { id: GLASS, name: "glass", mesh: "cube", textureFile: "glass.png", transparencyMode: "cutout", color: [0.8, 0.9, 0.95], atlasUrl: null, atlasBaseLayer: null, placeable: true, solid: true, fluid: false, opaque: false },
   { id: MARKER, name: "marker", mesh: "cube", textureFile: "marker.png", transparencyMode: "cutout", color: [1.0, 0.1, 0.8], atlasUrl: null, atlasBaseLayer: null, placeable: false, solid: true, fluid: false },
 ];
 
