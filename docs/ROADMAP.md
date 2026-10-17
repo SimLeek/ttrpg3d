@@ -28,7 +28,7 @@ discussion (2026-10-15), in dependency order:
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-0--chat--dice-rolling) for
    the full implementation). The `[[notation+var]]` character-sheet
    variable reference specifically is NOT done -- character sheets
-   (item 3 below) don't exist yet; `[[...]]` today only evaluates plain
+   (item 4 below) don't exist yet; `[[...]]` today only evaluates plain
    dice notation, no variable interpolation.
 1. ~~**Minimal character record**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-items-1-2--minimal-character-record--3d-token-representation)
@@ -42,9 +42,9 @@ discussion (2026-10-15), in dependency order:
      color swatch (no name/other property editing); "Select status
      effects" is a hardcoded 3-entry catalog (poison/stun/blessed), not
      a real mod-based status-effect catalog/definitions system; "Open
-     character sheet" is correctly disabled (item 3 doesn't exist yet)
+     character sheet" is correctly disabled (item 4 doesn't exist yet)
      but needs wiring once it does. None of these were meant to be the
-     final UI -- revisit once item 3's mod-template system exists to
+     final UI -- revisit once item 4's mod-template system exists to
      build real versions on top of, rather than extending the
      placeholders in place.
    - **Ownership check is too literal, needs a real admin/GM override**
@@ -69,18 +69,43 @@ discussion (2026-10-15), in dependency order:
      (`partyListPanel.ts` now renders each player's real
      `PlayerPresence.tokenColor` instead of a placeholder initial). The
      separate "switch avatar by selecting a character in chat" follow-up
-     noted under item 4 below is still not built -- that's about
+     noted under item 5 below is still not built -- that's about
      CHANGING which character a session is playing mid-session, not
      just displaying the one it already has.
-3. **Full character-sheet authoring system** -- ships AFTER item 2
-   (not before it -- see item 1's own note on why). The actual
-   VTT-core data model (per-system stats, not the old game's stealth-
-   platformer health/stamina). Blocks real combat, blocks anything
-   "roll20-like" being true of this project yet. Scoped shape:
+3. **Mod load/unload mechanism, with a minimal (not yet polished) UI**
+   -- split out of the settings-tab item below (2026-10-16 correction)
+   because items 7/8 need SOME real way to load/unload a mod before
+   they're meaningfully testable at all, by BOTH a script test AND a
+   person manually trying one -- a person can't drive a server-side
+   function call directly, so some UI (even a crude, no-styling one --
+   a plain list with load/unload buttons is enough) is genuinely
+   required here, not deferred to item 9. Just the mechanism and that
+   bare-minimum UI: a Game's list of included mod files, real load/
+   unload calls a test can call directly, and a rough manual control
+   for a person to do the same thing -- NOT item 9's polished,
+   integrated settings tab inside the chat panel, which replaces this
+   item's crude UI afterward rather than building on top of it.
+   **Moved up from its original position after the character-sheet
+   system (2026-10-17 correction)**: item 4 below explicitly requires
+   "mod-system-based templates," but no mod-loading mechanism exists
+   anywhere in this codebase yet (confirmed directly -- `VOXEL_TYPES`/
+   `worldGenerators.ts` are flat hardcoded arrays, not a plugin
+   interface; the old Godot game's own real mod system, a directory +
+   `mod.json` manifest + a `register()` call, was never ported). Rather
+   than build character-sheet templates against a mod interface that
+   doesn't exist yet, this item now comes first -- item 4 can depend on
+   it directly instead of the other way around.
+4. **Full character-sheet authoring system** -- depends on item 3
+   above (not item 2 -- see item 3's own 2026-10-17 note on why it
+   moved ahead of this item). The actual VTT-core data model
+   (per-system stats, not the old game's stealth-platformer health/
+   stamina). Blocks real combat, blocks anything "roll20-like" being
+   true of this project yet. Scoped shape:
    - **Mod-system-based templates**: a Game picks/configures a
      character-sheet template the same way it already picks a world
      generator -- NOT one hardcoded schema, since the pitch is "roll20
-     for any tabletop system."
+     for any tabletop system." Built on item 3's mod mechanism directly,
+     not a placeholder/non-mod template system to be retrofitted later.
    - Template authored in a safe markup format (markdown/RST-like,
      supports images) -- never raw HTML/script injection.
    - **Paginated, typed variable system**: a sheet has N pages, each
@@ -133,7 +158,7 @@ discussion (2026-10-15), in dependency order:
      Needs real character data to resolve against (the account's
      currently-controlled character), hence sequenced here rather than
      attempted with item 1's minimal record alone.
-4. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
+5. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
    the full implementation) for the chrome itself: all 4 panels exist
    and are correctly positioned/collapsible/resizable. Still open within
@@ -142,7 +167,7 @@ discussion (2026-10-15), in dependency order:
      intentionally stubbed** (visible, disabled, no logic) -- their
      real behavior (the old game's real 3D yellow-line distance/battle-
      mode overlay, upgraded with an explicit FINALIZE-and-restart
-     action instead of just end-turn-to-reset) is Phase 9 (item 5
+     action instead of just end-turn-to-reset) is Phase 9 (item 6
      below), not built yet.
    - **Party-list click-to-focus is NOT built**: clicking a player's
      icon to snap the camera to them and show them through terrain (an
@@ -152,39 +177,26 @@ discussion (2026-10-15), in dependency order:
      avatar per player, no click interaction yet.
    - **NEW follow-up, explicitly scoped as not-this-PR** (user request,
      2026-10-16): once characters exist (item 1's minimal record is
-     enough for this, not item 3's full system), a user should be able
+     enough for this, not item 4's full system), a user should be able
      to SELECT which character they're currently playing via a chat
      command/UI (from their own list of characters), and their
      party-list avatar should switch to reflect that selected
      character's real token image -- "a lot for right now," depends on
      items 1 + 2 (the token image itself) existing first.
    - Quick actions (top panel) is built but still genuinely empty --
-     content is item 3's own character-sheet-template scope, not this
+     content is item 4's own character-sheet-template scope, not this
      item's.
-5. **A turn-based battle system**, more detailed than the old Godot
+6. **A turn-based battle system**, more detailed than the old Godot
    game's (which deliberately didn't even enforce turn order -- see
    Phase 9 below) -- its own UI lives inside the left mode-select panel
-   (item 4 above) and it integrates with chat/dice (item 0) and the
-   full character-sheet system (item 3 specifically -- real stats to
+   (item 5 above) and it integrates with chat/dice (item 0) and the
+   full character-sheet system (item 4 specifically -- real stats to
    act on, not just item 1's minimal record), so it's sequenced after
    chat, tokens, and the full character-sheet system all exist.
-6. **Mod load/unload mechanism, with a minimal (not yet polished) UI**
-   -- split out of the settings-tab item below (2026-10-16 correction)
-   because items 7/8 need SOME real way to load/unload a mod before
-   they're meaningfully testable at all, by BOTH a script test AND a
-   person manually trying one -- a person can't drive a server-side
-   function call directly, so some UI (even a crude, no-styling one --
-   a plain list with load/unload buttons is enough) is genuinely
-   required here, not deferred to item 9. Just the mechanism and that
-   bare-minimum UI: a Game's list of included mod files, real load/
-   unload calls a test can call directly, and a rough manual control
-   for a person to do the same thing -- NOT item 9's polished,
-   integrated settings tab inside the chat panel, which replaces this
-   item's crude UI afterward rather than building on top of it.
 7. **Default blocks as a real mod** -- pull the current built-in voxel
    type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
    hardcoded in the shared package) out into an actual mod file, using
-   item 6's load/unload mechanism to verify it actually works as a mod
+   item 3's load/unload mechanism to verify it actually works as a mod
    (not just that the file exists). Full scope in
    `docs/PORTING_CHECKLIST.md`'s Phase 6. Operationalizes a design
    principle this project has carried since Phase 6 was first scoped
@@ -193,13 +205,13 @@ discussion (2026-10-15), in dependency order:
    the current built-in generator catalog
    (`packages/shared/src/worldGenerators.ts`'s hilly/plains/
    limestone_slab). Full scope in `docs/PORTING_CHECKLIST.md`'s Phase 6.
-   Together with item 7, this is also what makes item 3's "a Game
+   Together with item 7, this is also what makes item 4's "a Game
    picks a character-sheet template the same way it already picks a
    world generator" literally true (today's generator "picking" is
    just a hardcoded 3-entry catalog, not a real mod file) rather than
    just an analogy.
 9. **Mod-management settings tab, inside the chat panel** (user
-   request, 2026-10-16) -- replaces item 6's crude manual UI with a
+   request, 2026-10-16) -- replaces item 3's crude manual UI with a
    polished one integrated into the chat panel, on the SAME underlying
    load/unload mechanism: a Game's set of included mod files
    (including items 7/8's default mods, and eventually character-
@@ -210,17 +222,24 @@ discussion (2026-10-15), in dependency order:
 Everything else currently sequenced into Phase 2/3/4/7/8/10/11+ below
 is real, worth doing, and NOT dropped -- but it's supporting/polish work
 relative to 0-9 above, not a substitute for them (Phase 6 itself is now
-fully covered by items 6-9). When picking what to work on next, default
-to advancing 0-9 in strict order -- this list IS the build order now
-(2026-10-16 correction: an earlier draft numbered this as 0,1,2,3,4...
-with 1 split into non-adjacent 1a/1b sub-parts around item 2, which
-wasn't actually sequential despite the numbers; this version renumbers
-everything so top-to-bottom reading is literally the order to build in,
-no sub-letters -- and a second 2026-10-16 correction split the old last
-item into a minimal mechanism, item 6, that now comes BEFORE the
-extraction items it unblocks, with the polished UI moved to the new
-last item, 9). Detour only for a specific reason (a live-reported bug,
-a small blocking dependency).
+fully covered by items 3/7/8/9). When picking what to work on next,
+default to advancing 0-9 in strict order -- this list IS the build
+order now (2026-10-16 correction: an earlier draft numbered this as
+0,1,2,3,4... with 1 split into non-adjacent 1a/1b sub-parts around
+item 2, which wasn't actually sequential despite the numbers; that
+version renumbered everything so top-to-bottom reading is literally
+the order to build in, no sub-letters -- and a second 2026-10-16
+correction split the old last item into a minimal mechanism that came
+BEFORE the extraction items it unblocks, with the polished UI moved to
+the new last item, 9. A third correction, 2026-10-17, moved that
+minimal mod mechanism (item 3 now, was item 6) BEFORE the full
+character-sheet system (item 4 now, was item 3) -- item 4 names "mod-
+system-based templates" as an explicit requirement, which can't be
+literally true without item 3 existing first; the earlier ordering
+would have meant building character-sheet templates against a mod
+interface that doesn't exist, then reworking them once it does).
+Detour only for a specific reason (a live-reported bug, a small
+blocking dependency).
 
 ## Standing decisions
 

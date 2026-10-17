@@ -254,7 +254,7 @@ still this phase's full scope.
       JSON. Lets a Game configure which mod files it includes (the
       default-blocks/default-generators mods below, and eventually
       character-sheet-template mods, `docs/ROADMAP.md`'s MVP goal item
-      1). This is the first real UI consumer of "a Game includes these
+      4). This is the first real UI consumer of "a Game includes these
       mod files" -- the two extraction items below need it to make their
       own mods actually selectable/deselectable per game, not just
       technically real files.
