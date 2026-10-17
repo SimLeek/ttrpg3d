@@ -102,6 +102,37 @@ discussion (2026-10-15), in dependency order:
      servers, Roll20/Foundry JSON exports, etc.), the import mechanism
      itself is a pluggable mod interface -- a handful of built-in
      importer mods to start, swappable/extensible later.
+   - **NEW -- player body size becomes a permanent character-sheet
+     variable** (real request, 2026-10-17): `playerBodyMesh.ts`/
+     `net.ts`'s `PLAYER_BODY_WIDTH`/`HEIGHT`/`DEPTH` (today fixed
+     constants, same for every character) move into the character-sheet
+     variable system as ALWAYS-PRESENT, reserved variables -- every
+     template has them (unlike ordinary template-defined variables,
+     these aren't optional/removable), driving each character's actual
+     body-box dimensions and derived token placement (`net.ts`'s
+     `TOKEN_Y_OFFSET` math already derives from `PLAYER_BODY_HEIGHT`, so
+     this becomes per-character instead of one fixed value for everyone).
+   - **NEW -- HP/MP become DEFAULT (not permanent/fixed) character-sheet
+     variables, linked to the billboard bars** (real request,
+     2026-10-17): unlike body size above, HP/MP should NOT be hardcoded
+     into the core variable system -- they're part of the DEFAULT
+     template (so a new sheet starts with them, matching item 1's
+     current fixed hp/maxHp/mp/maxMp shape), but a template can
+     theoretically omit or replace them. `characterToken.ts`'s HP/MP
+     bars need to read whichever variables the active template actually
+     resolves as HP/MP instead of the hardcoded `CharacterRecord.hp/mp`
+     fields item 1 built -- a real migration of item 1's minimal fields
+     onto this general variable system once it exists, not a separate,
+     parallel path.
+   - **NEW -- chat should show the character's name, not the account's**
+     (real request, 2026-10-17): chat currently sends/displays the
+     account's own `displayName` (`chatNet.ts`'s `connectChat`,
+     `GameRoom.ts`'s `senderName`) -- once a character is actually
+     selected, the chat sender name should be that CHARACTER's name
+     instead, so party members see "Aria said..." not "bob said...".
+     Needs real character data to resolve against (the account's
+     currently-controlled character), hence sequenced here rather than
+     attempted with item 1's minimal record alone.
 4. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
    the full implementation) for the chrome itself: all 4 panels exist

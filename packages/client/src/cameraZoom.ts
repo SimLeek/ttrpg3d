@@ -28,11 +28,20 @@
 import type { Engine } from "noa-engine";
 
 const MIN_ZOOM = 0;
-const MAX_ZOOM = 8;
+// Real request (2026-10-17): extend the max zoom to 10x its old value (was
+// 8), and default to the OLD max (8) instead of first person -- a
+// character token's own billboard/bars are far more useful visible by
+// default than not, and this also makes third person the default view
+// (any zoomDistance above playerBodyMesh.ts's FIRST_PERSON_ZOOM_THRESHOLD
+// already counts as third person, so defaulting non-zero here is the
+// whole fix for that, not a separate setting).
+const MAX_ZOOM = 80;
+const DEFAULT_ZOOM = 8;
 const ZOOM_STEP = 0.5;
 
 export function installCameraZoom(noa: Engine): void {
   noa.camera.updateAfterEntityRenderSystems = () => {};
+  noa.camera.zoomDistance = DEFAULT_ZOOM;
 
   window.addEventListener(
     "wheel",
