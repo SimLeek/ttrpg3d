@@ -267,6 +267,125 @@ span) for the party list.
     `pageManager.ts`'s overlay `inset: 0` replaced with the same four
     safe-area variables.
 
+## MVP goal items 1-2 — Minimal character record + 3D token representation
+
+Built together per explicit request (2026-10-16: "let's get working on
+the next incomplete todo items: minimal character record and token
+stuff, let's do them in one"). Genuinely new design, no old-game
+equivalent -- its NPC dialog billboard system (`npc_dialog_system.gd`)
+is proximity-triggered dialog TEXT, a different concept from an
+always-visible HP/MP+status billboard, which the old game never built
+(a dead, never-wired "hp above head maybe" comment is the only trace).
+
+**Server**: `CharacterRecord` in `store.ts` (`ownerAccountId`, `token:
+{color}`, hp/maxHp/mp/maxMp, `statusEffects`), full CRUD, REST endpoints
+(`GET`/`POST /accounts/:id/characters`). `WorldState.ts`'s `PlayerState`
+and `GameState.ts`'s `PlayerPresence` gained flattened character fields
+(same precedent as `isAdmin`/the respawn anchor -- resolved once at
+join, never a live per-message lookup). New `WorldRoom`/`GameRoom`
+message handlers `setCharacterStat`/`setStatusEffects`/
+`setCharacterToken`, gated to the character's own session or an admin.
+**`store.getDefaultCharacterForAccount`**: real follow-up request after
+first playtest confirmed a characterless join left every interaction
+feature inert (nothing to "own") -- resolves the account's oldest
+character, auto-creating one if it has none yet, called from both
+rooms' `onJoin` whenever no real `characterId` was given. Covers a
+brand-new account AND "deleted your last character" (the very next join
+recreates a default) in one function, matching both framings the user
+offered.
+
+**Client**: `characterToken.ts` (billboard plane + `@babylonjs/gui`
+content: name, HP/MP bars, status-icon row), `tokenPicking.ts` (coarse
+mesh-level pick), `characterContextMenu.ts` (right-click menu DOM
+overlay), lobby character dropdown/create form, `partyListPanel.ts`
+real token colors. `net.ts` wires local + remote tokens, hover
+highlighting (real outline via Babylon's `renderOutline`, not a subtle
+material tint), and click-to-edit HP/MP via an HTML `<input>` overlay
+(this project's established text-entry convention, not a Babylon GUI
+`InputText`).
+
+This was also this session's deepest real-bug-finding investigation --
+every fix below was confirmed by reading actual source or reproducing
+via console logging, never guessed:
+
+- **Billboards were invisible**: a mesh built via plain `MeshBuilder`
+  and just parented, without going through noa's own rendering API, is
+  never registered in noa's custom octree-based active-mesh selection
+  (`sceneOctreeManager.js`) -- Babylon's render loop only ever draws
+  what THAT returns. `noa.rendering.addMeshToScene(mesh, false)` fixes
+  it, same call noa's own `mesh` ECS component already makes for box
+  meshes.
+- **Right-click/picking silently did nothing**: `Scene.pickWithRay`/
+  `createPickingRay` are stub no-ops in `@babylonjs/core` unless
+  `Culling/ray.js` (which patches `Scene.prototype` as a side effect)
+  survives bundling -- nothing else in the app referenced `Ray` by name,
+  a real tree-shaking risk. Fixed with an explicit side-effect import,
+  confirmed present in the actual built bundle afterward.
+- **HP/MP-bar hover could never work via `AdvancedDynamicTexture`'s own
+  pointer system**: it depends on Babylon's automatic per-pointer-move
+  scene picking, but noa unconditionally sets `scene.skipPointerMovePicking
+  = true` (a real perf necessity -- a full-scene raycast against every
+  chunk mesh on every mouse move would be disastrous). Replaced with a
+  geometric hit-test in the token's own local plane space, driven by the
+  same camera-center/mouse-position ray `tokenPicking.ts` already uses.
+- **Context menu opened then instantly closed**: the same right-click
+  mousedown that opens it (via `game-inputs`, synchronously emitted from
+  a bubble-phase listener on noa's container, closer to the canvas) was
+  bubbling up to `characterContextMenu.ts`'s own `document`-level
+  "click outside closes it" listener within that SAME event dispatch --
+  open() and close() both completing before a frame ever rendered.
+  Fixed with a same-tick guard (the standard fix for this class of bug).
+- **Stat-edit `<input>` lost focus instantly**: calling `.focus()`
+  synchronously within the same mousedown that created the input raced
+  the browser's own default focus-to-canvas handling for that click,
+  which won and immediately blurred (committed/closed) it. Fixed by
+  deferring focus to the next tick.
+- **Overlays opened at the PREVIOUS click's position**: the click-
+  position tracker was a bubble-phase `document` listener, but noa's
+  own click handling (closer to the canvas) fires first in bubble
+  order. Fixed by switching to the capture phase, which always runs
+  before any bubble-phase listener regardless of where it's attached.
+- **"Select" mode hover/click never worked at all**: picking always
+  used the viewport-center ray (correct for pointer-locked "Default"
+  play) -- real mouse position was never read. Worse, `scene.pointerX`/
+  `pointerY` turned out to be permanently stuck at `(0,0)` in this
+  project: Babylon's own pointer tracking is wired up by
+  `scene.attachControl`, which noa never calls (it drives input through
+  its own separate pipeline). Fixed with a real `mousemove` listener on
+  noa's own canvas.
+- **Billboard visually overlapped/floated away from the character,
+  across several follow-up rounds**: ultimately FOUR compounding
+  issues, found one at a time via real screenshots and debug logging,
+  not all at once --
+  1. the billboard's Y offset was a bare magic number, not derived from
+     the player's actual height (fixed: derived from `PLAYER_BODY_HEIGHT`
+     + a small gap + half the billboard's own height);
+  2. the billboard plane was a full square with content occupying only
+     its top ~40%, so "half the plane's height" didn't correspond to
+     where the content actually ended (fixed: sized the texture/plane
+     to the content's real extent instead of an arbitrary square);
+  3. the actual root cause of every "bars are in the wrong place"
+     report: `@babylonjs/gui` `Control`s default to CENTER alignment,
+     with `top`/`left` as offsets FROM center, not from the top-left
+     corner this file's whole pixel-to-local-space math assumed
+     (confirmed directly in `Control`'s constructor) -- fixed by
+     forcing top/left alignment on every positioned control, with a new
+     regression test asserting the actual alignment, not just that the
+     math is internally self-consistent;
+  4. a parenting math error: the billboard is a child of the body box,
+     and noa already positions that box's own origin at its CENTER in
+     world space (feet + half its height), not its feet -- the offset
+     was being added on top of that already-elevated origin instead of
+     being measured from it, landing the billboard `PLAYER_BODY_HEIGHT
+     / 2` too high.
+
+**Known gaps, carried into `docs/ROADMAP.md`'s item 2 follow-ups**:
+context-menu actions ("Edit token properties", "Select status effects")
+are intentionally minimal placeholders, not final UI; the client-side
+`owned` ownership check is a literal characterId match with no
+admin/GM override yet, even though the server-side handlers already
+admin-gate correctly.
+
 ## Phase 2 — MVP
 
 - `scripts/movement_resource.gd`, `basic_jump_resource.gd`,

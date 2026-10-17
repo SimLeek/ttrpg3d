@@ -30,55 +30,48 @@ discussion (2026-10-15), in dependency order:
    variable reference specifically is NOT done -- character sheets
    (item 3 below) don't exist yet; `[[...]]` today only evaluates plain
    dice notation, no variable interpolation.
-1. **Minimal character record** -- a small data contract, split out
-   from the full character-sheet system (item 3 below) via direct
-   discussion (2026-10-16): item 2's token/billboard visuals are what a
-   player actually SEES first, the instant they load into a game,
-   before any character-sheet UI is ever opened, and only need this
-   much, not item 3's full authoring system. A per-user Character
-   record: `ownerAccountId`, a reference to that character's
-   token/model (what item 2 renders), HP current/max, MP current/max
-   (or whatever stat pair a system needs), a status-effect list. Fixed
-   shape for now, not yet item 3's mod-based template -- just enough
-   real data for item 2's bars/billboard to bind to instead of
-   inventing placeholder state.
-2. **Character 3D token representation** -- depends ONLY on item 1
-   above, not item 3. Scope, including new interaction requirements
-   from direct discussion (2026-10-16):
-   - Keep the old game's real billboard dialog system for NPC dialog
-     (`billboard` system, direct port).
-   - **HP/MP/etc. bars** shown on the token's billboard (new, no old
-     equivalent) -- READ from item 1's character record, never
-     duplicated local state; editing a bar writes back to that same
-     record (see the click-to-edit requirement below).
-   - **NEW -- status-effect icon billboard**: an additional billboard
-     element, placed above the HP/MP/etc. bars, showing one equal-sized
-     icon per active status effect (32x32 raster or SVG), fit into a
-     256-wide row that wraps and expands UPWARD as more icons are
-     added (so it grows away from the bars below it, not over them).
-   - **NEW -- raycast/hover interactions**:
-     - Hovering an HP/MP bar shows its exact current/max value.
-     - Clicking a bar lets you edit the CURRENT value by typing a
-       number, rather than any other input method (drag, click-to-
-       increment, etc.).
-     - Hovering a token you own (can edit) highlights it.
-     - Left-click on your own token is a no-op for now. **Deferred,
-       NOT this phase**: double-click switches which character you're
-       currently controlling/viewing from, for a user who owns more
-       than one character.
-     - Right-click opens a context menu on that token:
-       **"Open character sheet"** (item 3, once it exists), **"Edit
-       token properties"** (replaces this item's own earlier single-
-       action "right-click opens an edit dialog" bullet -- now one of
-       several menu choices, not the only thing right-click does),
-       **"Select status effects"** (edits the list the icon billboard
-       above renders).
-   - The party-list panel's existing placeholder avatars (already
-     shipped, `docs/COMPLETED.md`'s panel-UI-chrome entry) should
-     switch to each player's real token image once item 1's record
-     exists -- same dependency as the separate "switch avatar by
-     selecting a character in chat" follow-up noted under item 4 below,
-     just the simpler "show the token you already have" half of it.
+1. ~~**Minimal character record**~~ -- **DONE** (2026-10-16, see
+   [COMPLETED.md](COMPLETED.md#mvp-goal-items-1-2--minimal-character-record--3d-token-representation)
+   for the full implementation).
+2. ~~**Character 3D token representation**~~ -- **DONE** (2026-10-16,
+   same COMPLETED.md entry as item 1 -- built together per explicit
+   request). Still open within this item:
+   - **Context-menu actions are placeholders, not real implementations**
+     (real feedback, 2026-10-16: "that edit token properties... well
+     they're placeholders tbh"). "Edit token properties" is just a raw
+     color swatch (no name/other property editing); "Select status
+     effects" is a hardcoded 3-entry catalog (poison/stun/blessed), not
+     a real mod-based status-effect catalog/definitions system; "Open
+     character sheet" is correctly disabled (item 3 doesn't exist yet)
+     but needs wiring once it does. None of these were meant to be the
+     final UI -- revisit once item 3's mod-template system exists to
+     build real versions on top of, rather than extending the
+     placeholders in place.
+   - **Ownership check is too literal, needs a real admin/GM override**
+     (real feedback, 2026-10-16: "I can't select root's bob from
+     another tab though I can select if it's the same character... I
+     think [we need] better ownership check (maybe game.owned_by or
+     something)"). Today's `owned` predicate (`net.ts`) is a flat
+     `token.characterId === myResolvedCharacterId()` -- it only ever
+     matches the EXACT character a session itself joined with, so a
+     second session on the SAME account (another tab, same character)
+     can interact with it, but a game's actual owner/admin can't select
+     or edit anyone else's token at all, even though `WorldRoom.ts`'s
+     `setCharacterStat`/`setStatusEffects`/`setCharacterToken` handlers
+     ALREADY admin-gate correctly server-side (same pattern as
+     `setRespawnAnchor`'s existing GM admin-override escape hatch). The
+     gap is purely client-side: `pickOwnedToken`/`pickHoveredStatBar`
+     should also treat a hover/click as valid when `gmOverride.isActive()`
+     (or a plain `isWorldAdmin` check, already resolved at join and
+     available as `PlayerState.isAdmin`) is true for the local session,
+     not just on an exact characterId match.
+   - **Party-list real token colors**: DONE as part of this item
+     (`partyListPanel.ts` now renders each player's real
+     `PlayerPresence.tokenColor` instead of a placeholder initial). The
+     separate "switch avatar by selecting a character in chat" follow-up
+     noted under item 4 below is still not built -- that's about
+     CHANGING which character a session is playing mid-session, not
+     just displaying the one it already has.
 3. **Full character-sheet authoring system** -- ships AFTER item 2
    (not before it -- see item 1's own note on why). The actual
    VTT-core data model (per-system stats, not the old game's stealth-
