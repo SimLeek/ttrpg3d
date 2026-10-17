@@ -3,6 +3,7 @@ import { boot, type ColyseusTestServer } from "@colyseus/testing";
 import { decodeChunk, AIR, DIRT } from "@ttrpg3d/shared";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { server } from "../server.js";
 import { WorldRoom } from "./WorldRoom.js";
 import { DEFAULT_WORLD_BOTTOM_Y } from "./WorldState.js";
@@ -319,6 +320,39 @@ describe("WorldRoom", () => {
       expect(synced.statusEffects.length).toBe(1);
       expect(synced.statusEffects[0].icon).toBe("poison.svg");
       expect(store.getCharacter(character.id)?.statusEffects).toEqual([{ icon: "poison.svg", label: "Poisoned" }]);
+    });
+  });
+
+  describe("mod load mechanism (MVP goal item 3, docs/ROADMAP.md)", () => {
+    it("a world whose PARENT GAME has the example-noop mod enabled has it actually registered when the world's room is created (per-GAME scope, not per-world -- real correction, 2026-10-17)", async () => {
+      const owner = trackedAccount(`WorldRoom-test-mod-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-mod-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Mod Test World", "limestone_slab", SLAB_PARAMS);
+      store.enableModForGame(game.id, "example-noop");
+
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      // Loading is fire-and-forget in onCreate (not awaited -- see that
+      // method's own comment on why), so give it a tick to actually run.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.modLoader.isLoaded("example-noop")).toBe(true);
+      // Dynamic import with a computed path, not a static relative
+      // specifier -- the real fixture lives outside tsconfig's `rootDir`
+      // (packages/server/mods/, deliberately not mixed into the compiled
+      // source tree), which a static import would fail typecheck against.
+      const fixture = (await import(pathToFileURL(join(process.cwd(), "mods", "example-noop", "entry.ts")).href)) as { registered: boolean };
+      expect(fixture.registered).toBe(true);
+    });
+
+    it("a world with no mods enabled doesn't load anything", async () => {
+      const owner = trackedAccount(`WorldRoom-test-no-mod-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-no-mod-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "No Mod Test World", "limestone_slab", SLAB_PARAMS);
+
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.modLoader.isLoaded("example-noop")).toBe(false);
     });
   });
 
