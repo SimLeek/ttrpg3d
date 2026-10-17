@@ -6,6 +6,7 @@ import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput 
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
 import { store } from "../data/store.js";
+import { createModLoader, type ModLoader } from "../mods/modLoader.js";
 import { join } from "node:path";
 
 /** Fallback used only if this room's worldId has no real WorldRecord in store.ts (e.g. a room created directly with an arbitrary id, no world ever registered) -- same "don't throw, work with a sensible default" spirit the old worldId fallback below already had. */
@@ -69,6 +70,16 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   /** Looked up once in onCreate (store.getWorld), not re-fetched per chunk -- a world's generatorId/params don't change mid-session. Falls back to DEFAULT_WORLD_GEN if no real WorldRecord exists for this id (see that constant's own doc). */
   worldGen: WorldGenInput = DEFAULT_WORLD_GEN;
 
+  // MVP goal item 3 (docs/ROADMAP.md): one ModLoader per WorldRoom
+  // instance (two worlds could have different mods enabled, see
+  // modLoader.ts's own header for why), loaded once at onCreate from
+  // this world's persisted modIds -- no hot-reload, matching the
+  // established respawn-anchor precedent (a value persisted via
+  // store.ts, re-applied when onCreate next runs, not live-pushed into
+  // an already-running room).
+  modLoader!: ModLoader;
+  private loadedModIds: string[] = [];
+
   // GM admin-override escape hatch state (core/mod-boundary plan) -- which
   // currently-connected sessions are this world's owner/admin/root,
   // tracked server-side rather than trusting a client-sent flag (checked
@@ -95,6 +106,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
 
     const world = store.getWorld(this.worldId);
     if (world) this.worldGen = { generatorId: world.generatorId, params: world.params };
+
+    // Fire-and-forget, not awaited: loading happens in the background
+    // rather than delaying room creation/message-handler registration
+    // (the handlers below must register synchronously, before any
+    // `await`, per this file's own established "a message sent in
+    // onJoin can arrive before the client's listener is ready" lesson --
+    // the same ordering concern applies to delaying onCreate itself).
+    this.modLoader = createModLoader(join(process.cwd(), "mods"));
+    this.loadedModIds = world?.modIds ?? [];
+    for (const modId of this.loadedModIds) void this.modLoader.loadMod(modId);
+
     if (world?.respawnAnchor) {
       this.state.hasRespawnAnchor = true;
       this.state.respawnAnchorX = world.respawnAnchor.x;
@@ -241,8 +263,9 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     });
   }
 
-  onDispose() {
+  async onDispose() {
     this.storage.close();
+    for (const modId of this.loadedModIds) await this.modLoader.unloadMod(modId);
   }
 
   onJoin(client: Client, options?: JoinOptions) {

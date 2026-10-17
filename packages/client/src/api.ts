@@ -33,6 +33,16 @@ export interface WorldRecord {
   generatorId: GeneratorId;
   params: GeneratorParams;
   createdAt: number;
+  /** MVP goal item 3 (docs/ROADMAP.md) -- which mods this world has enabled, by id. */
+  modIds: string[];
+}
+
+/** MVP goal item 3 (docs/ROADMAP.md) -- mirrors the server's modLoader.ts ModManifest exactly. */
+export interface ModManifest {
+  id: string;
+  name: string;
+  version: string;
+  entry: string;
 }
 
 export interface ChatMessage {
@@ -128,5 +138,33 @@ export async function fetchGameChat(httpUrl: string, gameId: string, options?: {
   if (options?.beforeId !== undefined) params.set("before", String(options.beforeId));
   const query = params.toString();
   const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/chat${query ? `?${query}` : ""}`);
+  return res.json();
+}
+
+/** Every mod file available on the server, regardless of which worlds have it enabled -- MVP goal item 3 (docs/ROADMAP.md). */
+export async function fetchAvailableMods(httpUrl: string): Promise<ModManifest[]> {
+  const res = await fetch(`${httpUrl}/mods`);
+  return res.json();
+}
+
+export async function fetchWorldMods(httpUrl: string, worldId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/worlds/${encodeURIComponent(worldId)}/mods`);
+  return res.json();
+}
+
+/** Admin-gated server-side (store.isWorldAdmin), same spirit as createWorldInGame -- accountId is the caller's own, not trusted blindly, just checked fresh. Returns the world's updated mod id list. */
+export async function enableWorldMod(httpUrl: string, worldId: string, accountId: string, modId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/worlds/${encodeURIComponent(worldId)}/mods`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, modId }),
+  });
+  return res.json();
+}
+
+export async function disableWorldMod(httpUrl: string, worldId: string, accountId: string, modId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/worlds/${encodeURIComponent(worldId)}/mods/${encodeURIComponent(modId)}?accountId=${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+  });
   return res.json();
 }

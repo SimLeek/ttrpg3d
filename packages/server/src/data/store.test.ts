@@ -140,6 +140,30 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(() => store.setWorldRespawnAnchor("not-a-real-world", { x: 0, y: 0, z: 0 })).not.toThrow();
   });
 
+  it("createWorld defaults modIds to an empty array; enableModForWorld/disableModForWorld persist changes, no-op for an unknown world id", () => {
+    const owner = store.createAccount("Owner");
+    const game = store.createGame("Mod Game", owner.id);
+    const world = store.createWorld(game.id, "Page One", "hilly", {});
+
+    expect(store.getWorld(world.id)?.modIds).toEqual([]);
+
+    store.enableModForWorld(world.id, "example-noop");
+    expect(store.getWorld(world.id)?.modIds).toEqual(["example-noop"]);
+
+    // Enabling the same mod twice doesn't duplicate it.
+    store.enableModForWorld(world.id, "example-noop");
+    expect(store.getWorld(world.id)?.modIds).toEqual(["example-noop"]);
+
+    store.enableModForWorld(world.id, "second-mod");
+    expect(store.getWorld(world.id)?.modIds).toEqual(["example-noop", "second-mod"]);
+
+    store.disableModForWorld(world.id, "example-noop");
+    expect(store.getWorld(world.id)?.modIds).toEqual(["second-mod"]);
+
+    expect(() => store.enableModForWorld("not-a-real-world", "example-noop")).not.toThrow();
+    expect(() => store.disableModForWorld("not-a-real-world", "example-noop")).not.toThrow();
+  });
+
   it("getWorld returns the world record by id, undefined for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const game = store.createGame("Lookup Game", owner.id);

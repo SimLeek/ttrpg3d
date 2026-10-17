@@ -10,6 +10,7 @@ import { WorldRoom } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
+import { listAvailableMods } from "./mods/modLoader.js";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -115,6 +116,38 @@ const getGameChat = createEndpoint("/games/:id/chat", { method: "GET", scope: "h
   }
 });
 
+// MVP goal item 3 (docs/ROADMAP.md): the crude REST surface a script
+// test and pageManager.ts's crude manual UI both call directly -- NOT
+// item 9's polished settings tab. Per-WORLD, not per-game (see
+// modLoader.ts's own header for why); admin-gated via store.isWorldAdmin,
+// same pattern postGameWorld already uses for its own (game-scoped)
+// admin check.
+const getMods = createEndpoint("/mods", { method: "GET", scope: "http" }, async () => {
+  return listAvailableMods(join(process.cwd(), "mods"));
+});
+
+const getWorldMods = createEndpoint("/worlds/:id/mods", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.getWorld(ctx.params.id)?.modIds ?? [];
+});
+
+const postWorldMod = createEndpoint("/worlds/:id/mods", { method: "POST", scope: "http" }, async (ctx) => {
+  const worldId = ctx.params.id;
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (!store.isWorldAdmin(worldId, accountId)) throw new APIError("UNAUTHORIZED", { message: "not an admin of this world" });
+  const modId = typeof ctx.body?.modId === "string" ? ctx.body.modId : "";
+  if (!modId) throw new APIError("BAD_REQUEST", { message: "modId is required" });
+  store.enableModForWorld(worldId, modId);
+  return store.getWorld(worldId)?.modIds ?? [];
+});
+
+const deleteWorldMod = createEndpoint("/worlds/:id/mods/:modId", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const worldId = ctx.params.id;
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  if (!store.isWorldAdmin(worldId, accountId)) throw new APIError("UNAUTHORIZED", { message: "not an admin of this world" });
+  store.disableModForWorld(worldId, ctx.params.modId);
+  return store.getWorld(worldId)?.modIds ?? [];
+});
+
 const routes = createRouter({
   getAccounts,
   postAccount,
@@ -125,6 +158,10 @@ const routes = createRouter({
   getGameWorlds,
   postGameWorld,
   getGameChat,
+  getMods,
+  getWorldMods,
+  postWorldMod,
+  deleteWorldMod,
 });
 
 export const server = defineServer({
