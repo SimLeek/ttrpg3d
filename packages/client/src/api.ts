@@ -24,6 +24,8 @@ export interface GameRecord {
   ownerAccountId: string;
   adminAccountIds: string[];
   createdAt: number;
+  /** MVP goal item 3 (docs/ROADMAP.md) -- which mods this game has enabled, by id. Per-GAME, not per-world (real correction, 2026-10-17). */
+  modIds: string[];
 }
 
 export interface WorldRecord {
@@ -33,8 +35,6 @@ export interface WorldRecord {
   generatorId: GeneratorId;
   params: GeneratorParams;
   createdAt: number;
-  /** MVP goal item 3 (docs/ROADMAP.md) -- which mods this world has enabled, by id. */
-  modIds: string[];
 }
 
 /** MVP goal item 3 (docs/ROADMAP.md) -- mirrors the server's modLoader.ts ModManifest exactly. */
@@ -141,20 +141,21 @@ export async function fetchGameChat(httpUrl: string, gameId: string, options?: {
   return res.json();
 }
 
-/** Every mod file available on the server, regardless of which worlds have it enabled -- MVP goal item 3 (docs/ROADMAP.md). */
+/** Every mod file available on the server, regardless of which games have it enabled -- MVP goal item 3 (docs/ROADMAP.md). */
 export async function fetchAvailableMods(httpUrl: string): Promise<ModManifest[]> {
   const res = await fetch(`${httpUrl}/mods`);
   return res.json();
 }
 
-export async function fetchWorldMods(httpUrl: string, worldId: string): Promise<string[]> {
-  const res = await fetch(`${httpUrl}/worlds/${encodeURIComponent(worldId)}/mods`);
+/** Per-GAME, not per-world (real correction, 2026-10-17). */
+export async function fetchGameMods(httpUrl: string, gameId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/mods`);
   return res.json();
 }
 
-/** Admin-gated server-side (store.isWorldAdmin), same spirit as createWorldInGame -- accountId is the caller's own, not trusted blindly, just checked fresh. Returns the world's updated mod id list. */
-export async function enableWorldMod(httpUrl: string, worldId: string, accountId: string, modId: string): Promise<string[]> {
-  const res = await fetch(`${httpUrl}/worlds/${encodeURIComponent(worldId)}/mods`, {
+/** Admin-gated server-side (store.isGameAdmin), same spirit as createWorldInGame -- accountId is the caller's own, not trusted blindly, just checked fresh. Returns the game's updated mod id list. */
+export async function enableGameMod(httpUrl: string, gameId: string, accountId: string, modId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/mods`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accountId, modId }),
@@ -162,8 +163,8 @@ export async function enableWorldMod(httpUrl: string, worldId: string, accountId
   return res.json();
 }
 
-export async function disableWorldMod(httpUrl: string, worldId: string, accountId: string, modId: string): Promise<string[]> {
-  const res = await fetch(`${httpUrl}/worlds/${encodeURIComponent(worldId)}/mods/${encodeURIComponent(modId)}?accountId=${encodeURIComponent(accountId)}`, {
+export async function disableGameMod(httpUrl: string, gameId: string, accountId: string, modId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/mods/${encodeURIComponent(modId)}?accountId=${encodeURIComponent(accountId)}`, {
     method: "DELETE",
   });
   return res.json();

@@ -46,6 +46,23 @@ export interface GameRecord {
   ownerAccountId: string;
   adminAccountIds: string[];
   createdAt: number;
+  /**
+   * MVP goal item 3 (docs/ROADMAP.md) -- which mods this GAME has
+   * enabled, by id (mods/modLoader.ts's manifest `id`). Real correction
+   * (2026-10-17) after an initial per-WORLD version: "mods for this
+   * page... too fine grained... I think they should be per game, not
+   * per page." Per-GAME SCOPE, but registration still happens per-WORLD
+   * TIMING (at each WorldRoom's onCreate, reading its PARENT game's
+   * modIds) -- the "registration happens per-world at WorldRoom
+   * instantiation" redesign in docs/PORTING_CHECKLIST.md's Phase 6 is
+   * about WHEN registration happens, not which record owns the list; a
+   * World's own room is still where voxel-affecting registration would
+   * actually run. No hot-reload: toggling takes effect the next time a
+   * room for one of this game's worlds is (re)created, not live-pushed
+   * to an already-running one -- same precedent as WorldRecord's own
+   * respawnAnchor persistence.
+   */
+  modIds: string[];
 }
 
 export interface WorldRecord {
@@ -57,18 +74,6 @@ export interface WorldRecord {
   createdAt: number;
   /** Respawn core primitive's persisted half -- real bug found live: this used to live ONLY in WorldRoom's in-memory Schema state, which Colyseus disposes once the room empties (the normal case when switching pages away and back in solo/small-group testing), silently losing the anchor. Persisted here instead so it survives a room being recreated. Admin-settable only (WorldRoom's setRespawnAnchor handler), null until set. */
   respawnAnchor?: { x: number; y: number; z: number } | null;
-  /**
-   * MVP goal item 3 (docs/ROADMAP.md) -- which mods this world has
-   * enabled, by id (mods/modLoader.ts's manifest `id`). No hot-reload
-   * (same precedent as respawnAnchor above): WorldRoom.onCreate reads
-   * this once and loads each listed mod; toggling takes effect the next
-   * time this world's room is (re)created, not live-pushed to an
-   * already-running one. Per-WORLD, not per-game -- confirmed as the
-   * deliberate redesign in docs/PORTING_CHECKLIST.md's Phase 6
-   * ("registration happens per-world at WorldRoom instantiation, not
-   * once globally at boot").
-   */
-  modIds: string[];
 }
 
 export interface StatusEffect {
@@ -135,7 +140,13 @@ export function createStore(baseDir: string) {
   }
 
   function loadGames(): GameRecord[] {
-    return readJson<GameRecord[]>(gamesFile, []);
+    // modIds is new (MVP goal item 3) -- a game saved before this field
+    // existed has no `modIds` key in its real on-disk JSON at all, so a
+    // real stale-data game would otherwise crash the first time
+    // anything iterates it (e.g. `for (const id of game.modIds)`).
+    // Defaulted here, at the one place every other reader goes through,
+    // rather than at each call site.
+    return readJson<GameRecord[]>(gamesFile, []).map((g) => (g.modIds ? g : { ...g, modIds: [] }));
   }
 
   function saveGames(games: GameRecord[]): void {
@@ -143,13 +154,7 @@ export function createStore(baseDir: string) {
   }
 
   function loadWorlds(): WorldRecord[] {
-    // modIds is new (MVP goal item 3) -- a world saved before this field
-    // existed has no `modIds` key in its real on-disk JSON at all, so a
-    // real stale-data world would otherwise crash the first time
-    // anything iterates it (e.g. `for (const id of world.modIds)`).
-    // Defaulted here, at the one place every other reader goes through,
-    // rather than at each call site.
-    return readJson<WorldRecord[]>(worldsFile, []).map((w) => (w.modIds ? w : { ...w, modIds: [] }));
+    return readJson<WorldRecord[]>(worldsFile, []);
   }
 
   function saveWorlds(worlds: WorldRecord[]): void {
@@ -158,7 +163,7 @@ export function createStore(baseDir: string) {
 
   function createWorldInternal(gameId: string, name: string, generatorId: GeneratorId, params: GeneratorParams): WorldRecord {
     const worlds = loadWorlds();
-    const world: WorldRecord = { id: newId(), gameId, name, generatorId, params, createdAt: Date.now(), modIds: [] };
+    const world: WorldRecord = { id: newId(), gameId, name, generatorId, params, createdAt: Date.now() };
     worlds.push(world);
     saveWorlds(worlds);
     return world;
@@ -216,8 +221,8 @@ export function createStore(baseDir: string) {
       if (games.length === 0) {
         const now = Date.now();
         games = [
-          { id: newId(), name: "Root's Game", ownerAccountId: "root", adminAccountIds: [], createdAt: now },
-          { id: newId(), name: "Test1's Game", ownerAccountId: "test1", adminAccountIds: [], createdAt: now },
+          { id: newId(), name: "Root's Game", ownerAccountId: "root", adminAccountIds: [], createdAt: now, modIds: [] },
+          { id: newId(), name: "Test1's Game", ownerAccountId: "test1", adminAccountIds: [], createdAt: now, modIds: [] },
         ];
         saveGames(games);
         for (const game of games) {
@@ -255,7 +260,7 @@ export function createStore(baseDir: string) {
 
     createGame(name: string, ownerAccountId: string): GameRecord {
       const games = loadGames();
-      const game: GameRecord = { id: newId(), name, ownerAccountId, adminAccountIds: [], createdAt: Date.now() };
+      const game: GameRecord = { id: newId(), name, ownerAccountId, adminAccountIds: [], createdAt: Date.now(), modIds: [] };
       games.push(game);
       saveGames(games);
       return game;
@@ -320,21 +325,21 @@ export function createStore(baseDir: string) {
       saveWorlds(worlds);
     },
 
-    /** No-op if already enabled or the world id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. Admin-gating happens at the caller (WorldRoom/server.ts), same split that function already uses. */
-    enableModForWorld(worldId: string, modId: string): void {
-      const worlds = loadWorlds();
-      const world = worlds.find((w) => w.id === worldId);
-      if (!world) return;
-      if (!world.modIds.includes(modId)) world.modIds.push(modId);
-      saveWorlds(worlds);
+    /** No-op if already enabled or the game id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. Admin-gating happens at the caller (server.ts), same split that function already uses. Per-GAME, not per-world -- real correction, see GameRecord.modIds's own doc. */
+    enableModForGame(gameId: string, modId: string): void {
+      const games = loadGames();
+      const game = games.find((g) => g.id === gameId);
+      if (!game) return;
+      if (!game.modIds.includes(modId)) game.modIds.push(modId);
+      saveGames(games);
     },
 
-    disableModForWorld(worldId: string, modId: string): void {
-      const worlds = loadWorlds();
-      const world = worlds.find((w) => w.id === worldId);
-      if (!world) return;
-      world.modIds = world.modIds.filter((id) => id !== modId);
-      saveWorlds(worlds);
+    disableModForGame(gameId: string, modId: string): void {
+      const games = loadGames();
+      const game = games.find((g) => g.id === gameId);
+      if (!game) return;
+      game.modIds = game.modIds.filter((id) => id !== modId);
+      saveGames(games);
     },
 
     /** Thin wrapper over isGameAdmin, resolved through the world's parent game -- WorldRoom.ts's own call site (worldId, not gameId) doesn't need to change. */

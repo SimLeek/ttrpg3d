@@ -324,11 +324,11 @@ describe("WorldRoom", () => {
   });
 
   describe("mod load mechanism (MVP goal item 3, docs/ROADMAP.md)", () => {
-    it("a world with the example-noop mod enabled has it actually registered when its room is created", async () => {
+    it("a world whose PARENT GAME has the example-noop mod enabled has it actually registered when the world's room is created (per-GAME scope, not per-world -- real correction, 2026-10-17)", async () => {
       const owner = trackedAccount(`WorldRoom-test-mod-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-mod-game-${Date.now()}`, owner.id);
       const world = trackedWorld(game.id, "Mod Test World", "limestone_slab", SLAB_PARAMS);
-      store.enableModForWorld(world.id, "example-noop");
+      store.enableModForGame(game.id, "example-noop");
 
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       // Loading is fire-and-forget in onCreate (not awaited -- see that

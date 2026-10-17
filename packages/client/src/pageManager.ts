@@ -20,7 +20,7 @@
 // scope note).
 
 import { WORLD_GENERATORS, VOXEL_TYPES, DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type LimestoneSlabParams, DEFAULT_LIMESTONE_SLAB_PARAMS } from "@ttrpg3d/shared";
-import { fetchWorldsForGame, createWorldInGame, fetchAvailableMods, fetchWorldMods, enableWorldMod, disableWorldMod, type WorldRecord, type ModManifest } from "./api.js";
+import { fetchWorldsForGame, createWorldInGame, type WorldRecord } from "./api.js";
 import { requestCapture, releaseCapture, isCaptured } from "./inputCapture.js";
 import { SAFE_AREA_LEFT_VAR, SAFE_AREA_RIGHT_VAR, SAFE_AREA_TOP_VAR, SAFE_AREA_BOTTOM_VAR } from "./panelLayout.js";
 
@@ -71,8 +71,6 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
         <div class="row">
           <button id="page-create-btn" type="button">Create page</button>
         </div>
-        <h2>Mods for this page -- crude, MVP goal item 3; a real settings tab comes later</h2>
-        <ul id="mod-list"></ul>
       </div>
     </div>
   `;
@@ -83,11 +81,8 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
   const generatorSelect = container.querySelector<HTMLSelectElement>("#page-generator")!;
   const paramsRow = container.querySelector<HTMLDivElement>("#page-params")!;
   const createBtn = container.querySelector<HTMLButtonElement>("#page-create-btn")!;
-  const modListEl = container.querySelector<HTMLUListElement>("#mod-list")!;
 
   let worlds: WorldRecord[] = [];
-  let availableMods: ModManifest[] = [];
-  let enabledModIds: string[] = [];
   let open = false;
 
   generatorSelect.innerHTML = WORLD_GENERATORS.map((g) => `<option value="${g.id}"${g.id === DEFAULT_GENERATOR_ID ? " selected" : ""}>${g.name} [${g.classifications.join(", ")}]</option>`).join("");
@@ -144,21 +139,6 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
     renderList();
   }
 
-  /** Crude, unstyled -- MVP goal item 3 (docs/ROADMAP.md): "a plain list with load/unload buttons is enough." Replaced by item 9's real settings tab later, not built on top of. */
-  function renderModsList(): void {
-    modListEl.innerHTML = availableMods
-      .map((m) => {
-        const isEnabled = enabledModIds.includes(m.id);
-        return `<li><span>${m.name} <span class="page-meta">v${m.version}</span></span><button class="mod-toggle-btn" type="button" data-mod-id="${m.id}" data-enabled="${isEnabled}">${isEnabled ? "Disable" : "Enable"}</button></li>`;
-      })
-      .join("");
-  }
-
-  async function refreshMods(): Promise<void> {
-    [availableMods, enabledModIds] = await Promise.all([fetchAvailableMods(httpUrl), fetchWorldMods(httpUrl, currentWorldId)]);
-    renderModsList();
-  }
-
   function setOpen(next: boolean): void {
     open = next;
     overlay.classList.toggle("open", open);
@@ -188,18 +168,6 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
     onSwitchWorld(worldId, worldName);
   });
 
-  modListEl.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".mod-toggle-btn");
-    if (!button) return;
-    const modId = button.dataset.modId!;
-    const isEnabled = button.dataset.enabled === "true";
-    const toggle = isEnabled ? disableWorldMod(httpUrl, currentWorldId, accountId, modId) : enableWorldMod(httpUrl, currentWorldId, accountId, modId);
-    void toggle.then((updatedModIds) => {
-      enabledModIds = updatedModIds;
-      renderModsList();
-    });
-  });
-
   function onKeydown(event: KeyboardEvent): void {
     // See hotbar.ts's identical guard for the real bug this fixes
     // (chat typing would otherwise also toggle this panel).
@@ -211,10 +179,7 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
     if (event.code !== "KeyM") return;
     if (!open && !isAdmin()) return; // can't OPEN without being admin; always allowed to close
     setOpen(!open);
-    if (open) {
-      void refreshWorlds();
-      void refreshMods();
-    }
+    if (open) void refreshWorlds();
   }
 
   window.addEventListener("keydown", onKeydown);

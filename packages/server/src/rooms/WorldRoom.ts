@@ -113,8 +113,14 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // `await`, per this file's own established "a message sent in
     // onJoin can arrive before the client's listener is ready" lesson --
     // the same ordering concern applies to delaying onCreate itself).
+    // Per-GAME scope, not per-world (real correction, see GameRecord.
+    // modIds's own doc in store.ts) -- resolved through this world's
+    // PARENT game, even though the actual registration still happens at
+    // THIS WorldRoom's own creation (the timing half of the original
+    // per-world design is unchanged, only the scope of "which mods" is).
     this.modLoader = createModLoader(join(process.cwd(), "mods"));
-    this.loadedModIds = world?.modIds ?? [];
+    const game = world ? store.getGame(world.gameId) : undefined;
+    this.loadedModIds = game?.modIds ?? [];
     for (const modId of this.loadedModIds) void this.modLoader.loadMod(modId);
 
     if (world?.respawnAnchor) {
