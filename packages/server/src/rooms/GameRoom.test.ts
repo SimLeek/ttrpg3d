@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { server } from "../server.js";
 import { GameRoom } from "./GameRoom.js";
 import type { GameStateType } from "./GameState.js";
+import { store } from "../data/store.js";
 
 // GameRoom takes a bare gameId directly (no store.ts lookup, unlike
 // WorldRoom) -- the only real filesystem artifact a test run leaves
@@ -142,6 +143,40 @@ describe("GameRoom", () => {
     const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
     const anon = await colyseus.connectTo(room);
     expect(room.state.players.get(anon.sessionId)?.name).toMatch(/^Player-/);
+  });
+
+  it("a join with a real characterId populates the presence's token color; a missing one leaves it at the 0,0,0 default (MVP goal items 1-2)", async () => {
+    const owner = store.createAccount(`GameRoom-test-char-owner-${Date.now()}`);
+    const character = store.createCharacter(owner.id, "Tokened", [0.1, 0.2, 0.3]);
+    try {
+      const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+      const withCharacter = await colyseus.connectTo(room, { characterId: character.id });
+      const bare = await colyseus.connectTo(room);
+
+      const presence = (room.state as GameStateType).players.get(withCharacter.sessionId)!;
+      expect(presence.hasCharacter).toBe(true);
+      expect([presence.tokenColorR, presence.tokenColorG, presence.tokenColorB]).toEqual([0.1, 0.2, 0.3]);
+
+      const barePresence = (room.state as GameStateType).players.get(bare.sessionId)!;
+      expect(barePresence.hasCharacter).toBe(false);
+    } finally {
+      store.deleteAccount(owner.id);
+    }
+  });
+
+  it("a join with an accountId but no characterId falls back to that account's default character instead of staying characterless (MVP goal items 1-2)", async () => {
+    const owner = store.createAccount(`GameRoom-test-fallback-owner-${Date.now()}`);
+    store.createCharacter(owner.id, "Fallback", [0.4, 0.5, 0.6]);
+    try {
+      const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      const presence = (room.state as GameStateType).players.get(client.sessionId)!;
+      expect(presence.hasCharacter).toBe(true);
+      expect([presence.tokenColorR, presence.tokenColorG, presence.tokenColorB]).toEqual([0.4, 0.5, 0.6]);
+    } finally {
+      store.deleteAccount(owner.id);
+    }
   });
 
   it("a blank message is silently ignored -- no broadcast, no error", async () => {

@@ -42,7 +42,27 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+export interface StatusEffect {
+  icon: string;
+  label: string;
+}
+
+/** MVP goal items 1-2 (docs/ROADMAP.md) -- mirrors the server's store.ts CharacterRecord exactly. */
+export interface CharacterRecord {
+  id: string;
+  ownerAccountId: string;
+  name: string;
+  token: { color: [number, number, number] };
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  statusEffects: StatusEffect[];
+  createdAt: number;
+}
+
 export const ACCOUNT_STORAGE_KEY = "ttrpg3d.accountId";
+export const CHARACTER_STORAGE_KEY = "ttrpg3d.characterId";
 
 export async function fetchAccounts(httpUrl: string): Promise<Account[]> {
   const res = await fetch(`${httpUrl}/accounts`);
@@ -83,6 +103,20 @@ export async function createWorldInGame(httpUrl: string, gameId: string, account
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accountId, name, generatorId, params }),
+  });
+  return res.json();
+}
+
+export async function fetchCharactersForAccount(httpUrl: string, accountId: string): Promise<CharacterRecord[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/characters`);
+  return res.json();
+}
+
+export async function createCharacter(httpUrl: string, accountId: string, name: string, color: [number, number, number]): Promise<CharacterRecord> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/characters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, color }),
   });
   return res.json();
 }

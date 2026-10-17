@@ -106,6 +106,10 @@ export function startGame(
   httpUrl: string,
   playerName: string,
   accountId: string,
+  // MVP goal items 1-2 (docs/ROADMAP.md) -- threaded through exactly like
+  // accountId above, all the way to net.ts's joinOrCreate options. Null is
+  // a real state (no character selected yet), not an error.
+  characterId: string | null,
   onSwitchWorld: (worldId: string, worldName: string) => void,
 ): RunningGame {
   console.log(`[game] starting world "${worldName}" (${worldId})`);
@@ -312,7 +316,7 @@ export function startGame(
   installOriginShiftLogger(noa);
   installCameraZoom(noa);
   installUnderwaterEffect(noa);
-  installPlayerBodyMesh(noa);
+  const playerBodyMesh = installPlayerBodyMesh(noa);
 
   // Hotbar + inventory UI (hotbar.ts, direct port of the old game's
   // player_inventory.gd) -- a plain DOM overlay, not part of noa's own
@@ -354,7 +358,7 @@ export function startGame(
   // stop() below chains onto this (rather than needing its own connected/
   // not-yet-connected branch) so leaving works correctly whether the
   // connection has finished by then or not.
-  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId, accountId, hotbar.getEquippedItem, playerController, SPAWN, httpUrl, gameId, onSwitchWorld).catch((err) => {
+  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId, accountId, characterId, hotbar.getEquippedItem, playerController, SPAWN, httpUrl, gameId, playerBodyMesh, onSwitchWorld).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
     return null;
   });

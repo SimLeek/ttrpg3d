@@ -33,9 +33,13 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
       expect(worlds[0].generatorId).toBe(DEFAULT_GENERATOR_ID);
     }
 
+    expect(store.listCharactersForAccount("root")).toHaveLength(1);
+    expect(store.listCharactersForAccount("test1")).toHaveLength(1);
+
     store.ensureSeedData(); // calling again must not duplicate
     expect(store.listAccounts()).toHaveLength(3);
     expect(store.listGamesVisibleTo("root")).toHaveLength(2);
+    expect(store.listCharactersForAccount("root")).toHaveLength(1);
   });
 
   it("creates a new normal account with a unique id", () => {
@@ -160,6 +164,120 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(() => store.deleteAccount("not-a-real-account")).not.toThrow();
   });
 
+  it("deleteAccount cascades to that account's own characters, leaving other accounts' characters alone", () => {
+    const owner = store.createAccount("Character Owner");
+    const other = store.createAccount("Other Owner");
+    const character = store.createCharacter(owner.id, "Removable Character", [1, 0, 0]);
+    const otherCharacter = store.createCharacter(other.id, "Kept Character", [0, 1, 0]);
+
+    store.deleteAccount(owner.id);
+    expect(store.getCharacter(character.id)).toBeUndefined();
+    expect(store.getCharacter(otherCharacter.id)).toEqual(otherCharacter);
+  });
+
+  it("createCharacter creates a character with a unique id, defaulted stats, and no status effects", () => {
+    const owner = store.createAccount("Owner");
+    const a = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+    const b = store.createCharacter(owner.id, "Bram", [0, 0, 1]);
+
+    expect(a.id).not.toBe(b.id);
+    expect(a.ownerAccountId).toBe(owner.id);
+    expect(a.token).toEqual({ color: [1, 0, 0] });
+    expect(a.hp).toBe(a.maxHp);
+    expect(a.mp).toBe(a.maxMp);
+    expect(a.statusEffects).toEqual([]);
+  });
+
+  it("listCharactersForAccount returns only that owner's characters", () => {
+    const owner = store.createAccount("Owner");
+    const other = store.createAccount("Other");
+    const character = store.createCharacter(owner.id, "Mine", [1, 0, 0]);
+    store.createCharacter(other.id, "Theirs", [0, 1, 0]);
+
+    expect(store.listCharactersForAccount(owner.id).map((c) => c.id)).toEqual([character.id]);
+    expect(store.listCharactersForAccount("does-not-exist")).toEqual([]);
+  });
+
+  it("getCharacter returns the character record by id, undefined for an unknown id", () => {
+    const owner = store.createAccount("Owner");
+    const character = store.createCharacter(owner.id, "Lookup", [1, 0, 0]);
+
+    expect(store.getCharacter(character.id)).toEqual(character);
+    expect(store.getCharacter("not-a-real-character")).toBeUndefined();
+  });
+
+  it("getDefaultCharacterForAccount returns the account's oldest character when it has one, undefined for an unknown account", () => {
+    const owner = store.createAccount("Owner");
+    const first = store.createCharacter(owner.id, "First", [1, 0, 0]);
+    store.createCharacter(owner.id, "Second", [0, 1, 0]);
+
+    expect(store.getDefaultCharacterForAccount(owner.id)?.id).toBe(first.id);
+    expect(store.getDefaultCharacterForAccount("not-a-real-account")).toBeUndefined();
+  });
+
+  it("getDefaultCharacterForAccount auto-creates a character for a real account that has none yet, and persists it so the next call returns the SAME one", () => {
+    const owner = store.createAccount("Fresh Owner");
+    expect(store.listCharactersForAccount(owner.id)).toEqual([]);
+
+    const created = store.getDefaultCharacterForAccount(owner.id);
+    expect(created).toBeDefined();
+    expect(created?.ownerAccountId).toBe(owner.id);
+    expect(store.listCharactersForAccount(owner.id)).toEqual([created]);
+
+    // Real request: deleting your last character should just mean the
+    // NEXT join recreates a fresh default, not a permanent dead end.
+    store.deleteCharacter(created!.id);
+    expect(store.listCharactersForAccount(owner.id)).toEqual([]);
+    const recreated = store.getDefaultCharacterForAccount(owner.id);
+    expect(recreated).toBeDefined();
+    expect(recreated?.id).not.toBe(created?.id);
+
+    // A second call once a character already exists doesn't create ANOTHER one.
+    expect(store.getDefaultCharacterForAccount(owner.id)?.id).toBe(recreated?.id);
+    expect(store.listCharactersForAccount(owner.id)).toHaveLength(1);
+  });
+
+  it("updateCharacterStats writes a single stat and persists it; a no-op for an unknown id", () => {
+    const owner = store.createAccount("Owner");
+    const character = store.createCharacter(owner.id, "Statted", [1, 0, 0]);
+
+    store.updateCharacterStats(character.id, "hp", 3);
+    expect(store.getCharacter(character.id)?.hp).toBe(3);
+    expect(store.getCharacter(character.id)?.maxHp).toBe(character.maxHp);
+
+    expect(() => store.updateCharacterStats("not-a-real-character", "hp", 99)).not.toThrow();
+  });
+
+  it("setCharacterStatusEffects replaces the status effects list and persists it", () => {
+    const owner = store.createAccount("Owner");
+    const character = store.createCharacter(owner.id, "Effected", [1, 0, 0]);
+
+    store.setCharacterStatusEffects(character.id, [{ icon: "poison.svg", label: "Poisoned" }]);
+    expect(store.getCharacter(character.id)?.statusEffects).toEqual([{ icon: "poison.svg", label: "Poisoned" }]);
+
+    expect(() => store.setCharacterStatusEffects("not-a-real-character", [])).not.toThrow();
+  });
+
+  it("setCharacterToken replaces the token color and persists it; a no-op for an unknown id", () => {
+    const owner = store.createAccount("Owner");
+    const character = store.createCharacter(owner.id, "Tokened", [1, 0, 0]);
+
+    store.setCharacterToken(character.id, [0, 1, 0]);
+    expect(store.getCharacter(character.id)?.token).toEqual({ color: [0, 1, 0] });
+
+    expect(() => store.setCharacterToken("not-a-real-character", [0, 0, 0])).not.toThrow();
+  });
+
+  it("deleteCharacter removes just that character; a no-op for an unknown id", () => {
+    const owner = store.createAccount("Owner");
+    const keep = store.createCharacter(owner.id, "Keep", [1, 0, 0]);
+    const remove = store.createCharacter(owner.id, "Remove", [0, 1, 0]);
+
+    store.deleteCharacter(remove.id);
+    expect(store.listCharactersForAccount(owner.id).map((c) => c.id)).toEqual([keep.id]);
+    expect(() => store.deleteCharacter("not-a-real-character")).not.toThrow();
+  });
+
   it("deleteWorld removes just that world, leaving its siblings alone; a no-op for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const game = store.createGame("Delete-world Game", owner.id);
@@ -189,10 +307,12 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     const owner = store.createAccount("Persisted Owner");
     const game = store.createGame("Persisted Game", owner.id);
     store.createWorld(game.id, "Persisted World", "hilly", {});
+    store.createCharacter(owner.id, "Persisted Character", [1, 0, 0]);
 
     const reopened = createStore(dir);
     expect(reopened.listAccounts().map((a) => a.displayName)).toContain("Persisted Owner");
     expect(reopened.listGamesVisibleTo(owner.id)).toHaveLength(1);
     expect(reopened.listWorldsForGame(game.id)).toHaveLength(1);
+    expect(reopened.listCharactersForAccount(owner.id)).toHaveLength(1);
   });
 });

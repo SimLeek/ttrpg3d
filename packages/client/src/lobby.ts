@@ -13,11 +13,40 @@
 // way store.ts's ensureSeedData() does for the seeded games) and enters it.
 
 import { fuzzyMatch, DEFAULT_GENERATOR_ID } from "@ttrpg3d/shared";
-import { fetchAccounts, fetchGames, fetchWorldsForGame, createAccount, createGame, createWorldInGame, ACCOUNT_STORAGE_KEY, type Account, type GameRecord, type WorldRecord } from "./api.js";
+import {
+  fetchAccounts,
+  fetchGames,
+  fetchWorldsForGame,
+  fetchCharactersForAccount,
+  createAccount,
+  createGame,
+  createWorldInGame,
+  createCharacter,
+  ACCOUNT_STORAGE_KEY,
+  CHARACTER_STORAGE_KEY,
+  type Account,
+  type GameRecord,
+  type WorldRecord,
+  type CharacterRecord,
+} from "./api.js";
 
-export type { Account, GameRecord, WorldRecord };
+export type { Account, GameRecord, WorldRecord, CharacterRecord };
 
-export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (game: GameRecord, world: WorldRecord, account: Account) => void): void {
+/** MVP goal items 1-2 (docs/ROADMAP.md) -- a random-ish default so "Create character" doesn't require picking a color first; the color input below lets the player change it before or after. */
+function randomCharacterColor(): [number, number, number] {
+  return [Math.random(), Math.random(), Math.random()];
+}
+
+function colorToHex([r, g, b]: [number, number, number]): string {
+  const toHex = (c: number) => Math.round(c * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToColor(hex: string): [number, number, number] {
+  return [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255];
+}
+
+export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (game: GameRecord, world: WorldRecord, account: Account, characterId: string | null) => void): void {
   container.innerHTML = `
     <style>
       .lobby { max-width: 640px; margin: 48px auto; font-family: system-ui, sans-serif; color: #eee; max-height: calc(100vh - 96px); display: flex; flex-direction: column; }
@@ -49,6 +78,13 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
         <button id="create-account-btn" type="button">Create account</button>
       </div>
       <div class="row">
+        <label for="character-select">Character:</label>
+        <select id="character-select"></select>
+        <input id="new-character-name" placeholder="New character name" />
+        <input id="new-character-color" type="color" title="Token color" />
+        <button id="create-character-btn" type="button">Create character</button>
+      </div>
+      <div class="row">
         <input id="new-game-name" placeholder="New game name" style="flex:1" />
         <button id="create-game-btn" type="button">Create game</button>
       </div>
@@ -62,20 +98,71 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
   const select = container.querySelector<HTMLSelectElement>("#account-select")!;
   const newAccountNameInput = container.querySelector<HTMLInputElement>("#new-account-name")!;
   const createAccountBtn = container.querySelector<HTMLButtonElement>("#create-account-btn")!;
+  const characterSelect = container.querySelector<HTMLSelectElement>("#character-select")!;
+  const newCharacterNameInput = container.querySelector<HTMLInputElement>("#new-character-name")!;
+  const newCharacterColorInput = container.querySelector<HTMLInputElement>("#new-character-color")!;
+  const createCharacterBtn = container.querySelector<HTMLButtonElement>("#create-character-btn")!;
   const newGameNameInput = container.querySelector<HTMLInputElement>("#new-game-name")!;
   const createGameBtn = container.querySelector<HTMLButtonElement>("#create-game-btn")!;
   const searchInput = container.querySelector<HTMLInputElement>("#search")!;
   const listEl = container.querySelector<HTMLUListElement>("#games-list")!;
 
+  newCharacterColorInput.value = colorToHex(randomCharacterColor());
+
   let accounts: Account[] = [];
   let games: GameRecord[] = [];
+  let characters: CharacterRecord[] = [];
   let selectedAccountId: string | null = localStorage.getItem(ACCOUNT_STORAGE_KEY);
+  // Not scoped per-account in storage -- a minimal MVP simplification (full
+  // multi-character-per-account selection UX is downstream of MVP goal
+  // item 3). renderCharacterOptions below falls back to this account's
+  // first character if the stored id doesn't belong to it.
+  let selectedCharacterId: string | null = localStorage.getItem(CHARACTER_STORAGE_KEY);
 
   function renderAccountOptions(): void {
     select.innerHTML = accounts
       .map((a) => `<option value="${a.id}"${a.id === selectedAccountId ? " selected" : ""}>${a.displayName}${a.role === "root" ? " (root)" : ""}</option>`)
       .join("");
   }
+
+  function renderCharacterOptions(): void {
+    if (!characters.some((c) => c.id === selectedCharacterId)) {
+      selectedCharacterId = characters[0]?.id ?? null;
+    }
+    if (selectedCharacterId) localStorage.setItem(CHARACTER_STORAGE_KEY, selectedCharacterId);
+    characterSelect.innerHTML =
+      `<option value="">(no character)</option>` +
+      characters.map((c) => `<option value="${c.id}"${c.id === selectedCharacterId ? " selected" : ""}>${c.name}</option>`).join("");
+  }
+
+  async function loadCharactersForSelectedAccount(): Promise<void> {
+    if (!selectedAccountId) {
+      characters = [];
+      renderCharacterOptions();
+      return;
+    }
+    characters = await fetchCharactersForAccount(httpUrl, selectedAccountId);
+    renderCharacterOptions();
+  }
+
+  characterSelect.addEventListener("change", () => {
+    selectedCharacterId = characterSelect.value || null;
+    if (selectedCharacterId) localStorage.setItem(CHARACTER_STORAGE_KEY, selectedCharacterId);
+    else localStorage.removeItem(CHARACTER_STORAGE_KEY);
+  });
+
+  createCharacterBtn.addEventListener("click", () => {
+    const name = newCharacterNameInput.value.trim();
+    if (!name || !selectedAccountId) return;
+    void createCharacter(httpUrl, selectedAccountId, name, hexToColor(newCharacterColorInput.value)).then((character) => {
+      characters.push(character);
+      selectedCharacterId = character.id;
+      localStorage.setItem(CHARACTER_STORAGE_KEY, character.id);
+      newCharacterNameInput.value = "";
+      newCharacterColorInput.value = colorToHex(randomCharacterColor());
+      renderCharacterOptions();
+    });
+  });
 
   function renderGamesList(): void {
     const filtered = fuzzyMatch(searchInput.value, games, (g) => g.name).map((r) => r.item);
@@ -106,6 +193,7 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
     selectedAccountId = select.value;
     localStorage.setItem(ACCOUNT_STORAGE_KEY, selectedAccountId);
     void loadGamesForSelectedAccount();
+    void loadCharactersForSelectedAccount();
   });
 
   createAccountBtn.addEventListener("click", () => {
@@ -118,6 +206,7 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
       newAccountNameInput.value = "";
       renderAccountOptions();
       void loadGamesForSelectedAccount();
+      void loadCharactersForSelectedAccount();
     });
   });
 
@@ -155,7 +244,7 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
         console.error(`[lobby] game "${game.name}" has no worlds to enter`);
         return;
       }
-      onPlay(game, world, account);
+      onPlay(game, world, account, selectedCharacterId);
     });
   });
 
@@ -166,5 +255,6 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
     }
     renderAccountOptions();
     await loadGamesForSelectedAccount();
+    await loadCharactersForSelectedAccount();
   })();
 }

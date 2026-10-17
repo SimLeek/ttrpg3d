@@ -36,11 +36,16 @@ import { parseSlashRoll, findInlineRolls } from "@ttrpg3d/shared";
 import { createChatStorage, type ChatStorage } from "../chat/chatStorage.js";
 import { rollNotation } from "../chat/diceRoll.js";
 import { GameState, PlayerPresence, type GameStateType } from "./GameState.js";
+import { store } from "../data/store.js";
 import { join } from "node:path";
 
 interface JoinOptions {
   gameId?: string;
   name?: string;
+  /** Sent by chatNet.ts alongside characterId -- used ONLY to resolve the default-character fallback (store.getDefaultCharacterForAccount) when no characterId is given, same as WorldRoom.ts's own accountId usage. Never trusted for anything auth-related here (this room has no admin concept). */
+  accountId?: string;
+  /** MVP goal items 1-2 (docs/ROADMAP.md) -- same resolve-server-side-via-store, tolerate-missing-gracefully shape as WorldRoom.ts's own characterId. Only the token color is needed here (party-list rendering); full HP/MP/status lives in WorldState.ts's PlayerState, scoped to an actual world session. */
+  characterId?: string;
 }
 
 interface ChatSendMessage {
@@ -104,6 +109,17 @@ export class GameRoom extends Room<{ state: GameStateType }> {
     const name = options?.name || `Player-${client.sessionId.slice(0, 4)}`;
     const presence = new PlayerPresence();
     presence.name = name;
+    // Same default-character fallback as WorldRoom.ts's onJoin -- a
+    // characterless join resolves/auto-creates the account's default
+    // character instead of leaving the party-list panel showing a flat
+    // placeholder color forever.
+    const character = (options?.characterId ? store.getCharacter(options.characterId) : undefined) ?? store.getDefaultCharacterForAccount(options?.accountId ?? "");
+    if (character) {
+      presence.hasCharacter = true;
+      presence.tokenColorR = character.token.color[0];
+      presence.tokenColorG = character.token.color[1];
+      presence.tokenColorB = character.token.color[2];
+    }
     this.state.players.set(client.sessionId, presence);
     console.log(`[GameRoom:${this.gameId}] ${name} (${client.sessionId}) joined`);
   }

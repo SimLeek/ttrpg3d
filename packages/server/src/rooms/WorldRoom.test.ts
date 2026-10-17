@@ -217,6 +217,111 @@ describe("WorldRoom", () => {
     });
   });
 
+  describe("character record (MVP goal items 1-2, docs/ROADMAP.md)", () => {
+    const owner = trackedAccount(`WorldRoom-test-char-owner-${Date.now()}`);
+    const game = trackedGame(`WorldRoom-test-char-game-${Date.now()}`, owner.id);
+    const world = trackedWorld(game.id, "Character Test World", "limestone_slab", SLAB_PARAMS);
+
+    it("a join with a real characterId populates the flattened character fields; a missing/unknown one leaves them at defaults and doesn't crash", async () => {
+      const character = store.createCharacter(owner.id, "Aria", [0.5, 0.25, 0.75]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+
+      const withCharacter = await colyseus.connectTo(room, { characterId: character.id });
+      const joined = room.state.players.get(withCharacter.sessionId)!;
+      expect(joined.characterId).toBe(character.id);
+      expect(joined.characterName).toBe("Aria");
+      expect([joined.tokenColorR, joined.tokenColorG, joined.tokenColorB]).toEqual([0.5, 0.25, 0.75]);
+      expect(joined.hp).toBe(character.hp);
+      expect(joined.maxHp).toBe(character.maxHp);
+
+      const withoutCharacter = await colyseus.connectTo(room);
+      const joinedBare = room.state.players.get(withoutCharacter.sessionId)!;
+      expect(joinedBare.characterId).toBe("");
+      expect(joinedBare.hp).toBe(0);
+
+      const withUnknownCharacter = await colyseus.connectTo(room, { characterId: "not-a-real-character" });
+      const joinedUnknown = room.state.players.get(withUnknownCharacter.sessionId)!;
+      expect(joinedUnknown.characterId).toBe("");
+    });
+
+    it("a join with an accountId but no (or an unknown) characterId falls back to that account's default character instead of staying blank", async () => {
+      const fallbackOwner = trackedAccount(`WorldRoom-test-fallback-owner-${Date.now()}`);
+      const defaultCharacter = store.createCharacter(fallbackOwner.id, "Fallback", [0.1, 0.2, 0.3]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+
+      const noCharacterId = await colyseus.connectTo(room, { accountId: fallbackOwner.id });
+      const joinedNoId = room.state.players.get(noCharacterId.sessionId)!;
+      expect(joinedNoId.characterId).toBe(defaultCharacter.id);
+      expect([joinedNoId.tokenColorR, joinedNoId.tokenColorG, joinedNoId.tokenColorB]).toEqual([0.1, 0.2, 0.3]);
+
+      const unknownCharacterId = await colyseus.connectTo(room, { accountId: fallbackOwner.id, characterId: "not-a-real-character" });
+      const joinedUnknownId = room.state.players.get(unknownCharacterId.sessionId)!;
+      expect(joinedUnknownId.characterId).toBe(defaultCharacter.id);
+    });
+
+    it("a join with an accountId that has no characters yet auto-creates a default one, real request: deleting your last character isn't a dead end", async () => {
+      const freshOwner = trackedAccount(`WorldRoom-test-fresh-owner-${Date.now()}`);
+      expect(store.listCharactersForAccount(freshOwner.id)).toEqual([]);
+
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: freshOwner.id });
+      const joined = room.state.players.get(client.sessionId)!;
+
+      expect(joined.characterId).not.toBe("");
+      expect(store.getCharacter(joined.characterId)?.ownerAccountId).toBe(freshOwner.id);
+    });
+
+    it("setCharacterStat writes back through store.getCharacter and the live Schema field when sent by the character's own owner", async () => {
+      const character = store.createCharacter(owner.id, "Statted", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { characterId: character.id });
+
+      client.send("setCharacterStat", { characterId: character.id, stat: "hp", value: 3 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.players.get(client.sessionId)!.hp).toBe(3);
+      expect(store.getCharacter(character.id)?.hp).toBe(3);
+    });
+
+    it("setCharacterStat is ignored from a client who is neither the character's own owner session nor an admin", async () => {
+      const character = store.createCharacter(owner.id, "Guarded", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const bystander = await colyseus.connectTo(room);
+
+      bystander.send("setCharacterStat", { characterId: character.id, stat: "hp", value: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(store.getCharacter(character.id)?.hp).toBe(character.hp);
+    });
+
+    it("setCharacterToken writes back through store.getCharacter and the live Schema fields when sent by the character's own owner", async () => {
+      const character = store.createCharacter(owner.id, "Recolored", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { characterId: character.id });
+
+      client.send("setCharacterToken", { characterId: character.id, color: [0, 1, 0] });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const synced = room.state.players.get(client.sessionId)!;
+      expect([synced.tokenColorR, synced.tokenColorG, synced.tokenColorB]).toEqual([0, 1, 0]);
+      expect(store.getCharacter(character.id)?.token).toEqual({ color: [0, 1, 0] });
+    });
+
+    it("setStatusEffects writes back through store.getCharacter and the live Schema array when sent by the character's own owner", async () => {
+      const character = store.createCharacter(owner.id, "Effected", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { characterId: character.id });
+
+      client.send("setStatusEffects", { characterId: character.id, statusEffects: [{ icon: "poison.svg", label: "Poisoned" }] });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const synced = room.state.players.get(client.sessionId)!;
+      expect(synced.statusEffects.length).toBe(1);
+      expect(synced.statusEffects[0].icon).toBe("poison.svg");
+      expect(store.getCharacter(character.id)?.statusEffects).toEqual([{ icon: "poison.svg", label: "Poisoned" }]);
+    });
+  });
+
   describe("block edits persist (real per-world storage)", () => {
     it("an edited block is visible to another client in the same room immediately (broadcast)", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });

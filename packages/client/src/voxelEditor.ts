@@ -41,6 +41,19 @@ function blockAabb(x: number, y: number, z: number): AABB {
   return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
 }
 
+export type CharacterStat = "hp" | "maxHp" | "mp" | "maxMp";
+
+export interface TokenInteractionHooks {
+  /** Coarse mesh-level pick (tokenPicking.ts) -- answers "is the cursor over a token, and do I own it" right now. Backs the right-click context menu. */
+  pickOwnedToken: () => { characterId: string } | undefined;
+  /** The GUI's own fine-grained hover state (characterToken.ts's isHoveringHpBar/isHoveringMpBar) -- answers "is the cursor over an editable HP/MP bar, and which one" right now. Backs left-click-to-edit. */
+  pickHoveredStatBar: () => { characterId: string; stat: CharacterStat } | undefined;
+  /** Opens characterContextMenu.ts at the given viewport coordinates for the picked character. */
+  openContextMenu: (characterId: string, screenX: number, screenY: number) => void;
+  /** Opens the HTML <input> overlay (net.ts) at the given viewport coordinates to edit one stat. */
+  openStatEditor: (characterId: string, stat: CharacterStat, screenX: number, screenY: number) => void;
+}
+
 export function installVoxelEditor(
   noa: Engine,
   getEquippedItem: () => Item | null,
@@ -51,8 +64,50 @@ export function installVoxelEditor(
   // toggle semantics. Optional/defaulted so every existing call site (and
   // every test) that doesn't care about GM mode keeps working unchanged.
   isGmModeActive: () => boolean = () => false,
+  // MVP goal items 1-2 (docs/ROADMAP.md): left-click (Mouse1/fire) on an
+  // editable HP/MP bar opens its stat editor instead of breaking a block,
+  // and right-click (Mouse3/alt-fire) on an owned token opens its context
+  // menu instead of placing a block -- both confirmed as the SAME
+  // bindings block-editing already uses, so both branch INSIDE the
+  // existing handlers rather than adding competing listeners. Optional/
+  // defaulted so every existing call site (and every test) that doesn't
+  // care about tokens keeps working unchanged.
+  tokenInteraction?: TokenInteractionHooks,
 ): void {
+  // Pointer-locked play has no live clientX/clientY from noa's own input
+  // state (just movement deltas) -- a real MouseEvent still reports
+  // *some* coordinate even locked (wherever the cursor was when lock was
+  // requested, typically center), so this just remembers the most recent
+  // click's screen position for whichever overlay opens to use.
+  //
+  // Real bug found live ("these are all in the wrong location"): game-
+  // inputs' own mousedown listener (on noa's container, confirmed in its
+  // source -- closer to the canvas) is a BUBBLE-phase listener, same as
+  // this one originally was, but attached on `document` (further up the
+  // bubble path). Bubble-phase listeners fire inner-to-outer, so noa's
+  // own listener -- and the synchronous "fire"/"alt-fire" emission it
+  // triggers, which reads `lastClickScreen` -- ran BEFORE this listener
+  // had a chance to update it with the CURRENT click's position. Every
+  // overlay opened at the PREVIOUS click's position instead. Capture
+  // phase fires top-down, before ANY bubble-phase listener anywhere in
+  // the tree, which guarantees this runs first regardless of where
+  // game-inputs attaches its own listener.
+  let lastClickScreen = { x: 0, y: 0 };
+  document.addEventListener(
+    "mousedown",
+    (event) => {
+      lastClickScreen = { x: event.clientX, y: event.clientY };
+    },
+    { capture: true },
+  );
+
   noa.inputs.down.on("fire", () => {
+    const hoveredStat = tokenInteraction?.pickHoveredStatBar();
+    if (hoveredStat) {
+      tokenInteraction!.openStatEditor(hoveredStat.characterId, hoveredStat.stat, lastClickScreen.x, lastClickScreen.y);
+      return;
+    }
+
     const tgt = noa.targetedBlock;
     if (!tgt) return;
     const [x, y, z] = tgt.position;
@@ -61,6 +116,12 @@ export function installVoxelEditor(
   });
 
   noa.inputs.down.on("alt-fire", () => {
+    const picked = tokenInteraction?.pickOwnedToken();
+    if (picked) {
+      tokenInteraction!.openContextMenu(picked.characterId, lastClickScreen.x, lastClickScreen.y);
+      return;
+    }
+
     const item = getEquippedItem();
     if (!item || item.kind !== "place-block") return; // nothing equipped, or a future non-block item kind with no placement behavior
     const tgt = noa.targetedBlock;

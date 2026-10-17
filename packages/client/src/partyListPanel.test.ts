@@ -69,6 +69,19 @@ describe("mountPartyListPanel", () => {
     expect(container.querySelector(".party-name")!.textContent).toBe("<img src=x onerror=alert(1)>");
   });
 
+  it("renders a real per-character token color when present, falling back to the default placeholder background when absent (MVP goal items 1-2)", () => {
+    mountPartyListPanel(container, {
+      initialPlayers: [
+        { sessionId: "a", name: "Aria", tokenColor: [1, 0, 0] },
+        { sessionId: "b", name: "Bare" },
+      ],
+      onPresenceChange: () => () => {},
+    });
+    const avatars = container.querySelectorAll<HTMLDivElement>(".party-avatar");
+    expect(avatars[0].style.background).toBe("rgb(255, 0, 0)");
+    expect(avatars[1].style.background).toBe("");
+  });
+
   it("the toggle button collapses and expands the panel", () => {
     mountPartyListPanel(container, { initialPlayers: [], onPresenceChange: () => () => {} });
     const panelEl = container.querySelector<HTMLDivElement>("#party-panel")!;

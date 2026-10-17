@@ -13,6 +13,8 @@ import type { ChatMessage } from "./api.js";
 export interface PresenceEntry {
   sessionId: string;
   name: string;
+  /** MVP goal items 1-2 (docs/ROADMAP.md) -- undefined for a characterless join (real state, not an error; partyListPanel.ts falls back to its existing initial-letter placeholder). */
+  tokenColor?: [number, number, number];
 }
 
 export interface ChatConnection {
@@ -33,9 +35,9 @@ export interface ChatConnection {
   leave(): void;
 }
 
-export async function connectChat(url: string, gameId: string, playerName: string, accountId: string): Promise<ChatConnection> {
+export async function connectChat(url: string, gameId: string, playerName: string, accountId: string, characterId: string | null): Promise<ChatConnection> {
   const client = new Client(url);
-  const room: Room = await client.joinOrCreate("game", { gameId, name: playerName, accountId });
+  const room: Room = await client.joinOrCreate("game", { gameId, name: playerName, accountId, characterId: characterId ?? undefined });
 
   return {
     send(text) {
@@ -53,19 +55,24 @@ export async function connectChat(url: string, gameId: string, playerName: strin
     },
     onPresenceChange(cb) {
       const $ = getStateCallbacks(room);
-      const presence = new Map<string, string>();
+      const presence = new Map<string, PresenceEntry>();
       function notify(): void {
-        cb(Array.from(presence, ([sessionId, name]) => ({ sessionId, name })));
+        cb(Array.from(presence.values()));
       }
+      type PresenceState = { name: string; hasCharacter: boolean; tokenColorR: number; tokenColorG: number; tokenColorB: number };
       // onAdd's own `immediate` default also fires for whoever's
       // already in the map at subscribe time (confirmed in @colyseus/
       // schema's real .d.ts) -- the panel gets a correct initial list
       // with no separate "fetch current presence" step needed.
-      const detachAdd = $(room.state as { players: Map<string, { name: string }> }).players.onAdd((player, sessionId) => {
-        presence.set(sessionId, player.name);
+      const detachAdd = $(room.state as { players: Map<string, PresenceState> }).players.onAdd((player, sessionId) => {
+        presence.set(sessionId, {
+          sessionId,
+          name: player.name,
+          tokenColor: player.hasCharacter ? [player.tokenColorR, player.tokenColorG, player.tokenColorB] : undefined,
+        });
         notify();
       });
-      const detachRemove = $(room.state as { players: Map<string, { name: string }> }).players.onRemove((_player, sessionId) => {
+      const detachRemove = $(room.state as { players: Map<string, PresenceState> }).players.onRemove((_player, sessionId) => {
         presence.delete(sessionId);
         notify();
       });

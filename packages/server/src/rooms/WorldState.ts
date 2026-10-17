@@ -43,6 +43,15 @@ import { schema, t, MapSchema } from "@colyseus/schema";
  */
 export const DEFAULT_WORLD_BOTTOM_Y = Number.MIN_SAFE_INTEGER;
 
+/** Mirrors store.ts's StatusEffect shape -- a flat {icon,label} entry, no mod-based catalog yet (MVP item 3, later). */
+export const StatusEffectState = schema(
+  {
+    icon: t.string().default(""),
+    label: t.string().default(""),
+  },
+  "StatusEffectState",
+);
+
 export const PlayerState = schema(
   {
     name: t.string().default("Player"),
@@ -52,6 +61,24 @@ export const PlayerState = schema(
     yaw: t.number().default(0),
     /** GM admin-override escape hatch (core/mod-boundary plan) -- set once in WorldRoom.onJoin from store.isWorldAdmin, never re-derived from anything the client sends. */
     isAdmin: t.boolean().default(false),
+    /**
+     * MVP goal items 1-2 (docs/ROADMAP.md): flattened from store.ts's
+     * CharacterRecord once at join (same precedent as isAdmin/respawn-anchor
+     * above, per WorldRoom.ts's onJoin -- never a live per-message lookup).
+     * All default/optional-shaped so a characterless join (no character
+     * selected, or an unknown/stale id) still works and simply renders no
+     * token client-side -- a real state, not an edge case to assume away.
+     */
+    characterId: t.string().default(""),
+    characterName: t.string().default(""),
+    tokenColorR: t.number().default(0),
+    tokenColorG: t.number().default(0),
+    tokenColorB: t.number().default(0),
+    hp: t.number().default(0),
+    maxHp: t.number().default(0),
+    mp: t.number().default(0),
+    maxMp: t.number().default(0),
+    statusEffects: t.array(StatusEffectState),
   },
   "PlayerState",
 );
@@ -72,3 +99,4 @@ export const WorldState = schema(
 export type WorldStateType = InstanceType<typeof WorldState>;
 export type PlayerStateType = InstanceType<typeof PlayerState>;
 export type PlayerMap = MapSchema<PlayerStateType>;
+export type StatusEffectStateType = InstanceType<typeof StatusEffectState>;

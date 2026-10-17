@@ -41,6 +41,26 @@ const postAccount = createEndpoint("/accounts", { method: "POST", scope: "http" 
   return store.createAccount(displayName);
 });
 
+// Minimal character record (MVP goal items 1-2, docs/ROADMAP.md) --
+// enough for the lobby's character dropdown + create form; full
+// authoring is item 3, later. Same trust level as getGameWorlds/
+// getGameChat above (no admin gate -- a client that already knows an
+// accountId can list/create its own characters).
+const getAccountCharacters = createEndpoint("/accounts/:id/characters", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.listCharactersForAccount(ctx.params.id);
+});
+
+const postAccountCharacter = createEndpoint("/accounts/:id/characters", { method: "POST", scope: "http" }, async (ctx) => {
+  const ownerAccountId = ctx.params.id;
+  const name = typeof ctx.body?.name === "string" ? ctx.body.name.trim() : "";
+  if (!name) throw new APIError("BAD_REQUEST", { message: "name is required" });
+  const color = ctx.body?.color;
+  if (!Array.isArray(color) || color.length !== 3 || !color.every((c) => typeof c === "number")) {
+    throw new APIError("BAD_REQUEST", { message: "color must be an [r,g,b] number triple" });
+  }
+  return store.createCharacter(ownerAccountId, name, color as [number, number, number]);
+});
+
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {
   const accountId = typeof ctx.query?.account === "string" ? ctx.query.account : "";
   if (!accountId) throw new APIError("BAD_REQUEST", { message: "account query param is required" });
@@ -95,7 +115,17 @@ const getGameChat = createEndpoint("/games/:id/chat", { method: "GET", scope: "h
   }
 });
 
-const routes = createRouter({ getAccounts, postAccount, getGames, postGame, getGameWorlds, postGameWorld, getGameChat });
+const routes = createRouter({
+  getAccounts,
+  postAccount,
+  getAccountCharacters,
+  postAccountCharacter,
+  getGames,
+  postGame,
+  getGameWorlds,
+  postGameWorld,
+  getGameChat,
+});
 
 export const server = defineServer({
   rooms: {

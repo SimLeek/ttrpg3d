@@ -1,6 +1,7 @@
 import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, type WorldStateType } from "./WorldState.js";
+import { WorldState, PlayerState, StatusEffectState, type WorldStateType } from "./WorldState.js";
+import type { StatusEffect } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -28,6 +29,27 @@ interface JoinOptions {
   name?: string;
   /** Lobby-account id (packages/client/src/api.ts's Account.id) -- used ONLY to check world owner/admin/root status server-side (store.isWorldAdmin), per the core/mod-boundary plan's GM admin-override escape hatch. Never trusted blindly: a forged/missing id just means "not admin," checked fresh against the store, not taken from the client as-is. */
   accountId?: string;
+  /** MVP goal items 1-2 (docs/ROADMAP.md) -- resolved server-side via store.getCharacter in onJoin, never trusted as-is. A missing/unknown id is a real state (no character selected yet), not an error -- the player simply joins with no token. */
+  characterId?: string;
+}
+
+type CharacterStat = "hp" | "maxHp" | "mp" | "maxMp";
+const CHARACTER_STATS: readonly CharacterStat[] = ["hp", "maxHp", "mp", "maxMp"];
+
+interface SetCharacterStatMessage {
+  characterId: string;
+  stat: CharacterStat;
+  value: number;
+}
+
+interface SetStatusEffectsMessage {
+  characterId: string;
+  statusEffects: StatusEffect[];
+}
+
+interface SetCharacterTokenMessage {
+  characterId: string;
+  color: [number, number, number];
 }
 
 function flatIndex(i: number, j: number, k: number): number {
@@ -165,6 +187,58 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.z = z;
       player.yaw = yaw;
     });
+
+    // Click-to-edit HP/MP backend (MVP goal items 1-2). Gated to the
+    // editing character's own owner session or an admin -- same spirit as
+    // setRespawnAnchor's admin gate above, plus a self-edit allowance since
+    // this is a per-character stat a player edits on their own token.
+    this.onMessage<SetCharacterStatMessage>("setCharacterStat", (client, { characterId, stat, value }) => {
+      if (!CHARACTER_STATS.includes(stat)) return;
+      const sender = this.state.players.get(client.sessionId);
+      const isSelf = sender?.characterId === characterId;
+      if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
+
+      store.updateCharacterStats(characterId, stat, value);
+      for (const player of this.state.players.values()) {
+        if (player.characterId === characterId) player[stat] = value;
+      }
+    });
+
+    // Backs the "Select status effects" context-menu item -- same gating
+    // as setCharacterStat above.
+    this.onMessage<SetStatusEffectsMessage>("setStatusEffects", (client, { characterId, statusEffects }) => {
+      const sender = this.state.players.get(client.sessionId);
+      const isSelf = sender?.characterId === characterId;
+      if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
+
+      store.setCharacterStatusEffects(characterId, statusEffects);
+      for (const player of this.state.players.values()) {
+        if (player.characterId !== characterId) continue;
+        player.statusEffects.clear();
+        for (const effect of statusEffects) {
+          const effectState = new StatusEffectState();
+          effectState.icon = effect.icon;
+          effectState.label = effect.label;
+          player.statusEffects.push(effectState);
+        }
+      }
+    });
+
+    // Backs the "Edit token properties" context-menu item -- same gating
+    // as setCharacterStat/setStatusEffects above.
+    this.onMessage<SetCharacterTokenMessage>("setCharacterToken", (client, { characterId, color }) => {
+      const sender = this.state.players.get(client.sessionId);
+      const isSelf = sender?.characterId === characterId;
+      if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
+
+      store.setCharacterToken(characterId, color);
+      for (const player of this.state.players.values()) {
+        if (player.characterId !== characterId) continue;
+        player.tokenColorR = color[0];
+        player.tokenColorG = color[1];
+        player.tokenColorB = color[2];
+      }
+    });
   }
 
   onDispose() {
@@ -189,7 +263,36 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     if (isAdmin) this.adminSessionIds.add(client.sessionId);
     player.isAdmin = isAdmin;
 
-    console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}`);
+    // MVP goal items 1-2: flattened once at join, same precedent as isAdmin
+    // above. Real request found live: a characterless join used to leave
+    // every character field at its Schema default (no token rendered, no
+    // owned-token interactions possible) -- a dead end requiring a trip
+    // through the lobby's create-character form first. Now falls back to
+    // store.getDefaultCharacterForAccount (resolves/auto-creates the
+    // account's default character) whenever no real one was explicitly
+    // picked. Only a join with no accountId at all (or an unknown one)
+    // still has nothing to default to -- genuinely nothing to attach a
+    // character to in that case.
+    const character = (options?.characterId ? store.getCharacter(options.characterId) : undefined) ?? store.getDefaultCharacterForAccount(options?.accountId ?? "");
+    if (character) {
+      player.characterId = character.id;
+      player.characterName = character.name;
+      player.tokenColorR = character.token.color[0];
+      player.tokenColorG = character.token.color[1];
+      player.tokenColorB = character.token.color[2];
+      player.hp = character.hp;
+      player.maxHp = character.maxHp;
+      player.mp = character.mp;
+      player.maxMp = character.maxMp;
+      for (const effect of character.statusEffects) {
+        const effectState = new StatusEffectState();
+        effectState.icon = effect.icon;
+        effectState.label = effect.label;
+        player.statusEffects.push(effectState);
+      }
+    }
+
+    console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}${character ? ` as ${character.name}` : ""}`);
   }
 
   onLeave(client: Client) {
