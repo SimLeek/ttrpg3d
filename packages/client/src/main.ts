@@ -14,7 +14,7 @@
 import Navigo from "navigo";
 import { mountLobby, type Account, type GameRecord, type WorldRecord } from "./lobby.js";
 import { startGame, type RunningGame } from "./game.js";
-import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, ACCOUNT_STORAGE_KEY } from "./api.js";
+import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, ACCOUNT_STORAGE_KEY, CHARACTER_STORAGE_KEY } from "./api.js";
 import { connectChat, type ChatConnection } from "./chatNet.js";
 import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
 import { mountQuickActionsPanel, type QuickActionsPanelController } from "./quickActionsPanel.js";
@@ -35,7 +35,7 @@ const lobbyEl = document.getElementById("lobby")!;
 // handler below falls back to reconstructing the same state from
 // localStorage + a server fetch in that case, rather than giving up and
 // going to the lobby.
-let pendingPlay: { game: GameRecord; world: WorldRecord; account: Account } | null = null;
+let pendingPlay: { game: GameRecord; world: WorldRecord; account: Account; characterId: string | null } | null = null;
 
 let runningGame: RunningGame | null = null;
 
@@ -46,9 +46,9 @@ function stopRunningGameIfAny(): void {
   }
 }
 
-function launchGame(game: GameRecord, worldId: string, worldName: string, account: Account): void {
+function launchGame(game: GameRecord, worldId: string, worldName: string, account: Account, characterId: string | null): void {
   lobbyEl.hidden = true;
-  runningGame = startGame(game.id, worldId, worldName, wsUrl, httpUrl, account.displayName, account.id, (newWorldId, newWorldName) => {
+  runningGame = startGame(game.id, worldId, worldName, wsUrl, httpUrl, account.displayName, account.id, characterId, (newWorldId, newWorldName) => {
     // Page-management panel's "switch" action -- same proven teardown/
     // setup this file already uses for the lobby->game handoff, just
     // without navigating the route or re-showing the lobby in between.
@@ -56,7 +56,7 @@ function launchGame(game: GameRecord, worldId: string, worldName: string, accoun
     // chat must NOT reconnect/flicker on a page switch, only on
     // actually entering/leaving a game.
     stopRunningGameIfAny();
-    launchGame(game, newWorldId, newWorldName, account);
+    launchGame(game, newWorldId, newWorldName, account, characterId);
   });
 }
 
@@ -91,7 +91,7 @@ function stopRunningChatIfAny(): void {
 }
 
 /** Connects/mounts chat + quick-actions + party-list for `game` if not already connected to this exact game (a page switch calls launchGame directly and never reaches here, so this only (re)connects on a genuine game entry or a switch between two different games), then runs the normal launchGame flow. */
-function enterGame(game: GameRecord, worldId: string, worldName: string, account: Account): void {
+function enterGame(game: GameRecord, worldId: string, worldName: string, account: Account, characterId: string | null): void {
   if (!runningChat || runningChat.gameId !== game.id) {
     stopRunningChatIfAny();
     const chatContainer = document.createElement("div");
@@ -101,7 +101,7 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
     document.body.appendChild(quickActionsContainer);
     document.body.appendChild(partyListContainer);
     void (async () => {
-      const [connection, history] = await Promise.all([connectChat(wsUrl, game.id, account.displayName, account.id), fetchGameChat(httpUrl, game.id)]);
+      const [connection, history] = await Promise.all([connectChat(wsUrl, game.id, account.displayName, account.id, characterId), fetchGameChat(httpUrl, game.id)]);
       const chatPanel = mountChatPanel(chatContainer, {
         initialMessages: history,
         onSend: (text) => connection.send(text),
@@ -119,7 +119,7 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
       runningChat = { connection, chatPanel, quickActionsPanel, partyListPanel, containers: [chatContainer, quickActionsContainer, partyListContainer], gameId: game.id };
     })();
   }
-  launchGame(game, worldId, worldName, account);
+  launchGame(game, worldId, worldName, account, characterId);
 }
 
 router.on("/", () => {
@@ -131,8 +131,8 @@ router.on("/", () => {
   stopRunningGameIfAny();
   stopRunningChatIfAny();
   lobbyEl.hidden = false;
-  mountLobby(lobbyEl, httpUrl, (game, world, account) => {
-    pendingPlay = { game, world, account };
+  mountLobby(lobbyEl, httpUrl, (game, world, account, characterId) => {
+    pendingPlay = { game, world, account, characterId };
     router.navigate(`/game/${game.id}`);
   });
 });
@@ -145,7 +145,7 @@ router.on("/game/:id", (match) => {
   }
 
   if (pendingPlay && pendingPlay.game.id === gameId) {
-    enterGame(pendingPlay.game, pendingPlay.world.id, pendingPlay.world.name, pendingPlay.account);
+    enterGame(pendingPlay.game, pendingPlay.world.id, pendingPlay.world.name, pendingPlay.account, pendingPlay.characterId);
     return;
   }
 
@@ -185,8 +185,9 @@ router.on("/game/:id", (match) => {
       router.navigate("/");
       return;
     }
-    pendingPlay = { game, world, account };
-    enterGame(game, world.id, world.name, account);
+    const characterId = localStorage.getItem(CHARACTER_STORAGE_KEY);
+    pendingPlay = { game, world, account, characterId };
+    enterGame(game, world.id, world.name, account, characterId);
   })();
 });
 

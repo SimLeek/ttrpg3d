@@ -26,13 +26,30 @@ import * as BABYLON from "@babylonjs/core";
 // values during a zoom transition.
 const FIRST_PERSON_ZOOM_THRESHOLD = 0.5;
 
-export function installPlayerBodyMesh(noa: Engine): void {
+// The single source of truth for the player body box's dimensions --
+// net.ts's remote-player boxes use the SAME numbers (confirmed duplicated
+// there before this export existed) and its character-token billboard
+// derives its vertical offset from PLAYER_BODY_HEIGHT rather than its own
+// separately-chosen fixed number (real request: reference the player's
+// actual height instead of a magic offset).
+export const PLAYER_BODY_WIDTH = 0.6;
+export const PLAYER_BODY_HEIGHT = 1.8;
+export const PLAYER_BODY_DEPTH = 0.6;
+
+export interface PlayerBodyMesh {
+  mesh: BABYLON.Mesh;
+  material: BABYLON.StandardMaterial;
+  /** Same visibility threshold this file already uses for its own box -- exposed so a child attachment (net.ts's local character-token billboard, MVP goal items 1-2) can mirror it instead of duplicating the constant. */
+  isThirdPerson(): boolean;
+}
+
+export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
   const scene = noa.rendering.getScene();
 
   // Same box dims/material style as net.ts's remote-player avatars (just a
   // different color, so you can tell your own body apart from a nearby
   // remote player) -- a real model is future work, not scope here.
-  const mesh = BABYLON.MeshBuilder.CreateBox("local-player-body", { width: 0.6, height: 1.8, depth: 0.6 }, scene);
+  const mesh = BABYLON.MeshBuilder.CreateBox("local-player-body", { width: PLAYER_BODY_WIDTH, height: PLAYER_BODY_HEIGHT, depth: PLAYER_BODY_DEPTH }, scene);
   const material = new BABYLON.StandardMaterial("local-player-body-mat", scene);
   material.diffuseColor = new BABYLON.Color3(0.3, 0.5, 0.9);
   mesh.material = material;
@@ -51,4 +68,10 @@ export function installPlayerBodyMesh(noa: Engine): void {
   scene.onBeforeRenderObservable.add(() => {
     mesh.isVisible = noa.camera.currentZoom > FIRST_PERSON_ZOOM_THRESHOLD;
   });
+
+  return {
+    mesh,
+    material,
+    isThirdPerson: () => noa.camera.currentZoom > FIRST_PERSON_ZOOM_THRESHOLD,
+  };
 }

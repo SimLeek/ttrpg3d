@@ -17,6 +17,9 @@ importers:
       '@babylonjs/core':
         specifier: ^6.1.0
         version: 6.49.0
+      '@babylonjs/gui':
+        specifier: ^6.49.0
+        version: 6.49.0(@babylonjs/core@6.49.0)
       '@colyseus/sdk':
         specifier: ^0.18.2
         version: 0.18.2(@colyseus/core@0.18.11)(typescript@7.0.2)(zod@4.5.4)
@@ -111,6 +114,11 @@ packages:
 
   '@babylonjs/core@6.49.0':
     resolution: {integrity: sha512-jU/JyqebRqqziNwHLcBYzANrVRd9S55yNZEjejwg2p4I8NRnoBBNgf4wuUVw17UKNHc1v3KD/Vnr5C2+dIWAqQ==}
+
+  '@babylonjs/gui@6.49.0':
+    resolution: {integrity: sha512-ZrfhWpvsva35P4NW/Ox8RiSJJ2RfTwU+azRZQDatWXHg86p8Lxu7oDEOg4ALiMLHn3cYkfDMXv29euLCLKEfxw==}
+    peerDependencies:
+      '@babylonjs/core': ^6.0.0
 
   '@better-auth/utils@0.3.1':
     resolution: {integrity: sha512-+CGp4UmZSUrHHnpHhLPYu6cV+wSUSvVbZbNykxhUDocpVNTo9uFFxw/NqJlh1iC4wQ9HKKWGCKuZ5wUgS0v6Kg==}
@@ -2029,6 +2037,10 @@ snapshots:
   '@babel/runtime@7.29.10': {}
 
   '@babylonjs/core@6.49.0': {}
+
+  '@babylonjs/gui@6.49.0(@babylonjs/core@6.49.0)':
+    dependencies:
+      '@babylonjs/core': 6.49.0
 
   '@better-auth/utils@0.3.1': {}
 

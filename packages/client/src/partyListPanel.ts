@@ -35,17 +35,21 @@ export interface PartyListPanelController {
   destroy(): void;
 }
 
-// A single, generic placeholder (no per-player data to key an icon
-// choice off of yet) -- a plain colored circle with the player's own
-// first initial, cheap and immediately replaceable once real avatars
-// (character tokens) exist, rather than shipping a brand-new image
-// asset just for a stand-in.
-function buildEntry(name: string): HTMLDivElement {
+// A colored circle with the player's own first initial -- the color is
+// the real per-character token color (MVP goal items 1-2, docs/ROADMAP.md)
+// once a player has selected a character; falls back to the original
+// generic blue placeholder for a characterless join (real state, not an
+// error -- see WorldRoom.ts's onJoin).
+function buildEntry(name: string, tokenColor?: [number, number, number]): HTMLDivElement {
   const entry = document.createElement("div");
   entry.className = "party-entry";
 
   const avatar = document.createElement("div");
   avatar.className = "party-avatar";
+  if (tokenColor) {
+    const [r, g, b] = tokenColor;
+    avatar.style.background = `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+  }
   avatar.textContent = (name[0] ?? "?").toUpperCase();
 
   const label = document.createElement("div");
@@ -84,7 +88,7 @@ export function mountPartyListPanel(container: HTMLElement, options: PartyListPa
 
   function render(players: PresenceEntry[]): void {
     body.innerHTML = "";
-    for (const p of players) body.appendChild(buildEntry(p.name));
+    for (const p of players) body.appendChild(buildEntry(p.name, p.tokenColor));
   }
   render(options.initialPlayers);
 

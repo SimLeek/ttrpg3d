@@ -59,6 +59,41 @@ export interface WorldRecord {
   respawnAnchor?: { x: number; y: number; z: number } | null;
 }
 
+export interface StatusEffect {
+  icon: string;
+  label: string;
+}
+
+/**
+ * MVP goal items 1-2 (docs/ROADMAP.md): the minimal data contract the
+ * 3D token/billboard visuals bind to -- deliberately NOT the full
+ * mod-based character-sheet template (that's item 3, later). Owned
+ * per-USER (`ownerAccountId`), not per-game -- a character is portable
+ * across games by construction, matching the same ownership model
+ * Account already has, not Game/World's owner+admin-list shape.
+ *
+ * `token` is a simple structured value using EXISTING rendering
+ * primitives (a plain color), not a model-asset reference -- there's
+ * no `.glb`/model-loading pipeline anywhere in this project yet, and
+ * `net.ts`'s remote-player boxes / `playerBodyMesh.ts`'s local body are
+ * already both the exact same box mesh with nothing but a fixed color
+ * varying -- this is a direct, zero-new-infrastructure generalization
+ * of that existing convention (and fixes "every remote player looks
+ * visually identical" as a side effect), not a new concept.
+ */
+export interface CharacterRecord {
+  id: string;
+  ownerAccountId: string;
+  name: string;
+  token: { color: [number, number, number] };
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  statusEffects: StatusEffect[];
+  createdAt: number;
+}
+
 function newId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -67,6 +102,7 @@ export function createStore(baseDir: string) {
   const accountsFile = join(baseDir, "accounts.json");
   const gamesFile = join(baseDir, "games.json");
   const worldsFile = join(baseDir, "worlds.json");
+  const charactersFile = join(baseDir, "characters.json");
 
   function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
@@ -110,6 +146,40 @@ export function createStore(baseDir: string) {
     return world;
   }
 
+  function loadCharacters(): CharacterRecord[] {
+    return readJson<CharacterRecord[]>(charactersFile, []);
+  }
+
+  function saveCharacters(characters: CharacterRecord[]): void {
+    writeJson(charactersFile, characters);
+  }
+
+  /** Deterministic, no-two-defaults-look-identical color for an auto-created default character -- real request: picking a character shouldn't be required just to see something other than a flat gray/placeholder box. Not cryptographic, just spread across the color space. */
+  function colorFromAccountId(accountId: string): [number, number, number] {
+    let hash = 0;
+    for (let i = 0; i < accountId.length; i++) hash = (hash * 31 + accountId.charCodeAt(i)) >>> 0;
+    return [(hash & 0xff) / 255, ((hash >> 8) & 0xff) / 255, ((hash >> 16) & 0xff) / 255];
+  }
+
+  function createCharacterInternal(ownerAccountId: string, name: string, color: [number, number, number]): CharacterRecord {
+    const characters = loadCharacters();
+    const character: CharacterRecord = {
+      id: newId(),
+      ownerAccountId,
+      name,
+      token: { color },
+      hp: 10,
+      maxHp: 10,
+      mp: 10,
+      maxMp: 10,
+      statusEffects: [],
+      createdAt: Date.now(),
+    };
+    characters.push(character);
+    saveCharacters(characters);
+    return character;
+  }
+
   return {
     /** Seeds a root account + a couple of test accounts/games (one starter DEFAULT_GENERATOR_ID world each) on first boot, if the store is empty. Safe to call every boot -- no-ops once seeded. */
     ensureSeedData(): void {
@@ -135,6 +205,17 @@ export function createStore(baseDir: string) {
         for (const game of games) {
           createWorldInternal(game.id, "Starting World", DEFAULT_GENERATOR_ID, {});
         }
+      }
+
+      // MVP goal item 1 (docs/ROADMAP.md): dev/test convenience only --
+      // mirrors the accounts/games/worlds blocks above, NOT a precedent
+      // for createAccount itself (confirmed directly: real account
+      // creation already doesn't auto-seed a starter Game/World either,
+      // so a real new account getting no starter Character either is
+      // consistent, not a gap).
+      if (loadCharacters().length === 0) {
+        createCharacterInternal("root", "Root's Character", [0.8, 0.2, 0.2]);
+        createCharacterInternal("test1", "Test1's Character", [0.2, 0.5, 0.8]);
       }
     },
 
@@ -228,6 +309,72 @@ export function createStore(baseDir: string) {
       return this.isGameAdmin(world.gameId, accountId);
     },
 
+    createCharacter: createCharacterInternal,
+
+    listCharactersForAccount(ownerAccountId: string): CharacterRecord[] {
+      return loadCharacters().filter((c) => c.ownerAccountId === ownerAccountId);
+    },
+
+    getCharacter(id: string): CharacterRecord | undefined {
+      return loadCharacters().find((c) => c.id === id);
+    },
+
+    /**
+     * Real request: a characterless join shouldn't be a dead end requiring
+     * a trip through the lobby's create-character form first -- WorldRoom.ts/
+     * GameRoom.ts's onJoin calls this whenever a join's characterId is
+     * missing or unknown. Returns the account's OLDEST character if it has
+     * one (stable choice across repeated joins, not "whichever happens to
+     * be first in an unordered list"), auto-creating one if the account
+     * has none yet -- covers a brand-new account, AND an account that just
+     * deleted its last character (the very next join recreates a default,
+     * per the explicit request: "deleting them just makes another
+     * default"). Returns undefined only if accountId itself doesn't
+     * resolve to a real account (an anonymous/no-account join truly has
+     * nothing to default to -- not this function's problem to invent an
+     * owner for).
+     */
+    getDefaultCharacterForAccount(accountId: string): CharacterRecord | undefined {
+      const existing = loadCharacters()
+        .filter((c) => c.ownerAccountId === accountId)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      if (existing[0]) return existing[0];
+
+      const account = loadAccounts().find((a) => a.id === accountId);
+      if (!account) return undefined;
+      return createCharacterInternal(accountId, `${account.displayName}'s Character`, colorFromAccountId(accountId));
+    },
+
+    /** The click-to-edit write-back (WorldRoom's setCharacterStat handler) -- `stat` is whichever flat numeric field was edited (hp/maxHp/mp/maxMp), never the whole record, so an admin/self edit can't accidentally clobber name/token/statusEffects. No-op for an unknown id, same "stale id, not a crash" spirit as setWorldRespawnAnchor. */
+    updateCharacterStats(id: string, stat: "hp" | "maxHp" | "mp" | "maxMp", value: number): void {
+      const characters = loadCharacters();
+      const character = characters.find((c) => c.id === id);
+      if (!character) return;
+      character[stat] = value;
+      saveCharacters(characters);
+    },
+
+    setCharacterStatusEffects(id: string, statusEffects: StatusEffect[]): void {
+      const characters = loadCharacters();
+      const character = characters.find((c) => c.id === id);
+      if (!character) return;
+      character.statusEffects = statusEffects;
+      saveCharacters(characters);
+    },
+
+    /** Backs the "Edit token properties" context-menu item -- same shape/no-op-safe spirit as updateCharacterStats above, just the token color instead of a stat. */
+    setCharacterToken(id: string, color: [number, number, number]): void {
+      const characters = loadCharacters();
+      const character = characters.find((c) => c.id === id);
+      if (!character) return;
+      character.token = { color };
+      saveCharacters(characters);
+    },
+
+    deleteCharacter(id: string): void {
+      saveCharacters(loadCharacters().filter((c) => c.id !== id));
+    },
+
     /**
      * Real gap found live: nothing could ever remove a game/world/account
      * once created -- including this file's OWN test suite, which (like
@@ -238,10 +385,18 @@ export function createStore(baseDir: string) {
      * delete-world tool needs exactly this), not added JUST for tests.
      * Cascading: deleting a game also deletes every world inside it (a
      * world can't meaningfully outlive its parent -- there'd be no game
-     * left to resolve its admin permissions through).
+     * left to resolve its admin permissions through). deleteAccount now
+     * cascades to that account's own characters too (a character can't
+     * meaningfully outlive its owner, same reasoning) -- closing a
+     * pre-existing gap found while adding CharacterRecord: deleteAccount
+     * never cascaded to that account's OWN games/worlds either, a real
+     * leftover-orphan gap this didn't introduce and isn't the place to
+     * fix (unrelated to characters, would need its own look at whether
+     * an account's games should really vanish with it or be reassigned).
      */
     deleteAccount(id: string): void {
       saveAccounts(loadAccounts().filter((a) => a.id !== id));
+      saveCharacters(loadCharacters().filter((c) => c.ownerAccountId !== id));
     },
 
     deleteGame(id: string): void {
