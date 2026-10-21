@@ -178,6 +178,44 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(() => store.setSeeThroughWallsForGame("not-a-real-game", false)).not.toThrow();
   });
 
+  it("createAccount defaults importedModIds to an empty array; importModForAccount/removeModForAccount persist changes, no-op for an unknown account id (MVP goal item 4, slice 1)", () => {
+    const account = store.createAccount("Mod Importer");
+
+    expect(store.getAccount(account.id)?.importedModIds).toEqual([]);
+
+    store.importModForAccount(account.id, "default-character-sheet");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["default-character-sheet"]);
+
+    // Importing the same mod twice doesn't duplicate it.
+    store.importModForAccount(account.id, "default-character-sheet");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["default-character-sheet"]);
+
+    store.importModForAccount(account.id, "stats-library");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["default-character-sheet", "stats-library"]);
+
+    store.removeModForAccount(account.id, "default-character-sheet");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["stats-library"]);
+
+    expect(() => store.importModForAccount("not-a-real-account", "default-character-sheet")).not.toThrow();
+    expect(() => store.removeModForAccount("not-a-real-account", "default-character-sheet")).not.toThrow();
+  });
+
+  it("createCharacter defaults templateId to null and variableValues to an empty object; updateCharacterSheet persists both, no-op for an unknown character id (MVP goal item 4, slice 1)", () => {
+    const owner = store.createAccount("Sheet Owner");
+    const character = store.createCharacter(owner.id, "Sheet Test", [1, 0, 0]);
+
+    expect(store.getCharacter(character.id)?.templateId).toBeNull();
+    expect(store.getCharacter(character.id)?.variableValues).toEqual({});
+
+    store.updateCharacterSheet(character.id, "default-character-sheet", { hp: 7, mp: 10 });
+    expect(store.getCharacter(character.id)).toMatchObject({ templateId: "default-character-sheet", variableValues: { hp: 7, mp: 10 } });
+
+    store.updateCharacterSheet(character.id, null, {});
+    expect(store.getCharacter(character.id)).toMatchObject({ templateId: null, variableValues: {} });
+
+    expect(() => store.updateCharacterSheet("not-a-real-character", "default-character-sheet", {})).not.toThrow();
+  });
+
   it("getWorld returns the world record by id, undefined for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const game = store.createGame("Lookup Game", owner.id);

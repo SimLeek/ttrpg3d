@@ -19,12 +19,14 @@ import { connectChat, type ChatConnection } from "./chatNet.js";
 import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
 import { mountQuickActionsPanel, type QuickActionsPanelController } from "./quickActionsPanel.js";
 import { mountPartyListPanel, type PartyListPanelController } from "./partyListPanel.js";
+import { mountCharactersPage } from "./characters.js";
 
 const wsUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
 const httpUrl = wsUrl.replace(/^ws/, "http");
 
 const router = new Navigo("/");
 const lobbyEl = document.getElementById("lobby")!;
+const charactersEl = document.getElementById("characters")!;
 
 // Navigo resolves routes from the URL alone; the game/world/account the
 // lobby's "Play" click picked travels through this instead of being
@@ -183,13 +185,48 @@ router.on("/", () => {
   stopRunningGameIfAny();
   stopRunningChatIfAny();
   lobbyEl.hidden = false;
-  mountLobby(lobbyEl, httpUrl, (game, world, account, characterId) => {
-    pendingPlay = { game, world, account, characterId };
-    router.navigate(`/game/${game.id}`);
-  });
+  charactersEl.hidden = true;
+  mountLobby(
+    lobbyEl,
+    httpUrl,
+    (game, world, account, characterId) => {
+      pendingPlay = { game, world, account, characterId };
+      router.navigate(`/game/${game.id}`);
+    },
+    () => router.navigate("/characters"),
+  );
+});
+
+// MVP goal item 4 (docs/ROADMAP.md), slice 1 -- standalone, account-
+// scoped characters page. No game/room involved at all, same reasoning
+// "/" above tears down any running game/chat before showing it.
+// Account id isn't in the URL (unlike /game/:id) -- resolved the same
+// way /game/:id's own direct-load fallback below does: localStorage's
+// ACCOUNT_STORAGE_KEY + a fresh fetchAccounts lookup, bouncing to "/"
+// if neither resolves.
+router.on("/characters", () => {
+  stopRunningGameIfAny();
+  stopRunningChatIfAny();
+  lobbyEl.hidden = true;
+  charactersEl.hidden = false;
+  void (async () => {
+    const storedAccountId = localStorage.getItem(ACCOUNT_STORAGE_KEY);
+    if (!storedAccountId) {
+      router.navigate("/");
+      return;
+    }
+    const accounts = await fetchAccounts(httpUrl);
+    const account = accounts.find((a) => a.id === storedAccountId);
+    if (!account) {
+      router.navigate("/");
+      return;
+    }
+    mountCharactersPage(charactersEl, httpUrl, account.id);
+  })();
 });
 
 router.on("/game/:id", (match) => {
+  charactersEl.hidden = true;
   const gameId = match?.data?.id;
   if (!gameId) {
     router.navigate("/");

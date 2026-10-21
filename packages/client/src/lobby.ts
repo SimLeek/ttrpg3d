@@ -46,7 +46,16 @@ function hexToColor(hex: string): [number, number, number] {
   return [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255];
 }
 
-export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (game: GameRecord, world: WorldRecord, account: Account, characterId: string | null) => void): void {
+export function mountLobby(
+  container: HTMLElement,
+  httpUrl: string,
+  onPlay: (game: GameRecord, world: WorldRecord, account: Account, characterId: string | null) => void,
+  // MVP goal item 4 (docs/ROADMAP.md), slice 1 -- the one new piece of
+  // UI chrome needed to actually reach the new standalone characters
+  // page. Threaded as a callback, same established pattern onPlay
+  // above already uses (main.ts owns router.navigate, not this file).
+  onViewCharacters: () => void,
+): void {
   container.innerHTML = `
     <style>
       .lobby { max-width: 640px; margin: 48px auto; font-family: system-ui, sans-serif; color: #eee; max-height: calc(100vh - 96px); display: flex; flex-direction: column; }
@@ -70,7 +79,10 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
       .lobby .empty { color: #888; padding: 10px 0; }
     </style>
     <div class="lobby">
-      <h1>ttrpg3d -- Games</h1>
+      <div class="row">
+        <h1 style="flex:1; margin:0;">ttrpg3d -- Games</h1>
+        <button id="view-characters-btn" type="button">My Characters</button>
+      </div>
       <div class="row">
         <label for="account-select">Account:</label>
         <select id="account-select"></select>
@@ -94,6 +106,9 @@ export function mountLobby(container: HTMLElement, httpUrl: string, onPlay: (gam
       <ul id="games-list"></ul>
     </div>
   `;
+
+  const viewCharactersBtn = container.querySelector<HTMLButtonElement>("#view-characters-btn")!;
+  viewCharactersBtn.addEventListener("click", onViewCharacters);
 
   const select = container.querySelector<HTMLSelectElement>("#account-select")!;
   const newAccountNameInput = container.querySelector<HTMLInputElement>("#new-account-name")!;

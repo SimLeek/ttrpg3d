@@ -13,13 +13,15 @@
         height: 100%;
         background: #1a1a1a;
       }
-      #lobby[hidden] {
+      #lobby[hidden],
+      #characters[hidden] {
         display: none;
       }
     </style>
   </head>
   <body>
     <div id="lobby"></div>
+    <div id="characters" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

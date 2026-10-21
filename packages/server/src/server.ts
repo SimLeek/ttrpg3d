@@ -10,7 +10,7 @@ import { WorldRoom } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
-import { listAvailableMods } from "./mods/modLoader.js";
+import { listAvailableMods, listCharacterSheetTemplates } from "./mods/modLoader.js";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -60,6 +60,56 @@ const postAccountCharacter = createEndpoint("/accounts/:id/characters", { method
     throw new APIError("BAD_REQUEST", { message: "color must be an [r,g,b] number triple" });
   }
   return store.createCharacter(ownerAccountId, name, color as [number, number, number]);
+});
+
+// MVP goal item 4 (docs/ROADMAP.md), slice 1 -- an account's own
+// imported mods, which character-sheet templates (and future library
+// mods) get resolved against on the standalone, game-free characters
+// page. Ungated, same trust level as getAccountCharacters/
+// postAccountCharacter above -- an account manages its own imports,
+// not a game-scoped admin decision like postGameMod's isGameAdmin check.
+const getAccountMods = createEndpoint("/accounts/:id/mods", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.getAccount(ctx.params.id)?.importedModIds ?? [];
+});
+
+const postAccountMod = createEndpoint("/accounts/:id/mods", { method: "POST", scope: "http" }, async (ctx) => {
+  const accountId = ctx.params.id;
+  const modId = typeof ctx.body?.modId === "string" ? ctx.body.modId : "";
+  if (!modId) throw new APIError("BAD_REQUEST", { message: "modId is required" });
+  store.importModForAccount(accountId, modId);
+  return store.getAccount(accountId)?.importedModIds ?? [];
+});
+
+const deleteAccountMod = createEndpoint("/accounts/:id/mods/:modId", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const accountId = ctx.params.id;
+  store.removeModForAccount(accountId, ctx.params.modId);
+  return store.getAccount(accountId)?.importedModIds ?? [];
+});
+
+// Catalog of character-sheet templates this account can actually pick
+// from -- scoped to its OWN importedModIds, not every mod on disk
+// (getMods below) and not any game's modIds.
+const getAccountCharacterSheetTemplates = createEndpoint("/accounts/:id/character-sheet-templates", { method: "GET", scope: "http" }, async (ctx) => {
+  const account = store.getAccount(ctx.params.id);
+  if (!account) return [];
+  return listCharacterSheetTemplates(join(process.cwd(), "mods"), account.importedModIds);
+});
+
+// Sets a character's template + variable values wholesale. Ownership-
+// gated (the caller must actually own this character) -- a NEW gate
+// shape, not isGameAdmin, since no game is involved at all; same
+// "checked fresh against the store, never trusted blindly" spirit
+// every other gate in this file already uses.
+const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (accountId !== character.ownerAccountId) throw new APIError("UNAUTHORIZED", { message: "not this character's owner" });
+  const templateId = typeof ctx.body?.templateId === "string" ? ctx.body.templateId : null;
+  const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
+  store.updateCharacterSheet(characterId, templateId, variableValues);
+  return store.getCharacter(characterId);
 });
 
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {
@@ -152,6 +202,11 @@ const routes = createRouter({
   postAccount,
   getAccountCharacters,
   postAccountCharacter,
+  getAccountMods,
+  postAccountMod,
+  deleteAccountMod,
+  getAccountCharacterSheetTemplates,
+  putCharacterSheet,
   getGames,
   postGame,
   getGameWorlds,

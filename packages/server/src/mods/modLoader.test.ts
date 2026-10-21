@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { listAvailableMods, createModLoader } from "./modLoader.js";
+import { listAvailableMods, createModLoader, listCharacterSheetTemplates } from "./modLoader.js";
 
 // Isolated synthetic mods directory per test, same spirit as store.test.ts's
 // own mkdtempSync-per-test convention -- these tests shouldn't depend on
@@ -127,5 +127,36 @@ describe("createModLoader (pure logic, no 3D/physics -- real unit tests)", () =>
 
     await loader.unloadMod("example-noop");
     expect(fixture.registered).toBe(false);
+  });
+
+  it("loadMod/unloadMod are no-ops (not errors) for a mod that exports neither register nor unregister -- MVP goal item 4's pure-content character-sheet-template mods", async () => {
+    writeMod("template-only-mod", { id: "template-only-mod", name: "Template Only", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetTemplate = { name: 'T', pages: [], variables: [] };");
+    const loader = createModLoader(dir);
+    await expect(loader.loadMod("template-only-mod")).resolves.not.toThrow();
+    expect(loader.isLoaded("template-only-mod")).toBe(true);
+    await expect(loader.unloadMod("template-only-mod")).resolves.not.toThrow();
+  });
+});
+
+describe("listCharacterSheetTemplates (MVP goal item 4, docs/ROADMAP.md, slice 1)", () => {
+  it("resolves the characterSheetTemplate export for each given mod id, skipping ones with none and unknown ids", async () => {
+    writeMod(
+      "sheet-mod",
+      { id: "sheet-mod", name: "Sheet Mod", version: "1.0.0", entry: "entry.ts" },
+      "export const characterSheetTemplate = { name: 'My Sheet', pages: [], variables: [{ id: 'hp', label: 'HP', type: 'xOfY', default: 10, max: 10 }] };",
+    );
+    writeMod("behavior-only-mod", { id: "behavior-only-mod", name: "Behavior Only", version: "1.0.0", entry: "entry.ts" }, "export function register(){} export function unregister(){}");
+
+    const results = await listCharacterSheetTemplates(dir, ["sheet-mod", "behavior-only-mod", "not-a-real-mod"]);
+    expect(results.length).toBe(1);
+    expect(results[0].modId).toBe("sheet-mod");
+    expect(results[0].template.name).toBe("My Sheet");
+  });
+
+  it("resolves the real, committed mods/default-character-sheet fixture", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const results = await listCharacterSheetTemplates(realModsDir, ["default-character-sheet"]);
+    expect(results.length).toBe(1);
+    expect(results[0].template.variables.map((v) => v.id).sort()).toEqual(["hp", "mp"]);
   });
 });

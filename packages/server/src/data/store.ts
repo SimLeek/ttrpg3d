@@ -38,6 +38,19 @@ export interface Account {
   displayName: string;
   role: "root" | "normal";
   createdAt: number;
+  /**
+   * MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which mods this
+   * ACCOUNT has imported, by id, mirroring GameRecord.modIds exactly
+   * but keyed on the account instead of a game: real direction,
+   * 2026-10-21, "the character sheet page would itself have mods
+   * imported as libraries for different functionalities, and those
+   * mods would have to be imported to the character page itself per
+   * account, NOT site-wide." This is what the standalone, game-free
+   * characters page resolves character-sheet templates against (via
+   * modLoader.ts's listCharacterSheetTemplates) -- NOT a bare scan of
+   * every mod on disk, and NOT gated by any game's own modIds.
+   */
+  importedModIds: string[];
 }
 
 export interface GameRecord {
@@ -122,6 +135,26 @@ export interface CharacterRecord {
   maxMp: number;
   statusEffects: StatusEffect[];
   createdAt: number;
+  /**
+   * MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which character-
+   * sheet-template mod this character uses (the mod's own manifest id
+   * IS the template id, same as modIds elsewhere). `null` until a
+   * template is picked -- a real state, not an error, matching this
+   * project's own "a missing selection is a real state" convention
+   * (e.g. characterId on a world join). Additive alongside the
+   * existing hp/maxHp/mp/maxMp fields above, not a replacement for
+   * them yet -- migrating characterToken.ts's live bars onto the new
+   * `variableValues` system below is a roadmap follow-up, not this
+   * slice.
+   */
+  templateId: string | null;
+  /**
+   * Flat map keyed by variable id (the template's own variable defs,
+   * plus the core RESERVED_BODY_SIZE_VARIABLES ids, which use fixed
+   * keys regardless of template). Values are read/written as a whole
+   * by store.updateCharacterSheet -- no per-variable endpoint.
+   */
+  variableValues: Record<string, number | string>;
 }
 
 function newId(): string {
@@ -145,7 +178,11 @@ export function createStore(baseDir: string) {
   }
 
   function loadAccounts(): Account[] {
-    return readJson<Account[]>(accountsFile, []);
+    // importedModIds is new (MVP goal item 4, slice 1) -- same
+    // backward-compat default-fill as loadGames() already does for
+    // GameRecord.modIds, so a real pre-existing account with no such
+    // key on disk doesn't crash the first time anything iterates it.
+    return readJson<Account[]>(accountsFile, []).map((a) => ({ ...a, importedModIds: a.importedModIds ?? [] }));
   }
 
   function saveAccounts(accounts: Account[]): void {
@@ -183,7 +220,10 @@ export function createStore(baseDir: string) {
   }
 
   function loadCharacters(): CharacterRecord[] {
-    return readJson<CharacterRecord[]>(charactersFile, []);
+    // templateId/variableValues are new (MVP goal item 4, slice 1) --
+    // same backward-compat default-fill spirit as loadAccounts()/
+    // loadGames() already use for their own new fields.
+    return readJson<CharacterRecord[]>(charactersFile, []).map((c) => ({ ...c, templateId: c.templateId ?? null, variableValues: c.variableValues ?? {} }));
   }
 
   function saveCharacters(characters: CharacterRecord[]): void {
@@ -210,6 +250,8 @@ export function createStore(baseDir: string) {
       maxMp: 10,
       statusEffects: [],
       createdAt: Date.now(),
+      templateId: null,
+      variableValues: {},
     };
     characters.push(character);
     saveCharacters(characters);
@@ -223,9 +265,9 @@ export function createStore(baseDir: string) {
       if (accounts.length === 0) {
         const now = Date.now();
         accounts = [
-          { id: "root", displayName: "root", role: "root", createdAt: now },
-          { id: "test1", displayName: "Test Account 1", role: "normal", createdAt: now },
-          { id: "test2", displayName: "Test Account 2", role: "normal", createdAt: now },
+          { id: "root", displayName: "root", role: "root", createdAt: now, importedModIds: [] },
+          { id: "test1", displayName: "Test Account 1", role: "normal", createdAt: now, importedModIds: [] },
+          { id: "test2", displayName: "Test Account 2", role: "normal", createdAt: now, importedModIds: [] },
         ];
         saveAccounts(accounts);
       }
@@ -265,10 +307,27 @@ export function createStore(baseDir: string) {
 
     createAccount(displayName: string): Account {
       const accounts = loadAccounts();
-      const account: Account = { id: newId(), displayName, role: "normal", createdAt: Date.now() };
+      const account: Account = { id: newId(), displayName, role: "normal", createdAt: Date.now(), importedModIds: [] };
       accounts.push(account);
       saveAccounts(accounts);
       return account;
+    },
+
+    /** No-op if already imported or the account id is unknown, same "stale id, not a crash" spirit as enableModForGame. Ungated here (an account manages its own imports) -- same trust level the existing /accounts/:id/characters endpoints already use. */
+    importModForAccount(accountId: string, modId: string): void {
+      const accounts = loadAccounts();
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) return;
+      if (!account.importedModIds.includes(modId)) account.importedModIds.push(modId);
+      saveAccounts(accounts);
+    },
+
+    removeModForAccount(accountId: string, modId: string): void {
+      const accounts = loadAccounts();
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) return;
+      account.importedModIds = account.importedModIds.filter((id) => id !== modId);
+      saveAccounts(accounts);
     },
 
     createGame(name: string, ownerAccountId: string): GameRecord {
@@ -379,6 +438,16 @@ export function createStore(baseDir: string) {
 
     getCharacter(id: string): CharacterRecord | undefined {
       return loadCharacters().find((c) => c.id === id);
+    },
+
+    /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- replaces both templateId and variableValues wholesale (no per-variable endpoint). No-op if the character id is unknown. Ownership-gating (is the caller actually this character's owner) happens at the caller (server.ts's PUT /characters/:id/sheet), same split enableModForGame/setRespawnAnchor already use. */
+    updateCharacterSheet(characterId: string, templateId: string | null, variableValues: Record<string, number | string>): void {
+      const characters = loadCharacters();
+      const character = characters.find((c) => c.id === characterId);
+      if (!character) return;
+      character.templateId = templateId;
+      character.variableValues = variableValues;
+      saveCharacters(characters);
     },
 
     /**

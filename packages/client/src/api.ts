@@ -9,13 +9,15 @@
 // (pageManager.ts), not from this outer lobby. See docs/ROADMAP.md's
 // Standing Decisions for the full Game/World split.
 
-import type { GeneratorId, GeneratorParams } from "@ttrpg3d/shared";
+import type { GeneratorId, GeneratorParams, CharacterSheetTemplate } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
   displayName: string;
   role: "root" | "normal";
   createdAt: number;
+  /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which mods this ACCOUNT has imported, by id. Per-ACCOUNT, not site-wide and not per-game -- resolves character-sheet templates on the standalone characters page. */
+  importedModIds: string[];
 }
 
 export interface GameRecord {
@@ -43,6 +45,8 @@ export interface ModManifest {
   name: string;
   version: string;
   entry: string;
+  /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- other mod ids this mod needs to function. */
+  dependencies?: string[];
 }
 
 export interface ChatMessage {
@@ -69,6 +73,10 @@ export interface CharacterRecord {
   maxMp: number;
   statusEffects: StatusEffect[];
   createdAt: number;
+  /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which character-sheet-template mod this character uses; null until picked. */
+  templateId: string | null;
+  /** Flat map keyed by variable id (template-defined + the core RESERVED_BODY_SIZE_VARIABLES ids). */
+  variableValues: Record<string, number | string>;
 }
 
 export const ACCOUNT_STORAGE_KEY = "ttrpg3d.accountId";
@@ -166,6 +174,54 @@ export async function enableGameMod(httpUrl: string, gameId: string, accountId: 
 export async function disableGameMod(httpUrl: string, gameId: string, accountId: string, modId: string): Promise<string[]> {
   const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/mods/${encodeURIComponent(modId)}?accountId=${encodeURIComponent(accountId)}`, {
     method: "DELETE",
+  });
+  return res.json();
+}
+
+// ---- MVP goal item 4 (docs/ROADMAP.md), slice 1: account-imported mods
+// and character-sheet data. See store.ts's own doc on Account.importedModIds
+// for why this is per-ACCOUNT, not per-game and not a bare scan of /mods.
+
+export async function fetchAccountMods(httpUrl: string, accountId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/mods`);
+  return res.json();
+}
+
+/** Returns the account's updated imported-mod id list, same response shape as enableGameMod. */
+export async function importAccountMod(httpUrl: string, accountId: string, modId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/mods`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ modId }),
+  });
+  return res.json();
+}
+
+export async function removeAccountMod(httpUrl: string, accountId: string, modId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/mods/${encodeURIComponent(modId)}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+export interface CharacterSheetTemplateCatalogEntry {
+  modId: string;
+  manifest: ModManifest;
+  template: CharacterSheetTemplate;
+}
+
+/** Scoped to the account's OWN importedModIds -- not every mod on disk, not any game's modIds. */
+export async function fetchCharacterSheetTemplates(httpUrl: string, accountId: string): Promise<CharacterSheetTemplateCatalogEntry[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/character-sheet-templates`);
+  return res.json();
+}
+
+/** Ownership-gated server-side (must be the character's own ownerAccountId) -- accountId is the caller's own, not trusted blindly, just checked fresh. Replaces templateId + variableValues wholesale. Returns the updated CharacterRecord. */
+export async function updateCharacterSheet(httpUrl: string, characterId: string, accountId: string, templateId: string | null, variableValues: Record<string, number | string>): Promise<CharacterRecord> {
+  const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}/sheet`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, templateId, variableValues }),
   });
   return res.json();
 }

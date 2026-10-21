@@ -115,3 +115,4 @@ export * from "./items.js";
 export * from "./collision.js";
 export * from "./worldGenerators.js";
 export * from "./chatCommands.js";
+export * from "./characterSheet.js";
