@@ -38,7 +38,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_BODY_SIZE_VARIABLES, computeMissingModDependencies, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef } from "@ttrpg3d/shared";
+import { RESERVED_BODY_SIZE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef } from "@ttrpg3d/shared";
 import {
   fetchAvailableMods,
   fetchAccountMods,
@@ -52,7 +52,7 @@ import {
   type CharacterRecord,
   type CharacterSheetTemplateCatalogEntry,
 } from "./api.js";
-import { renderVariableWidget } from "./characterSheetWidgets.js";
+import { renderVariableWidget, buildVariableWidgetHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 
 const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "range", "xOfY", "text"];
@@ -90,7 +90,9 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       .characters-page .page-markdown { width: 100%; min-height: 320px; resize: vertical; box-sizing: border-box; background: #111; color: #eee; border: 1px solid #444; }
       .characters-page .page-preview { min-height: 320px; }
       .characters-page .page-preview img { max-width: 100%; }
-      .characters-page .roll-chip { background: rgb(255,217,51); color: #222; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; padding: 2px 8px; }
+      .characters-page .chat-chip { background: rgb(255,217,51); color: #222; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; padding: 2px 8px; }
+      .characters-page .computed-value { font-weight: bold; }
+      .characters-page .page-preview .sheet-widget-number, .characters-page .page-preview .sheet-widget-text, .characters-page .page-preview .sheet-widget-xofy-current, .characters-page .page-preview .sheet-widget-xofy-max { width: 70px; }
       .characters-page .variable-def-list { list-style: none; padding: 0; margin: 0 0 8px; }
       .characters-page .variable-def-list li { display: flex; gap: 6px; align-items: center; padding: 6px; margin-bottom: 4px; background: #2a2a2a; border-radius: 6px; flex-wrap: wrap; }
       .characters-page .variable-def-list input { width: 90px; }
@@ -126,8 +128,8 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
   let characters: CharacterRecord[] = [];
   let templates: CharacterSheetTemplateCatalogEntry[] = [];
   let selectedCharacterId: string | null = null;
-  /** "core" = the Core & Variables tab; a number = that page's index. */
-  let selectedSheetTab: "core" | number = "core";
+  /** "core" = the Core & Variables tab; a number = that page's index. Defaults to the first PAGE (not "core") whenever a character becomes selected -- you want to see their sheet, not settings, by default. */
+  let selectedSheetTab: "core" | number = 0;
   let pageMode: "view" | "edit" = "view";
 
   // ---- mods list --------------------------------------------------
@@ -171,7 +173,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-character-id]");
     if (!button) return;
     selectedCharacterId = button.dataset.characterId!;
-    selectedSheetTab = "core";
+    selectedSheetTab = 0;
     pageMode = "view";
     renderCharList();
     renderSheetSection();
@@ -199,25 +201,17 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     const label = document.createElement("label");
     label.textContent = def.label;
     const widgetHost = document.createElement("span");
-    const currentValue = character.variableValues[def.id] ?? def.default;
-    renderVariableWidget(widgetHost, def, currentValue, (next) => {
-      character.variableValues = { ...character.variableValues, [def.id]: next };
+    renderVariableWidget(widgetHost, def, character.variableValues, (key, next) => {
+      character.variableValues = { ...character.variableValues, [key]: next };
       saveSheet(character);
     });
     row.append(label, widgetHost);
     parent.append(row);
   }
 
-  /** A page's OWN variables, rendered directly on it (round 3 -- editable both in View and Edit mode, not only in the Core & Variables tab). */
-  function renderPageVariableWidgets(container: HTMLElement, character: CharacterRecord, page: CharacterSheetPageDef): void {
-    if (page.variableIds.length === 0) return;
-    const section = document.createElement("div");
-    section.className = "sheet-page";
-    for (const variableId of page.variableIds) {
-      const def = character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === variableId);
-      if (def) renderVariableRow(section, def, character);
-    }
-    container.append(section);
+  /** Looks up a variable's definition wherever it might live -- the sheet's own variables, or a core reserved one -- for resolving a `{variableId}` reference found in a page's markdown. */
+  function findVariableDef(character: CharacterRecord, variableId: string): CharacterSheetVariableDef | undefined {
+    return character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === variableId);
   }
 
   // ---- dependency warning -------------------------------------------
@@ -262,42 +256,73 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     previewEl.textContent = "Loading...";
     hostEl.append(previewEl);
 
+    // One shared class/data-attribute pair for EVERY clickable chip on
+    // this page, whether it came from a library call's default
+    // "button" display or a variable ref's opt-in `{id:button}` --
+    // same posting mechanism either way.
     previewEl.addEventListener("click", (event) => {
-      const chip = (event.target as HTMLElement).closest<HTMLButtonElement>(".roll-chip");
+      const chip = (event.target as HTMLElement).closest<HTMLButtonElement>(".chat-chip");
       if (!chip) return;
-      testChatPanel.addMessage(`${character.name}: ${chip.dataset.rollLabel} -> ${chip.dataset.rollValue}`);
+      testChatPanel.addMessage(`${character.name}: ${chip.dataset.chipLabel} -> ${chip.dataset.chipValue}`);
     });
 
-    // Round 3 bug fix: this now ALWAYS fetches on render (previously
-    // only the edit textarea's own `input` handler ever triggered it,
-    // so a freshly-cloned/just-opened page's library calls sat
-    // unresolved, literally, until the user typed something).
+    // Variable refs (`{variableId}`) resolve entirely client-side --
+    // no mod/server involved, just this character's own variableValues.
+    const variableSegments = findVariableRefs(page.markdown).map((s) => ({ ...s, kind: "variable" as const }));
+
+    // Round 3 bug fix (still true): this now ALWAYS fetches on render
+    // (previously only the edit textarea's own `input` handler ever
+    // triggered it, so a freshly-cloned/just-opened page's library
+    // calls sat unresolved, literally, until the user typed something).
     void fetchCharacterSheetPreview(httpUrl, accountId, page.markdown, character.variableValues).then((result) => {
-      // Substitute each {{modId.fn(args)}} span with a clickable
-      // "roll chip" BEFORE handing the text to marked -- by the time
-      // resolveCharacterSheetMarkdown's own flattened string exists,
-      // the original call markers are gone, so per-call buttons have
-      // to be built from the ORIGINAL markdown + segments instead.
+      const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
+      // Merge both kinds of reference, sorted by position -- a page
+      // can freely mix {varId} and {{modId.fn(args)}} in any order.
+      const allSegments = [...callSegments, ...variableSegments].sort((a, b) => a.start - b.start);
+
+      // Substitute each segment with its own HTML snippet BEFORE
+      // handing the text to marked -- by the time a flattened,
+      // plain-text-only resolution exists, the original markers are
+      // gone, so inline widgets/chips have to be built from the
+      // ORIGINAL markdown + segments instead.
       let substituted = "";
       let cursor = 0;
-      for (const segment of result.segments) {
+      for (const segment of allSegments) {
         substituted += page.markdown.slice(cursor, segment.start);
-        const label = `${segment.modId}.${segment.functionName}`;
-        substituted += `<button type="button" class="roll-chip" data-roll-label="${escapeHtml(label)}" data-roll-value="${escapeHtml(segment.value)}">${escapeHtml(segment.value)}</button>`;
+        if (segment.kind === "call") {
+          const label = `${segment.modId}.${segment.functionName}`;
+          substituted +=
+            segment.display === "box"
+              ? `<span class="computed-value">${escapeHtml(segment.value)}</span>`
+              : `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(label)}" data-chip-value="${escapeHtml(segment.value)}">${escapeHtml(segment.value)}</button>`;
+        } else {
+          const def = findVariableDef(character, segment.variableId);
+          substituted += !def
+            ? `[unknown variable: ${escapeHtml(segment.variableId)}]`
+            : segment.display === "button"
+              ? buildVariableChipHtml(def, character.variableValues)
+              : buildVariableWidgetHtml(def, character.variableValues);
+        }
         cursor = segment.end;
       }
       substituted += page.markdown.slice(cursor);
+
       // The ONE deliberate innerHTML-of-untrusted-content spot in this
       // codebase -- sanitized immediately before insertion (DOMPurify's
-      // default allowlist already includes <button> and data-* attrs,
+      // default allowlist already includes <button>/<input>/<select>
+      // and the value/min/max/type/data-* attributes they need,
       // confirmed directly, no extra config needed). chatPanel.ts's
       // textContent convention is the baseline everywhere else.
       previewEl.innerHTML = DOMPurify.sanitize(marked.parse(substituted) as string);
+      wireVariableWidgets(previewEl, (key, next) => {
+        character.variableValues = { ...character.variableValues, [key]: next };
+        saveSheet(character);
+      });
     });
   }
 
   function renderPageTabContent(character: CharacterRecord, page: CharacterSheetPageDef): void {
-    sheetTabContentEl.innerHTML = `<div class="sheet-page"><button type="button" class="page-mode-toggle" id="page-mode-toggle"></button><div id="page-mode-host"></div></div><div id="page-variables-host"></div>`;
+    sheetTabContentEl.innerHTML = `<div class="sheet-page"><button type="button" class="page-mode-toggle" id="page-mode-toggle"></button><div id="page-mode-host"></div></div>`;
     const toggleBtn = sheetTabContentEl.querySelector<HTMLButtonElement>("#page-mode-toggle")!;
     const modeHostEl = sheetTabContentEl.querySelector<HTMLDivElement>("#page-mode-host")!;
 
@@ -315,8 +340,6 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       // parent, from within this button's own click handler.
       renderMode();
     });
-
-    renderPageVariableWidgets(sheetTabContentEl.querySelector<HTMLDivElement>("#page-variables-host")!, character, page);
   }
 
   // ---- the "Core & Variables" tab: body-size + variable definitions --

@@ -5,7 +5,7 @@ import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry, 
 let container: HTMLElement;
 
 const availableMods: ModManifest[] = [
-  { id: "default-character-sheet", name: "Default Character Sheet", version: "0.1.0", entry: "entry.ts", characterSheet: true },
+  { id: "default", name: "Default Character Sheet", version: "0.1.0", entry: "entry.ts", characterSheet: true },
   { id: "example-noop", name: "Example (no-op)", version: "0.1.0", entry: "entry.ts" }, // not characterSheet-flagged -- must NOT appear in the list
 ];
 let importedModIds: string[];
@@ -72,12 +72,12 @@ beforeEach(() => {
   };
   templates = [
     {
-      modId: "default-character-sheet",
+      modId: "default",
       manifest: availableMods[0],
       template: {
         name: "Default Character Sheet",
         variables: [{ id: "str", label: "Strength", type: "number", default: 10 }],
-        pages: [{ title: "Overview", markdown: "Strength modifier: {{default-character-sheet.modifier(str)}}", variableIds: ["str"] }],
+        pages: [{ title: "Overview", markdown: "Strength: {str}, modifier: {{default.modifier(str)}}", variableIds: ["str"] }],
       },
     },
   ];
@@ -136,14 +136,14 @@ describe("mountCharactersPage", () => {
   });
 
   it("'start from template' clones the template's pages/variables into customSheet -- editing afterward never touches the mod again", async () => {
-    importedModIds = ["default-character-sheet"];
+    importedModIds = ["default"];
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
 
     container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
     await flush();
 
-    expect(character.templateId).toBe("default-character-sheet");
+    expect(character.templateId).toBe("default");
     expect(character.customSheet!.variables.map((v) => v.id)).toEqual(["str"]);
     character.customSheet!.variables.push({ id: "extra", label: "Extra", type: "number", default: 0 });
     expect(templates[0].template.variables.length).toBe(1); // independent copy, not a live reference
@@ -167,21 +167,84 @@ describe("mountCharactersPage", () => {
     expect(container.querySelector(".page-preview")).not.toBeNull();
   });
 
-  it("View mode resolves the preview on initial render, without requiring a prior edit (round 3 bug fix)", async () => {
-    importedModIds = ["default-character-sheet"];
+  it("View mode resolves library calls AND inline variable refs on initial render, without requiring a prior edit (round 3 bug fix, round 4 inline refs)", async () => {
+    importedModIds = ["default"];
     previewResponse = {
-      resolvedMarkdown: "Strength modifier: 0",
-      segments: [{ start: 20, end: 61, modId: "default-character-sheet", functionName: "modifier", args: ["str"], value: "0" }],
+      resolvedMarkdown: "Strength: 12, modifier: 1",
+      segments: [{ start: 18, end: 41, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "button" }],
     };
+    character.variableValues = { str: 12 };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
     await flush();
 
     const preview = container.querySelector(".page-preview")!;
-    expect(preview.textContent).toContain("Strength modifier:");
-    expect(preview.querySelector(".roll-chip")).not.toBeNull(); // resolved as a clickable chip, not left as literal {{...}} text
+    expect(preview.querySelector(".chat-chip")).not.toBeNull(); // the library call, resolved as a clickable chip
+    expect(preview.querySelector(".sheet-widget-number")).not.toBeNull(); // {str} resolved as an inline, editable box -- round 4's actual request
+    expect(preview.querySelector<HTMLInputElement>(".sheet-widget-number")!.value).toBe("12");
     expect(preview.textContent).not.toContain("{{");
+    expect(preview.textContent).not.toContain("{str}");
+  });
+
+  it("an inline {variableId} box sits exactly where written in the markdown and is directly editable, persisting the change (round 4's actual request -- not a list below the page)", async () => {
+    importedModIds = ["default"];
+    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }] };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
+    await flush();
+
+    const input = container.querySelector<HTMLInputElement>(".sheet-widget-number")!;
+    input.value = "16";
+    input.dispatchEvent(new Event("change"));
+    await flush();
+    expect(character.variableValues.str).toBe(16);
+  });
+
+  it("{variableId:button} renders as a clickable chip instead of a box, posting the CURRENT value to the test chat on click", async () => {
+    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "HP: {hp:button}", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "number", default: 7 }] };
+    character.variableValues = { hp: 7 };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const chip = container.querySelector<HTMLButtonElement>(".page-preview .chat-chip")!;
+    expect(chip).not.toBeNull();
+    chip.click();
+    const testChatMessages = container.querySelector("#test-chat-messages")!;
+    expect(testChatMessages.textContent).toContain("Aria");
+    expect(testChatMessages.textContent).toContain("HP");
+    expect(testChatMessages.textContent).toContain("7");
+  });
+
+  it("an xOfY variable's inline widget has TWO real, independently editable boxes (current and max, round 4 -- not a read-only max label)", async () => {
+    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "HP: {hp}", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }] };
+    character.variableValues = { hp: 6 };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const current = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-current")!;
+    const max = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!;
+    expect(current.value).toBe("6");
+    expect(max.value).toBe("10");
+    expect(max.tagName).toBe("INPUT");
+
+    max.value = "14";
+    max.dispatchEvent(new Event("change"));
+    await flush();
+    expect(character.variableValues.hpMax).toBe(14);
+  });
+
+  it("a {{modId.fn(args):box}} library call renders as a plain, non-clickable value instead of a chat-chip", async () => {
+    importedModIds = ["default"];
+    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }] };
+    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "Modifier: {{default.modifier(str):box}}", variableIds: [] }], variables: [] };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const preview = container.querySelector(".page-preview")!;
+    expect(preview.querySelector(".computed-value")).not.toBeNull();
+    expect(preview.querySelector(".chat-chip")).toBeNull();
   });
 
   it("the Edit/View toggle swaps between the raw-markdown textarea and the rendered preview, each full-width (not side by side)", async () => {
@@ -218,18 +281,6 @@ describe("mountCharactersPage", () => {
     textarea.dispatchEvent(new Event("input"));
     await vi.advanceTimersByTimeAsync(600);
     expect(character.customSheet!.pages[0].markdown).toBe("New content");
-  });
-
-  it("a page's own variables render their VALUE widgets directly on the page (not just in Core & Variables)", async () => {
-    importedModIds = ["default-character-sheet"];
-    mountCharactersPage(container, "http://test", "account-1");
-    await flush();
-    container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
-    await flush();
-
-    // The cloned "Overview" page lists "str" in its variableIds.
-    expect(container.querySelector("#sheet-tab-content")!.textContent).toContain("Strength");
-    expect(container.querySelector(".sheet-widget-number")).not.toBeNull();
   });
 
   it("adding and deleting a page works via the sheet tab bar, and always keeps at least one page", async () => {
@@ -291,21 +342,21 @@ describe("mountCharactersPage", () => {
     expect(container.querySelector(".dependency-warning")).toBeNull();
   });
 
-  it("clicking a roll chip posts its label and value to the test chat panel", async () => {
-    importedModIds = ["default-character-sheet"];
+  it("clicking a library call's chat-chip posts its label and value to the test chat panel", async () => {
+    importedModIds = ["default"];
     previewResponse = {
-      resolvedMarkdown: "Strength modifier: 3",
-      segments: [{ start: 20, end: 61, modId: "default-character-sheet", functionName: "modifier", args: ["str"], value: "3" }],
+      resolvedMarkdown: "Strength: 10, modifier: 3",
+      segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "3", display: "button" }],
     };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
     await flush();
 
-    container.querySelector<HTMLButtonElement>(".roll-chip")!.click();
+    container.querySelector<HTMLButtonElement>(".chat-chip")!.click();
     const testChatMessages = container.querySelector("#test-chat-messages")!;
     expect(testChatMessages.textContent).toContain("Aria");
-    expect(testChatMessages.textContent).toContain("default-character-sheet.modifier");
+    expect(testChatMessages.textContent).toContain("default.modifier");
     expect(testChatMessages.textContent).toContain("3");
   });
 });

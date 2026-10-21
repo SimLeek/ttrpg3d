@@ -153,9 +153,9 @@ describe("listCharacterSheetTemplates (MVP goal item 4, docs/ROADMAP.md, slice 1
     expect(results[0].template.name).toBe("My Sheet");
   });
 
-  it("resolves the real, committed mods/default-character-sheet fixture", async () => {
+  it("resolves the real, committed mods/default fixture", async () => {
     const realModsDir = join(process.cwd(), "mods");
-    const results = await listCharacterSheetTemplates(realModsDir, ["default-character-sheet"]);
+    const results = await listCharacterSheetTemplates(realModsDir, ["default"]);
     expect(results.length).toBe(1);
     expect(results[0].template.variables.map((v) => v.id).sort()).toEqual(["hp", "mp", "str"]);
   });
@@ -202,13 +202,13 @@ describe("listCharacterSheetLibraries / resolveCharacterSheetMarkdown (MVP goal 
     await expect(resolveCharacterSheetMarkdown(dir, [], "{{known-mod.double(1)}}", {})).resolves.toBe("[missing function: known-mod.double]");
   });
 
-  it("resolves the real, committed mods/default-character-sheet fixture's modifier function", async () => {
+  it("resolves the real, committed mods/default fixture's modifier function", async () => {
     const realModsDir = join(process.cwd(), "mods");
-    const results = await listCharacterSheetLibraries(realModsDir, ["default-character-sheet"]);
+    const results = await listCharacterSheetLibraries(realModsDir, ["default"]);
     expect(results.length).toBe(1);
     expect(results[0].library.modifier([16], {})).toBe(3);
 
-    const resolved = await resolveCharacterSheetMarkdown(realModsDir, ["default-character-sheet"], "Mod: {{default-character-sheet.modifier(str)}}", { str: 16 });
+    const resolved = await resolveCharacterSheetMarkdown(realModsDir, ["default"], "Mod: {{default.modifier(str)}}", { str: 16 });
     expect(resolved).toBe("Mod: 3");
   });
 });

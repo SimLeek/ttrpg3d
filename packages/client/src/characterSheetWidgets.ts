@@ -1,89 +1,125 @@
-// MVP goal item 4 (docs/ROADMAP.md), slice 1 -- renders one typed
-// character-sheet variable as the widget its type calls for (per the
-// roadmap's own wording: a plain single value gets one box, a wide
-// numeric range gets a slider, a fractional/x-of-y value gets two
-// boxes). Generalizes characterToken.ts's existing bar-fill ratio math
-// (`value/max -> clamped 0-1 -> pixel width`, used there for the HP/MP
-// billboard bars) into a reusable, type-driven renderer -- same ratio
-// clamp, just reused for a plain `<input type=range>` here instead of
-// a `@babylonjs/gui` fill rect, since this file is noa-free (used by
-// characters.ts, which has no 3D/game context at all).
+// MVP goal item 4 (docs/ROADMAP.md) -- builds/wires one typed
+// character-sheet variable's widget. Generalizes characterToken.ts's
+// existing bar-fill ratio math (`value/max -> clamped 0-1 -> pixel
+// width`, used there for the HP/MP billboard bars) into a reusable,
+// type-driven renderer -- same ratio clamp, just reused for a plain
+// `<input type=range>` here instead of a `@babylonjs/gui` fill rect,
+// since this file is noa-free (used by characters.ts, which has no
+// 3D/game context at all).
+//
+// Round 4 reshape: a variable's widget now also needs to be embeddable
+// INLINE inside a page's rendered markdown (via `{variableId}` --
+// characters.ts's View mode), not just mounted as a standalone DOM
+// node in the Core & Variables tab. That means the widget has to exist
+// as an HTML STRING first (for insertion into the markdown before
+// `marked.parse`+`DOMPurify`, confirmed directly: DOMPurify's default
+// allowlist already includes `input`/`select`/`option` and the
+// `value`/`min`/`max`/`type`/`data-*` attributes they need -- no
+// sanitizer config changes required), with listener-wiring as a
+// SEPARATE step applied to whatever DOM those strings end up in
+// (either this file's own `renderVariableWidget` wrapper, mounting
+// directly, or characters.ts's View mode, wiring up listeners on the
+// whole rendered page at once). `buildVariableWidgetHtml`/
+// `wireVariableWidgets` are the real implementation now;
+// `renderVariableWidget` is a thin convenience wrapper over both, for
+// callers (the Core & Variables tab's reserved body-size rows) that
+// still just want a single mounted widget with no markdown involved.
 //
 // Pure DOM, no noa dependency -- same "noa-free, unit-testable"
 // convention chatPanel.ts/hotbar.ts already follow.
 
 import type { CharacterSheetVariableDef } from "@ttrpg3d/shared";
 
-/**
- * x-of-y values are stored as a single number (the "current" half) --
- * the "max"/"y" half is the variable DEFINITION's own `max` (or, if
- * a template author didn't set one, the variable's own `default`,
- * matching how HP/maxHp both start equal for a fresh character).
- */
-function xOfYMax(def: CharacterSheetVariableDef): number {
-  return def.max ?? (typeof def.default === "number" ? def.default : 0);
+export type VariableValueMap = Readonly<Record<string, number | string>>;
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function asNumber(value: number | string | undefined, fallback: number): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) return Number(value);
+  return fallback;
 }
 
 /**
- * Renders `def`'s widget into `container` (appended, not replacing
- * existing content -- callers build one wrapper per variable) and
- * wires it to call `onChange` with the new value whenever the user
- * edits it. Returns nothing -- callers read the latest value back via
- * `onChange`, not by re-querying the DOM, mirroring this codebase's
- * other callback-driven DOM-overlay files (chatPanel.ts, hotbar.ts).
+ * x-of-y values now store BOTH halves in `variableValues` (round 4 --
+ * previously the "max" half was read-only, always the variable
+ * DEFINITION's own static `def.max`). `xOfYMaxKey` is the convention
+ * for where the max half lives; `def.max`/`def.default` are only the
+ * INITIAL value before a character has ever set their own.
  */
-export function renderVariableWidget(container: HTMLElement, def: CharacterSheetVariableDef, value: number | string, onChange: (next: number | string) => void): void {
+export function xOfYMaxKey(variableId: string): string {
+  return `${variableId}Max`;
+}
+
+function xOfYMax(def: CharacterSheetVariableDef, values: VariableValueMap): number {
+  const fallback = typeof def.default === "number" ? def.default : 0;
+  return asNumber(values[xOfYMaxKey(def.id)] ?? def.max, fallback);
+}
+
+/** The widget markup for `def`'s current value in `values` -- one `data-var-key` per interactive control (two for `xOfY`: the base id for "current", `xOfYMaxKey(id)` for "max"). */
+export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: VariableValueMap): string {
+  const value = values[def.id] ?? def.default;
+
   if (def.type === "xOfY") {
-    const max = xOfYMax(def);
-    const current = typeof value === "number" ? value : Number(value) || 0;
-    const currentInput = document.createElement("input");
-    currentInput.type = "number";
-    currentInput.className = "sheet-widget-xofy-current";
-    currentInput.value = String(current);
-    currentInput.addEventListener("change", () => onChange(Number(currentInput.value) || 0));
-    const separator = document.createElement("span");
-    separator.textContent = " / ";
-    const maxLabel = document.createElement("span");
-    maxLabel.className = "sheet-widget-xofy-max";
-    maxLabel.textContent = String(max);
-    container.append(currentInput, separator, maxLabel);
-    return;
+    const current = asNumber(value, typeof def.default === "number" ? def.default : 0);
+    const max = xOfYMax(def, values);
+    return (
+      `<input type="number" class="sheet-widget-xofy-current" data-var-key="${escapeAttr(def.id)}" value="${current}" /> / ` +
+      `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${max}" />`
+    );
   }
 
   if (def.type === "range") {
-    const current = typeof value === "number" ? value : Number(value) || 0;
-    const slider = document.createElement("input");
-    slider.type = "range";
-    slider.className = "sheet-widget-range";
-    if (def.min !== undefined) slider.min = String(def.min);
-    if (def.max !== undefined) slider.max = String(def.max);
-    slider.value = String(current);
-    const valueLabel = document.createElement("span");
-    valueLabel.className = "sheet-widget-range-value";
-    valueLabel.textContent = String(current);
-    slider.addEventListener("input", () => {
-      valueLabel.textContent = slider.value;
-    });
-    slider.addEventListener("change", () => onChange(Number(slider.value) || 0));
-    container.append(slider, valueLabel);
-    return;
+    const current = asNumber(value, 0);
+    const minAttr = def.min !== undefined ? ` min="${def.min}"` : "";
+    const maxAttr = def.max !== undefined ? ` max="${def.max}"` : "";
+    return `<input type="range" class="sheet-widget-range" data-var-key="${escapeAttr(def.id)}"${minAttr}${maxAttr} value="${current}" /><span class="sheet-widget-range-value">${current}</span>`;
   }
 
   if (def.type === "text") {
-    const input = document.createElement("input");
-    input.type = "text";
-    input.className = "sheet-widget-text";
-    input.value = typeof value === "string" ? value : String(value);
-    input.addEventListener("change", () => onChange(input.value));
-    container.append(input);
-    return;
+    return `<input type="text" class="sheet-widget-text" data-var-key="${escapeAttr(def.id)}" value="${escapeAttr(typeof value === "string" ? value : String(value))}" />`;
   }
 
   // "number" -- a plain single value, one box.
-  const input = document.createElement("input");
-  input.type = "number";
-  input.className = "sheet-widget-number";
-  input.value = String(typeof value === "number" ? value : Number(value) || 0);
-  input.addEventListener("change", () => onChange(Number(input.value) || 0));
-  container.append(input);
+  return `<input type="number" class="sheet-widget-number" data-var-key="${escapeAttr(def.id)}" value="${asNumber(value, 0)}" />`;
+}
+
+/** A variable rendered as a clickable chip instead of an editable box (`{variableId:button}`) -- posts its current value to the test chat on click, same `.chat-chip` mechanism library-call buttons use. `xOfY` shows "current/max" together, since clicking is a one-shot announcement, not an edit. */
+export function buildVariableChipHtml(def: CharacterSheetVariableDef, values: VariableValueMap): string {
+  const value = values[def.id] ?? def.default;
+  const displayValue = def.type === "xOfY" ? `${asNumber(value, 0)}/${xOfYMax(def, values)}` : String(value);
+  return `<button type="button" class="chat-chip" data-chip-label="${escapeAttr(def.label)}" data-chip-value="${escapeAttr(displayValue)}">${escapeAttr(displayValue)}</button>`;
+}
+
+/**
+ * Attaches change listeners to every `[data-var-key]` control under
+ * `root` (as produced by `buildVariableWidgetHtml`, mounted anywhere
+ * -- a single widget host, or a whole rendered page). `onChange`
+ * receives the SPECIFIC key that changed (a variable's own id, or its
+ * `xOfYMaxKey` for the max half), not just "the variable changed" --
+ * callers merge that one key into their own `variableValues` map.
+ */
+export function wireVariableWidgets(root: ParentNode, onChange: (key: string, next: number | string) => void): void {
+  root.querySelectorAll<HTMLInputElement>("[data-var-key]").forEach((input) => {
+    const key = input.dataset.varKey!;
+    if (input.classList.contains("sheet-widget-range")) {
+      const valueLabel = input.nextElementSibling;
+      input.addEventListener("input", () => {
+        if (valueLabel) valueLabel.textContent = input.value;
+      });
+      input.addEventListener("change", () => onChange(key, Number(input.value) || 0));
+    } else if (input.type === "text") {
+      input.addEventListener("change", () => onChange(key, input.value));
+    } else {
+      input.addEventListener("change", () => onChange(key, Number(input.value) || 0));
+    }
+  });
+}
+
+/** Convenience wrapper for mounting ONE widget directly (the Core & Variables tab's reserved body-size rows) -- builds + wires in one call, no markdown/page involved. */
+export function renderVariableWidget(container: HTMLElement, def: CharacterSheetVariableDef, values: VariableValueMap, onChange: (key: string, next: number | string) => void): void {
+  container.innerHTML = buildVariableWidgetHtml(def, values);
+  wireVariableWidgets(container, onChange);
 }

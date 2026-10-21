@@ -84,6 +84,17 @@ export function computeMissingModDependencies(requiredModIds: readonly string[],
  */
 export type CharacterSheetLibraryFunction = (args: (number | string)[], variableValues: Readonly<Record<string, number | string>>) => number | string;
 
+/**
+ * How a resolved reference renders on the page -- "box" (an inert,
+ * read-only displayed value for a library call; an editable input for
+ * a variable reference) or "button" (a clickable chip that posts the
+ * value to the test chat -- the default for a library call, since its
+ * primary use case is a computed roll/action; opt-in for a variable
+ * reference, whose default is "box" since its primary use case is
+ * direct editing).
+ */
+export type InlineReferenceDisplay = "box" | "button";
+
 export interface LibraryCallSegment {
   /** Index of the segment's opening `{{` in the original string. */
   start: number;
@@ -93,27 +104,74 @@ export interface LibraryCallSegment {
   functionName: string;
   /** Raw, untrimmed-of-type tokens exactly as written -- a variable id or a bare literal, resolved against actual variableValues only at call time (this function never evaluates anything, same split chatCommands.ts's own findInlineRolls already uses against diceRoll.ts's real evaluation). */
   args: string[];
+  /** Defaults to "button" when no `:box`/`:button` suffix is written. */
+  display: InlineReferenceDisplay;
 }
 
 /**
  * Finds every `{{modId.functionName(arg1, arg2)}}` segment in `text`,
  * in order, left to right -- deliberately curly-braced, distinct from
  * chatCommands.ts's own `[[...]]` dice segments, so the two never
- * collide in the same text. The `(...)` argument list is optional
- * (`{{modId.fn}}` is a valid zero-arg call). Pure string-level
- * detection only -- actually CALLING the function is server-only (see
- * modLoader.ts's resolveCharacterSheetMarkdown), since a mod's real
- * function body is server-side Node code with no way to ship it to
- * the browser in this project's current architecture.
+ * collide in the same text (dice notation is landing inside
+ * character-sheet pages next -- `{{...}}`/`{...}`/`[[...]]` are three
+ * deliberately non-overlapping delimiters reserved across this
+ * project specifically so that work doesn't have to renegotiate
+ * anything shipped here). The `(...)` argument list is optional
+ * (`{{modId.fn}}` is a valid zero-arg call); an optional trailing
+ * `:box`/`:button` picks the display style (round 2's original
+ * always-a-chip behavior is now the explicit "button" default, not
+ * the only option). Pure string-level detection only -- actually
+ * CALLING the function is server-only (see modLoader.ts's
+ * resolveCharacterSheetMarkdown), since a mod's real function body is
+ * server-side Node code with no way to ship it to the browser in this
+ * project's current architecture.
  */
 export function findLibraryCalls(text: string): LibraryCallSegment[] {
   const segments: LibraryCallSegment[] = [];
-  const pattern = /\{\{([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)(?:\(([^)]*)\))?\}\}/g;
+  const pattern = /\{\{([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)(?:\(([^)]*)\))?(?::(box|button))?\}\}/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     const rawArgs = match[3] ?? "";
     const args = rawArgs.trim() === "" ? [] : rawArgs.split(",").map((a) => a.trim());
-    segments.push({ start: match.index, end: match.index + match[0].length, modId: match[1], functionName: match[2], args });
+    segments.push({ start: match.index, end: match.index + match[0].length, modId: match[1], functionName: match[2], args, display: (match[4] as InlineReferenceDisplay) ?? "button" });
+  }
+  return segments;
+}
+
+export interface VariableRefSegment {
+  /** Index of the segment's opening `{` in the original string. */
+  start: number;
+  /** Index just past the segment's closing `}`. */
+  end: number;
+  variableId: string;
+  /** Defaults to "box" when no `:box`/`:button` suffix is written. */
+  display: InlineReferenceDisplay;
+}
+
+/**
+ * Finds every `{variableId}` (or `{variableId:box}`/`{variableId:button}`)
+ * segment in `text` -- a plain reference to one of the character's
+ * own `variableValues`, resolved entirely client-side (no mod/server
+ * involved at all, unlike findLibraryCalls above). Single curly
+ * braces, deliberately distinct from both `{{modId.fn(args)}}`
+ * (double) and `[[dice notation]]` (square, reserved for the
+ * upcoming dice-in-sheets work) -- see this file's own header on
+ * findLibraryCalls for the full three-way reservation. The lookaround
+ * guards below make sure this never mis-fires on the braces of a
+ * `{{...}}` call sitting in the same text (confirmed directly: a real
+ * call's grammar always contains a literal `.` before any `}`, which
+ * is outside this function's own identifier charset anyway, so there
+ * was never actually a possible collision there -- but a MALFORMED
+ * `{{id}}` typo, lacking the required `.functionName`, would
+ * otherwise still accidentally match its own inner `{id}` without
+ * this guard).
+ */
+export function findVariableRefs(text: string): VariableRefSegment[] {
+  const segments: VariableRefSegment[] = [];
+  const pattern = /(?<!\{)\{([a-zA-Z0-9_-]+)(?::(box|button))?\}(?!\})/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    segments.push({ start: match.index, end: match.index + match[0].length, variableId: match[1], display: (match[2] as InlineReferenceDisplay) ?? "box" });
   }
   return segments;
 }
