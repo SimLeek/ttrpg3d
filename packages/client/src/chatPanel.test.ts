@@ -16,9 +16,12 @@ let activePanel: ChatPanelController | null = null;
 // mountChatPanel attaches a window-level keydown listener -- track and
 // destroy() whatever each test mounts, same discipline hotbar.test.ts
 // already uses, so listeners don't pile up across tests sharing the same
-// jsdom `window`.
+// jsdom `window`. onToggleMod/onReloadWorld/onSetSeeThroughWalls default
+// to no-ops so every pre-existing test (which predates the GM tab)
+// doesn't need to pass them explicitly -- tests that actually exercise
+// the tab override them.
 function mount(options: Partial<ChatPanelOptions> & Pick<ChatPanelOptions, "initialMessages" | "onSend">): ChatPanelController {
-  activePanel = mountChatPanel(container, options as ChatPanelOptions);
+  activePanel = mountChatPanel(container, { onToggleMod: vi.fn(), onReloadWorld: vi.fn(), onSetSeeThroughWalls: vi.fn(), ...options });
   return activePanel;
 }
 
@@ -163,5 +166,90 @@ describe("mountChatPanel", () => {
     dispatchKeyOn(otherInput, "Enter");
     expect(document.activeElement).toBe(otherInput);
     otherInput.remove();
+  });
+});
+
+describe("mountChatPanel's GM tab (MVP goal item 3, docs/ROADMAP.md)", () => {
+  it("the tab bar is hidden until setGmTabVisible(true); becoming visible switches straight to the GM tab, becoming hidden again snaps back to Chat", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    const tabs = container.querySelector<HTMLDivElement>("#chat-tabs")!;
+    expect(tabs.classList.contains("show")).toBe(false);
+    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
+
+    panel.setGmTabVisible(true);
+    expect(tabs.classList.contains("show")).toBe(true);
+    expect(container.querySelector("#chat-tab-gm")!.classList.contains("active")).toBe(true);
+    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(false);
+
+    panel.setGmTabVisible(false);
+    expect(tabs.classList.contains("show")).toBe(false);
+    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
+  });
+
+  it("clicking between Chat and GM tabs switches panes while both are visible", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    panel.setGmTabVisible(true);
+
+    container.querySelector<HTMLButtonElement>("#chat-tab-chat-btn")!.click();
+    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
+
+    container.querySelector<HTMLButtonElement>("#chat-tab-gm-btn")!.click();
+    expect(container.querySelector("#chat-tab-gm")!.classList.contains("active")).toBe(true);
+  });
+
+  it("setModsState renders each available mod with its current enabled state", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    panel.setModsState(
+      [
+        { id: "mod-a", name: "Mod A", version: "1.0.0", entry: "entry.ts" },
+        { id: "mod-b", name: "Mod B", version: "2.0.0", entry: "entry.ts" },
+      ],
+      ["mod-a"],
+    );
+    const items = container.querySelectorAll<HTMLLIElement>(".mod-list li");
+    expect(items.length).toBe(2);
+    expect(items[0].textContent).toContain("Mod A");
+    expect(items[0].querySelector<HTMLButtonElement>(".mod-toggle-btn")!.textContent).toBe("Disable");
+    expect(items[1].querySelector<HTMLButtonElement>(".mod-toggle-btn")!.textContent).toBe("Enable");
+  });
+
+  it("clicking a mod's toggle button calls onToggleMod with the right args and flags the Reload button as dirty", () => {
+    const onToggleMod = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onToggleMod });
+    panel.setModsState([{ id: "mod-a", name: "Mod A", version: "1.0.0", entry: "entry.ts" }], []);
+
+    const reloadBtn = container.querySelector<HTMLButtonElement>("#chat-reload-btn")!;
+    expect(reloadBtn.disabled).toBe(true);
+
+    container.querySelector<HTMLButtonElement>(".mod-toggle-btn")!.click();
+    expect(onToggleMod).toHaveBeenCalledWith("mod-a", true);
+    expect(reloadBtn.disabled).toBe(false);
+    expect(reloadBtn.classList.contains("dirty")).toBe(true);
+  });
+
+  it("clicking Reload calls onReloadWorld and clears the dirty state", () => {
+    const onReloadWorld = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onReloadWorld });
+    panel.setModsState([{ id: "mod-a", name: "Mod A", version: "1.0.0", entry: "entry.ts" }], []);
+    container.querySelector<HTMLButtonElement>(".mod-toggle-btn")!.click(); // dirty it first
+
+    const reloadBtn = container.querySelector<HTMLButtonElement>("#chat-reload-btn")!;
+    reloadBtn.click();
+    expect(onReloadWorld).toHaveBeenCalled();
+    expect(reloadBtn.disabled).toBe(true);
+    expect(reloadBtn.classList.contains("dirty")).toBe(false);
+  });
+
+  it("setSeeThroughWallsState reflects the current value, and toggling the checkbox calls onSetSeeThroughWalls", () => {
+    const onSetSeeThroughWalls = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onSetSeeThroughWalls });
+    panel.setSeeThroughWallsState(false);
+
+    const checkbox = container.querySelector<HTMLInputElement>("#chat-see-through-walls")!;
+    expect(checkbox.checked).toBe(false);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(onSetSeeThroughWalls).toHaveBeenCalledWith(true);
   });
 });

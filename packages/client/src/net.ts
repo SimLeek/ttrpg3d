@@ -15,7 +15,6 @@ import { installVoxelEditor, type CharacterStat } from "./voxelEditor.js";
 import { installGmOverride } from "./gmOverride.js";
 import { installRespawnControl } from "./respawnControl.js";
 import { mountPageManager } from "./pageManager.js";
-import { mountGmPanel } from "./gmPanel.js";
 import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type HoveredBar } from "./characterToken.js";
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
@@ -61,6 +60,8 @@ export interface WorldConnection {
   /** Actually tells the server this client is leaving the room -- see the
    * doc comment at the bottom of this function for why this exists. */
   leave(): void;
+  /** GM-only chat tab (chatPanel.ts, via game.ts's RunningGame.setSeeThroughWalls) -- sends the admin-gated room message; WorldRoom.ts re-checks admin status server-side regardless of what this client claims. */
+  setSeeThroughWalls(enabled: boolean): void;
 }
 
 export async function connectAndStreamWorld(
@@ -89,11 +90,10 @@ export async function connectAndStreamWorld(
   // features work on your OWN hp/mp too, not just other players'.
   playerBodyMesh: PlayerBodyMesh,
   onSwitchWorld: (worldId: string, worldName: string) => void,
-  // GM-only panel (gmPanel.ts): "Reload this page" re-launches this
-  // same world (game.ts implements this as `() => onSwitchWorld(worldId, worldName)`,
-  // both already in ITS closure -- net.ts just calls it, doesn't need
-  // to know either value itself).
-  reloadWorld: () => void,
+  // gmOverride.ts's own G-key toggle -- forwarded straight through to
+  // game.ts's RunningGame.onGmActiveChange listeners, for chatPanel.ts's
+  // GM tab (main.ts wires the two together).
+  onGmActiveChange: (active: boolean) => void,
   // Polled every tick below (not event-based -- see respawnControl.ts's
   // own worldBottomY/hasRespawnAnchor precedent for reading a scalar
   // Schema field fresh each tick, no `.listen()` anywhere in this file).
@@ -148,17 +148,7 @@ export async function connectAndStreamWorld(
     return !!players?.get(room.sessionId)?.isAdmin;
   }
 
-  const gmPanelContainer = document.createElement("div");
-  document.body.appendChild(gmPanelContainer);
-  const gmPanel = mountGmPanel(gmPanelContainer, {
-    httpUrl,
-    gameId,
-    accountId,
-    getSeeThroughWalls: () => !!(room!.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls,
-    onSetSeeThroughWalls: (enabled) => room!.send("setSeeThroughWalls", { enabled }),
-    reloadWorld,
-  });
-  const gmOverride = installGmOverride(noa, room, playerController, (active) => gmPanel.setVisible(active));
+  const gmOverride = installGmOverride(noa, room, playerController, onGmActiveChange);
   installRespawnControl(noa, room, playerController, fallbackSpawn);
 
   // Real bug found live: the client never actually applied the SERVER's
@@ -485,8 +475,8 @@ export async function connectAndStreamWorld(
   });
 
   noa.on("tick", () => {
-    // GM-only panel's seeThroughWalls toggle (gmPanel.ts): poll the
-    // room's own Schema-synced value fresh every tick, same idiom
+    // GM-only chat tab's seeThroughWalls checkbox (chatPanel.ts): poll
+    // the room's own Schema-synced value fresh every tick, same idiom
     // respawnControl.ts already uses for worldBottomY/hasRespawnAnchor
     // -- no `.listen()` anywhere in this codebase for a scalar field.
     onSeeThroughWallsChange(!!(room.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls);
@@ -666,14 +656,16 @@ export async function connectAndStreamWorld(
     leave() {
       pageManager.destroy();
       pageManagerContainer.remove();
-      gmPanel.destroy();
-      gmPanelContainer.remove();
       contextMenu.destroy();
       contextMenuContainer.remove();
       statInputContainer.remove();
       for (const token of remoteTokens.values()) token.dispose();
       for (const material of remoteMaterials.values()) material.dispose();
       room.leave();
+    },
+
+    setSeeThroughWalls(enabled: boolean): void {
+      room.send("setSeeThroughWalls", { enabled });
     },
   };
 }

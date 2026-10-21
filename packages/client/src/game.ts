@@ -96,6 +96,25 @@ export interface RunningGame {
    * Returns an unsubscribe function.
    */
   onPointerLockChange(cb: (locked: boolean) => void): () => void;
+  /**
+   * Relays gmOverride.ts's own G-key toggle -- main.ts's chatPanel.ts
+   * (mounted independently of this per-page session, same reasoning as
+   * onPointerLockChange above) uses this to show/hide its GM-only tab
+   * exactly when GM mode turns on/off, no separate hotkey. Returns an
+   * unsubscribe function; a FRESH subscription is needed on every new
+   * RunningGame (main.ts re-subscribes after every launchGame call).
+   */
+  onGmActiveChange(cb: (active: boolean) => void): () => void;
+  /**
+   * Relays net.ts's per-tick poll of the room's own Schema-synced
+   * seeThroughWalls value -- chatPanel.ts's GM tab reflects it in its
+   * checkbox. Same re-subscribe-per-RunningGame caveat as above.
+   */
+  onSeeThroughWallsChange(cb: (enabled: boolean) => void): () => void;
+  /** Sends the admin-gated "setSeeThroughWalls" room message -- chatPanel.ts's GM tab checkbox calls this via main.ts. */
+  setSeeThroughWalls(enabled: boolean): void;
+  /** No hot-reload exists for mods -- re-launches the player's own current world, same teardown/recreate cycle page-switching already uses. chatPanel.ts's GM tab "Reload this page" button calls this via main.ts. */
+  reloadWorld(): void;
 }
 
 export function startGame(
@@ -293,7 +312,7 @@ export function startGame(
   const localPlayerPos: [number, number, number] = [0, 0, 0];
   const localCameraPos: [number, number, number] = [0, 0, 0];
   const centerGlobal: [number, number, number] = [0, 0, 0];
-  // GM-only panel toggle (gmPanel.ts, wired via net.ts's per-tick poll
+  // GM-only tab toggle (chatPanel.ts, wired via net.ts's per-tick poll
   // of the room's Schema-synced `seeThroughWalls` field) -- true (the
   // existing/default behavior) until net.ts's connection resolves and
   // reports the real value. When false, feed the PLAYER's own position
@@ -302,8 +321,14 @@ export function startGame(
   // a zero-distance pair unconditionally skips the cutout branch for
   // every fragment on every draw call (including shadow passes, since
   // the uniform is one shared global pair, not view-gated) -- a
-  // provable early-exit, not a heuristic.
+  // provable early-exit, not a heuristic. Real correction: this ALONE
+  // only stops the visual fade -- cameraZoom.ts's own separate
+  // collision clamp (toggled alongside this, see the connection setup
+  // below) is what stops the camera from physically passing through
+  // walls at all.
   let seeThroughWallsEnabled = true;
+  const gmActiveListeners = new Set<(active: boolean) => void>();
+  const seeThroughWallsListeners = new Set<(enabled: boolean) => void>();
   scene.onBeforeRenderObservable.add(() => {
     // noa.ents.getPosition returns the BOTTOM-CENTER of the player's AABB
     // (confirmed directly in components/position.js's own doc comment),
@@ -325,7 +350,7 @@ export function startGame(
 
   const playerController = installPlayerController(noa);
   installOriginShiftLogger(noa);
-  installCameraZoom(noa);
+  const cameraZoom = installCameraZoom(noa);
   installUnderwaterEffect(noa);
   const playerBodyMesh = installPlayerBodyMesh(noa);
 
@@ -383,14 +408,24 @@ export function startGame(
     gameId,
     playerBodyMesh,
     onSwitchWorld,
-    // GM-only panel's "Reload this page" button (gmPanel.ts, mounted in
-    // net.ts) -- re-runs the exact SAME teardown/recreate cycle
-    // onSwitchWorld already provides for switching to a DIFFERENT
-    // world, just targeting this same world/worldName (both already in
-    // this closure's scope, so net.ts doesn't need to know either).
-    () => onSwitchWorld(worldId, worldName),
+    // gmOverride.ts's own G-key toggle, forwarded here from net.ts --
+    // relayed to this file's own listener set below (RunningGame.
+    // onGmActiveChange) for chatPanel.ts's GM tab, via main.ts.
+    (active) => {
+      for (const cb of gmActiveListeners) cb(active);
+    },
     (enabled) => {
       seeThroughWallsEnabled = enabled;
+      // Real correction: the shader toggle above only fades/un-fades
+      // geometry visually -- it never stopped the camera from
+      // physically clipping THROUGH walls in the first place (that's
+      // cameraZoom.ts's own separate collision clamp, permanently
+      // disabled by default for an unrelated reason -- see its
+      // header). seeThroughWalls OFF needs to restore BOTH: no fade,
+      // AND real collision, or walls don't actually "behave like
+      // walls" at all.
+      cameraZoom.setWallClipAllowed(enabled);
+      for (const cb of seeThroughWallsListeners) cb(enabled);
     },
   ).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
@@ -440,6 +475,24 @@ export function startGame(
         noa.container.off("gainedPointerLock", onGained);
         noa.container.off("lostPointerLock", onLost);
       };
+    },
+
+    onGmActiveChange(cb: (active: boolean) => void): () => void {
+      gmActiveListeners.add(cb);
+      return () => gmActiveListeners.delete(cb);
+    },
+
+    onSeeThroughWallsChange(cb: (enabled: boolean) => void): () => void {
+      seeThroughWallsListeners.add(cb);
+      return () => seeThroughWallsListeners.delete(cb);
+    },
+
+    setSeeThroughWalls(enabled: boolean): void {
+      void connection.then((c) => c?.setSeeThroughWalls(enabled));
+    },
+
+    reloadWorld(): void {
+      onSwitchWorld(worldId, worldName);
     },
   };
 }

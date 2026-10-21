@@ -14,7 +14,7 @@
 import Navigo from "navigo";
 import { mountLobby, type Account, type GameRecord, type WorldRecord } from "./lobby.js";
 import { startGame, type RunningGame } from "./game.js";
-import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, ACCOUNT_STORAGE_KEY, CHARACTER_STORAGE_KEY } from "./api.js";
+import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, fetchAvailableMods, fetchGameMods, enableGameMod, disableGameMod, ACCOUNT_STORAGE_KEY, CHARACTER_STORAGE_KEY } from "./api.js";
 import { connectChat, type ChatConnection } from "./chatNet.js";
 import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
 import { mountQuickActionsPanel, type QuickActionsPanelController } from "./quickActionsPanel.js";
@@ -46,6 +46,33 @@ function stopRunningGameIfAny(): void {
   }
 }
 
+// GM-only chat tab (chatPanel.ts): a FRESH RunningGame exists after
+// every launchGame call (every page switch), each with its own
+// onGmActiveChange/onSeeThroughWallsChange listener sets -- so the
+// subscription below has to be redone every time, not just once.
+// Tracks the current pair's unsubscribe fns so a stale RunningGame's
+// listeners are dropped before subscribing to the new one (harmless
+// either way since the old RunningGame is discarded, but tidy). Called
+// from two places: the end of launchGame (covers every page switch,
+// where chat already exists) and the end of enterGame's async chat-
+// mount block (covers first entry into a game, where launchGame runs
+// SYNCHRONOUSLY before chat exists, so the launchGame-end call there
+// is a no-op and this one is what actually wires it up).
+let unsubscribeGmTab: (() => void) | null = null;
+
+function wireGmTabToCurrentRunningGame(): void {
+  unsubscribeGmTab?.();
+  unsubscribeGmTab = null;
+  if (!runningGame || !runningChat) return;
+  const chatPanel = runningChat.chatPanel;
+  const unsubActive = runningGame.onGmActiveChange((active) => chatPanel.setGmTabVisible(active));
+  const unsubSeeThroughWalls = runningGame.onSeeThroughWallsChange((enabled) => chatPanel.setSeeThroughWallsState(enabled));
+  unsubscribeGmTab = () => {
+    unsubActive();
+    unsubSeeThroughWalls();
+  };
+}
+
 function launchGame(game: GameRecord, worldId: string, worldName: string, account: Account, characterId: string | null): void {
   lobbyEl.hidden = true;
   runningGame = startGame(game.id, worldId, worldName, wsUrl, httpUrl, account.displayName, account.id, characterId, (newWorldId, newWorldName) => {
@@ -58,6 +85,7 @@ function launchGame(game: GameRecord, worldId: string, worldName: string, accoun
     stopRunningGameIfAny();
     launchGame(game, newWorldId, newWorldName, account, characterId);
   });
+  wireGmTabToCurrentRunningGame();
 }
 
 // Chat + quick-actions + party-list are all scoped to the whole GAME,
@@ -101,12 +129,29 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
     document.body.appendChild(quickActionsContainer);
     document.body.appendChild(partyListContainer);
     void (async () => {
-      const [connection, history] = await Promise.all([connectChat(wsUrl, game.id, account.displayName, account.id, characterId), fetchGameChat(httpUrl, game.id)]);
+      const [connection, history, availableMods, enabledModIds] = await Promise.all([
+        connectChat(wsUrl, game.id, account.displayName, account.id, characterId),
+        fetchGameChat(httpUrl, game.id),
+        fetchAvailableMods(httpUrl),
+        fetchGameMods(httpUrl, game.id),
+      ]);
       const chatPanel = mountChatPanel(chatContainer, {
         initialMessages: history,
         onSend: (text) => connection.send(text),
         onFocusChange: (focused) => runningGame?.setPointerLock(!focused),
+        // Pure REST, per-GAME -- doesn't need the current RunningGame at
+        // all, unlike onReloadWorld/onSetSeeThroughWalls below.
+        onToggleMod: (modId, enable) => {
+          const toggle = enable ? enableGameMod(httpUrl, game.id, account.id, modId) : disableGameMod(httpUrl, game.id, account.id, modId);
+          void toggle.then((updatedModIds) => chatPanel.setModsState(availableMods, updatedModIds));
+        },
+        // Both read `runningGame` LAZILY (not captured once at mount
+        // time) -- it's reassigned on every page switch, same reasoning
+        // onFocusChange's setPointerLock call above already relies on.
+        onReloadWorld: () => runningGame?.reloadWorld(),
+        onSetSeeThroughWalls: (enabled) => runningGame?.setSeeThroughWalls(enabled),
       });
+      chatPanel.setModsState(availableMods, enabledModIds);
       connection.onMessage((message) => chatPanel.addMessage(message));
       connection.onError((reason) => chatPanel.showError(reason));
 
@@ -117,6 +162,13 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
       });
 
       runningChat = { connection, chatPanel, quickActionsPanel, partyListPanel, containers: [chatContainer, quickActionsContainer, partyListContainer], gameId: game.id };
+      // First-entry case: launchGame below already ran synchronously
+      // (runningGame is set), but this is the moment runningChat FIRST
+      // becomes available -- the launchGame-end call for THIS entry
+      // happened too early to see it, so wire up here too. See
+      // wireGmTabToCurrentRunningGame's own comment for the full
+      // two-call-site reasoning.
+      wireGmTabToCurrentRunningGame();
     })();
   }
   launchGame(game, worldId, worldName, account, characterId);
