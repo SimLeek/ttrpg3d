@@ -7,29 +7,34 @@
 // innerHTML template, closure state, async-IIFE bootstrap" pattern --
 // no controller object/destroy, and (like lobby.ts) genuinely noa-free.
 //
-// Round 2, real corrections from the first playtest:
-// - Mods list only shows mods relevant to character sheets (`m.characterSheet`),
-//   not every mod on disk -- example-noop has no business here.
-// - A mod's `characterSheetTemplate` is now ONLY ever a CLONE SOURCE:
-//   "Start from template X" deep-copies it into the character's own
-//   `customSheet`, which is what's actually rendered/edited from then
-//   on -- "not 'this is all you get ever' once the mod is loaded in."
-// - Real authoring: a two-pane editor (raw markdown left, live
-//   rendered preview right) plus a variables list the user can
-//   add/remove/retype themselves -- "the only people that can make
-//   character sheets are programmers" is the gap this closes.
-// - Mods can provide LIBRARIES of callable functions
-//   (`{{modId.fn(args)}}` inline in a page's markdown, resolved
-//   server-side via the new character-sheet-preview endpoint -- see
-//   api.ts's own doc on why that can't happen client-side) -- "the
-//   mod is not supposed to be _just_ a template, but also libraries."
-// - Structural fix for the "need two clicks" bug: nothing that
-//   dispatches its own click/change event ever rebuilds its OWN
-//   parent container's innerHTML from within that same handler (a
-//   real anti-pattern) -- only a DIFFERENT button/action rebuilds a
-//   given sub-tree; the element that's currently handling an event
-//   only ever has its own attributes/classes toggled in place, or
-//   triggers a rebuild of some OTHER sibling sub-tree.
+// Round 2 real corrections (mods-list filtering, clone-not-live-
+// reference templates, the two-pane authoring UI, mods as libraries):
+// see this file's git history / docs/COMPLETED.md.
+//
+// Round 3, real feedback from actually using round 2's editor:
+// - **Bug fixed**: a page's resolved preview (library calls like
+//   {{modId.fn(args)}}) only ever fetched from the markdown textarea's
+//   OWN `input` handler -- the first time a page was shown (right
+//   after cloning a template, or switching tabs) nothing triggered
+//   that fetch, so calls sat unresolved until the user typed
+//   something. View mode (below) now ALWAYS fetches on render.
+// - **Layout**: Edit and View no longer compete for space side by
+//   side -- each is its own full-width mode, toggled by a button, not
+//   simultaneous. The whole sheet is also now a real tab bar ("Core &
+//   Variables" + one tab per page), not one always-visible stack.
+// - **Gap closed**: a page's own variables (via page.variableIds) now
+//   render their VALUE widgets directly on that page (both Edit and
+//   View), not only in the Core & Variables tab's definitions editor.
+// - **New**: a local test-chat panel to the right -- clicking a
+//   resolved library call's "roll chip" in View mode posts it there,
+//   for trying out spell/attack-style buttons without a live game.
+//
+// Still true from round 2: nothing that dispatches its own click/
+// change event ever rebuilds its OWN parent container's innerHTML
+// from within that same handler -- only a DIFFERENT button/action
+// rebuilds a given sub-tree; the element currently handling an event
+// only ever toggles its own classes/attributes in place, or triggers
+// a rebuild of some OTHER sibling sub-tree.
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -48,14 +53,20 @@ import {
   type CharacterSheetTemplateCatalogEntry,
 } from "./api.js";
 import { renderVariableWidget } from "./characterSheetWidgets.js";
+import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 
 const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "range", "xOfY", "text"];
-const PREVIEW_DEBOUNCE_MS = 500;
+const SAVE_DEBOUNCE_MS = 500;
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 export function mountCharactersPage(container: HTMLElement, httpUrl: string, accountId: string): void {
   container.innerHTML = `
     <style>
-      .characters-page { max-width: 960px; margin: 48px auto; font-family: system-ui, sans-serif; color: #eee; max-height: calc(100vh - 96px); display: flex; flex-direction: column; }
+      .characters-layout { display: flex; gap: 16px; max-width: 1280px; margin: 48px auto; height: calc(100vh - 96px); font-family: system-ui, sans-serif; color: #eee; }
+      .characters-page { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
       .characters-page h1 { font-size: 1.5rem; flex: none; }
       .characters-page h2 { font-size: 1.1rem; margin: 0 0 8px; }
       .characters-page h3 { font-size: 0.95rem; margin: 0 0 6px; color: #999; }
@@ -72,44 +83,52 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       .characters-page .variable-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
       .characters-page .variable-row label { min-width: 120px; }
       .characters-page input, .characters-page select, .characters-page button, .characters-page textarea { font-size: 1rem; padding: 6px 10px; font-family: inherit; }
-      .characters-page .page-tabs { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-      .characters-page .page-tab { cursor: pointer; }
-      .characters-page .page-tab.active { border-color: rgb(255,217,51); color: rgb(255,217,51); }
-      .characters-page .editor-split { display: flex; gap: 12px; }
-      .characters-page .editor-split textarea { flex: 1 1 50%; min-height: 220px; resize: vertical; box-sizing: border-box; background: #111; color: #eee; border: 1px solid #444; }
-      .characters-page .editor-split .editor-preview { flex: 1 1 50%; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 8px 12px; overflow-y: auto; }
-      .characters-page .editor-preview img { max-width: 100%; }
+      .characters-page .sheet-tabs { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+      .characters-page .sheet-tab { cursor: pointer; }
+      .characters-page .sheet-tab.active { border-color: rgb(255,217,51); color: rgb(255,217,51); }
+      .characters-page .page-mode-toggle { float: right; }
+      .characters-page .page-markdown { width: 100%; min-height: 320px; resize: vertical; box-sizing: border-box; background: #111; color: #eee; border: 1px solid #444; }
+      .characters-page .page-preview { min-height: 320px; }
+      .characters-page .page-preview img { max-width: 100%; }
+      .characters-page .roll-chip { background: rgb(255,217,51); color: #222; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; padding: 2px 8px; }
       .characters-page .variable-def-list { list-style: none; padding: 0; margin: 0 0 8px; }
       .characters-page .variable-def-list li { display: flex; gap: 6px; align-items: center; padding: 6px; margin-bottom: 4px; background: #2a2a2a; border-radius: 6px; flex-wrap: wrap; }
       .characters-page .variable-def-list input { width: 90px; }
       .characters-page .variable-def-list select.var-pages { min-width: 120px; }
+      .test-chat-host { width: 300px; flex: none; }
     </style>
-    <div class="characters-page">
-      <h1>My Characters</h1>
-      <div class="scroll-body">
-        <section>
-          <h2>Imported mods</h2>
-          <ul class="mod-list" id="mod-list"></ul>
-        </section>
-        <section>
-          <h2>Characters</h2>
-          <ul class="char-list" id="char-list"></ul>
-        </section>
-        <section id="sheet-section"></section>
+    <div class="characters-layout">
+      <div class="characters-page">
+        <h1>My Characters</h1>
+        <div class="scroll-body">
+          <section>
+            <h2>Imported mods</h2>
+            <ul class="mod-list" id="mod-list"></ul>
+          </section>
+          <section>
+            <h2>Characters</h2>
+            <ul class="char-list" id="char-list"></ul>
+          </section>
+          <section id="sheet-section"></section>
+        </div>
       </div>
+      <div class="test-chat-host" id="test-chat-host"></div>
     </div>
   `;
 
   const modListEl = container.querySelector<HTMLUListElement>("#mod-list")!;
   const charListEl = container.querySelector<HTMLUListElement>("#char-list")!;
   const sheetSectionEl = container.querySelector<HTMLDivElement>("#sheet-section")!;
+  const testChatPanel: TestChatPanelController = mountTestChatPanel(container.querySelector<HTMLDivElement>("#test-chat-host")!);
 
   let availableMods: ModManifest[] = [];
   let importedModIds: string[] = [];
   let characters: CharacterRecord[] = [];
   let templates: CharacterSheetTemplateCatalogEntry[] = [];
   let selectedCharacterId: string | null = null;
-  let selectedPageIndex = 0;
+  /** "core" = the Core & Variables tab; a number = that page's index. */
+  let selectedSheetTab: "core" | number = "core";
+  let pageMode: "view" | "edit" = "view";
 
   // ---- mods list --------------------------------------------------
 
@@ -133,7 +152,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       importedModIds = updatedIds;
       // Update just THIS button in place -- rebuilding the whole list
       // from within its own click handler is the exact anti-pattern
-      // that caused the double-click bug elsewhere on this page.
+      // that caused round 2's double-click bug.
       button.textContent = importing ? "Remove" : "Import";
       button.dataset.imported = String(importing);
       await refreshTemplates();
@@ -152,7 +171,8 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-character-id]");
     if (!button) return;
     selectedCharacterId = button.dataset.characterId!;
-    selectedPageIndex = 0;
+    selectedSheetTab = "core";
+    pageMode = "view";
     renderCharList();
     renderSheetSection();
   });
@@ -188,6 +208,18 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     parent.append(row);
   }
 
+  /** A page's OWN variables, rendered directly on it (round 3 -- editable both in View and Edit mode, not only in the Core & Variables tab). */
+  function renderPageVariableWidgets(container: HTMLElement, character: CharacterRecord, page: CharacterSheetPageDef): void {
+    if (page.variableIds.length === 0) return;
+    const section = document.createElement("div");
+    section.className = "sheet-page";
+    for (const variableId of page.variableIds) {
+      const def = character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === variableId);
+      if (def) renderVariableRow(section, def, character);
+    }
+    container.append(section);
+  }
+
   // ---- dependency warning -------------------------------------------
 
   let dependencyWarningEl: HTMLDivElement;
@@ -207,96 +239,87 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
         : "";
   }
 
-  // ---- the two-pane page editor --------------------------------------
+  // ---- a page's content: Edit (raw markdown) XOR View (rendered) -----
 
-  let pageEditorEl: HTMLDivElement;
-
-  function renderPageEditor(character: CharacterRecord): void {
-    const page = character.customSheet!.pages[selectedPageIndex];
-    pageEditorEl.innerHTML = `
-      <div class="editor-split">
-        <textarea id="page-markdown" placeholder="Write this page's content in Markdown..."></textarea>
-        <div class="editor-preview markdown" id="page-preview"></div>
-      </div>
-    `;
-    const textarea = pageEditorEl.querySelector<HTMLTextAreaElement>("#page-markdown")!;
-    const previewEl = pageEditorEl.querySelector<HTMLDivElement>("#page-preview")!;
+  function renderEditMode(character: CharacterRecord, page: CharacterSheetPageDef, hostEl: HTMLElement): void {
+    const textarea = document.createElement("textarea");
+    textarea.className = "page-markdown";
+    textarea.placeholder = "Write this page's content in Markdown...";
     textarea.value = page.markdown;
-
-    function renderLocalPreview(markdown: string): void {
-      // The ONE deliberate innerHTML-of-untrusted-content spot in this
-      // codebase -- sanitized immediately before insertion (see this
-      // file's own header; chatPanel.ts's textContent convention is
-      // the baseline everywhere else).
-      previewEl.innerHTML = DOMPurify.sanitize(marked.parse(markdown) as string);
-    }
-    renderLocalPreview(page.markdown);
+    hostEl.append(textarea);
 
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     textarea.addEventListener("input", () => {
       page.markdown = textarea.value;
-      // Instant local feedback (unresolved {{...}} calls shown literally)
-      // while the debounced, fully-resolved version below is in flight.
-      renderLocalPreview(textarea.value);
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        saveSheet(character);
-        void fetchCharacterSheetPreview(httpUrl, accountId, page.markdown, character.variableValues).then((resolved) => {
-          renderLocalPreview(resolved);
-        });
-      }, PREVIEW_DEBOUNCE_MS);
+      debounceTimer = setTimeout(() => saveSheet(character), SAVE_DEBOUNCE_MS);
     });
   }
 
-  // ---- page tabs -----------------------------------------------------
+  function renderViewMode(character: CharacterRecord, page: CharacterSheetPageDef, hostEl: HTMLElement): void {
+    const previewEl = document.createElement("div");
+    previewEl.className = "markdown page-preview";
+    previewEl.textContent = "Loading...";
+    hostEl.append(previewEl);
 
-  let pageTabsEl: HTMLDivElement;
+    previewEl.addEventListener("click", (event) => {
+      const chip = (event.target as HTMLElement).closest<HTMLButtonElement>(".roll-chip");
+      if (!chip) return;
+      testChatPanel.addMessage(`${character.name}: ${chip.dataset.rollLabel} -> ${chip.dataset.rollValue}`);
+    });
 
-  function updateActivePageTab(): void {
-    pageTabsEl.querySelectorAll<HTMLButtonElement>(".page-tab").forEach((btn) => {
-      btn.classList.toggle("active", Number(btn.dataset.index) === selectedPageIndex);
+    // Round 3 bug fix: this now ALWAYS fetches on render (previously
+    // only the edit textarea's own `input` handler ever triggered it,
+    // so a freshly-cloned/just-opened page's library calls sat
+    // unresolved, literally, until the user typed something).
+    void fetchCharacterSheetPreview(httpUrl, accountId, page.markdown, character.variableValues).then((result) => {
+      // Substitute each {{modId.fn(args)}} span with a clickable
+      // "roll chip" BEFORE handing the text to marked -- by the time
+      // resolveCharacterSheetMarkdown's own flattened string exists,
+      // the original call markers are gone, so per-call buttons have
+      // to be built from the ORIGINAL markdown + segments instead.
+      let substituted = "";
+      let cursor = 0;
+      for (const segment of result.segments) {
+        substituted += page.markdown.slice(cursor, segment.start);
+        const label = `${segment.modId}.${segment.functionName}`;
+        substituted += `<button type="button" class="roll-chip" data-roll-label="${escapeHtml(label)}" data-roll-value="${escapeHtml(segment.value)}">${escapeHtml(segment.value)}</button>`;
+        cursor = segment.end;
+      }
+      substituted += page.markdown.slice(cursor);
+      // The ONE deliberate innerHTML-of-untrusted-content spot in this
+      // codebase -- sanitized immediately before insertion (DOMPurify's
+      // default allowlist already includes <button> and data-* attrs,
+      // confirmed directly, no extra config needed). chatPanel.ts's
+      // textContent convention is the baseline everywhere else.
+      previewEl.innerHTML = DOMPurify.sanitize(marked.parse(substituted) as string);
     });
   }
 
-  function renderPageTabs(character: CharacterRecord): void {
-    const pages = character.customSheet!.pages;
-    pageTabsEl.innerHTML =
-      pages.map((p, i) => `<button type="button" class="page-tab" data-index="${i}">${p.title}</button>`).join("") +
-      `<button type="button" id="add-page-btn">+ Add page</button><button type="button" id="delete-page-btn">Delete this page</button>`;
-    updateActivePageTab();
+  function renderPageTabContent(character: CharacterRecord, page: CharacterSheetPageDef): void {
+    sheetTabContentEl.innerHTML = `<div class="sheet-page"><button type="button" class="page-mode-toggle" id="page-mode-toggle"></button><div id="page-mode-host"></div></div><div id="page-variables-host"></div>`;
+    const toggleBtn = sheetTabContentEl.querySelector<HTMLButtonElement>("#page-mode-toggle")!;
+    const modeHostEl = sheetTabContentEl.querySelector<HTMLDivElement>("#page-mode-host")!;
 
-    pageTabsEl.querySelectorAll<HTMLButtonElement>(".page-tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        selectedPageIndex = Number(btn.dataset.index);
-        // Only toggles classes on the EXISTING tab buttons and rebuilds
-        // the (separate) editor sub-tree -- never rebuilds this tab's
-        // own parent from within its own click handler (the bug this
-        // round fixes elsewhere on this page).
-        updateActivePageTab();
-        renderPageEditor(character);
-      });
+    function renderMode(): void {
+      toggleBtn.textContent = pageMode === "view" ? "Edit" : "View";
+      modeHostEl.innerHTML = "";
+      if (pageMode === "edit") renderEditMode(character, page, modeHostEl);
+      else renderViewMode(character, page, modeHostEl);
+    }
+    renderMode();
+
+    toggleBtn.addEventListener("click", () => {
+      pageMode = pageMode === "view" ? "edit" : "view";
+      // Only rebuilds modeHostEl (a sibling), never this button's own
+      // parent, from within this button's own click handler.
+      renderMode();
     });
 
-    pageTabsEl.querySelector<HTMLButtonElement>("#add-page-btn")!.addEventListener("click", () => {
-      const newPage: CharacterSheetPageDef = { title: `Page ${pages.length + 1}`, markdown: "", variableIds: [] };
-      pages.push(newPage);
-      selectedPageIndex = pages.length - 1;
-      saveSheet(character);
-      renderPageTabs(character);
-      renderPageEditor(character);
-    });
-
-    pageTabsEl.querySelector<HTMLButtonElement>("#delete-page-btn")!.addEventListener("click", () => {
-      if (pages.length <= 1) return; // always keep at least one page
-      pages.splice(selectedPageIndex, 1);
-      selectedPageIndex = Math.max(0, selectedPageIndex - 1);
-      saveSheet(character);
-      renderPageTabs(character);
-      renderPageEditor(character);
-    });
+    renderPageVariableWidgets(sheetTabContentEl.querySelector<HTMLDivElement>("#page-variables-host")!, character, page);
   }
 
-  // ---- variables list (user-defined, not just values) ----------------
+  // ---- the "Core & Variables" tab: body-size + variable definitions --
 
   let variablesSectionEl: HTMLDivElement;
 
@@ -327,8 +350,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     renderList();
 
     // Field edits mutate in place and save WITHOUT rebuilding the list
-    // (rebuilding mid-edit would lose focus/cursor position, same
-    // reentrancy class this round already fixes elsewhere).
+    // (rebuilding mid-edit would lose focus/cursor position).
     listEl.addEventListener("change", (event) => {
       const target = event.target as HTMLElement;
       const li = target.closest<HTMLLIElement>("li[data-index]");
@@ -384,7 +406,72 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     });
   }
 
-  // ---- top-level sheet section: start-prompt vs. the editor shell ----
+  function renderCoreTabContent(character: CharacterRecord): void {
+    sheetTabContentEl.innerHTML = `<div class="sheet-page" id="body-size-section"><h3>Body (core, always present)</h3></div><div class="sheet-page" id="variables-host"></div>`;
+    const bodySizeSection = sheetTabContentEl.querySelector<HTMLDivElement>("#body-size-section")!;
+    for (const def of RESERVED_BODY_SIZE_VARIABLES) renderVariableRow(bodySizeSection, def, character);
+    variablesSectionEl = sheetTabContentEl.querySelector<HTMLDivElement>("#variables-host")!;
+    renderVariablesSection(character);
+  }
+
+  // ---- sheet tab bar: "Core & Variables" + one per page ---------------
+
+  let sheetTabsEl: HTMLDivElement;
+  let sheetTabContentEl: HTMLDivElement;
+
+  function updateActiveSheetTab(): void {
+    sheetTabsEl.querySelectorAll<HTMLButtonElement>(".sheet-tab").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.tab === String(selectedSheetTab));
+    });
+  }
+
+  function renderSheetTabContent(character: CharacterRecord): void {
+    if (selectedSheetTab === "core") renderCoreTabContent(character);
+    else renderPageTabContent(character, character.customSheet!.pages[selectedSheetTab]);
+  }
+
+  function renderSheetTabs(character: CharacterRecord): void {
+    const pages = character.customSheet!.pages;
+    sheetTabsEl.innerHTML =
+      `<button type="button" class="sheet-tab" data-tab="core">Core &amp; Variables</button>` +
+      pages.map((p, i) => `<button type="button" class="sheet-tab" data-tab="${i}">${p.title}</button>`).join("") +
+      `<button type="button" id="add-page-btn">+ Add page</button><button type="button" id="delete-page-btn">Delete this page</button>`;
+    updateActiveSheetTab();
+
+    sheetTabsEl.querySelectorAll<HTMLButtonElement>(".sheet-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedSheetTab = btn.dataset.tab === "core" ? "core" : Number(btn.dataset.tab);
+        pageMode = "view";
+        // Only toggles classes on the EXISTING tab buttons and rebuilds
+        // the (separate) content sub-tree -- never rebuilds this tab
+        // bar's own parent from within a tab's own click handler.
+        updateActiveSheetTab();
+        renderSheetTabContent(character);
+      });
+    });
+
+    sheetTabsEl.querySelector<HTMLButtonElement>("#add-page-btn")!.addEventListener("click", () => {
+      const newPage: CharacterSheetPageDef = { title: `Page ${pages.length + 1}`, markdown: "", variableIds: [] };
+      pages.push(newPage);
+      selectedSheetTab = pages.length - 1;
+      pageMode = "view";
+      saveSheet(character);
+      renderSheetTabs(character);
+      renderSheetTabContent(character);
+    });
+
+    sheetTabsEl.querySelector<HTMLButtonElement>("#delete-page-btn")!.addEventListener("click", () => {
+      if (pages.length <= 1 || typeof selectedSheetTab !== "number") return; // always keep at least one page
+      pages.splice(selectedSheetTab, 1);
+      selectedSheetTab = Math.max(0, selectedSheetTab - 1);
+      pageMode = "view";
+      saveSheet(character);
+      renderSheetTabs(character);
+      renderSheetTabContent(character);
+    });
+  }
+
+  // ---- top-level sheet section: start-prompt vs. the tabbed shell ----
 
   function renderStartPrompt(character: CharacterRecord): void {
     sheetSectionEl.innerHTML = `
@@ -396,6 +483,8 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     sheetSectionEl.querySelector<HTMLButtonElement>("#start-blank-btn")!.addEventListener("click", () => {
       character.customSheet = { name: `${character.name}'s Sheet`, pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [] };
       character.templateId = null;
+      selectedSheetTab = 0; // land on the real page just created, not the Core tab
+      pageMode = "view";
       saveSheet(character);
       renderSheetSection();
     });
@@ -408,34 +497,29 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       if (!entry) return;
       character.customSheet = structuredClone(entry.template);
       character.templateId = entry.modId;
+      selectedSheetTab = 0; // land on the cloned sheet's first page, not the Core tab
+      pageMode = "view";
       saveSheet(character);
       renderSheetSection();
     });
   }
 
   function renderSheetShell(character: CharacterRecord): void {
-    selectedPageIndex = Math.min(Math.max(selectedPageIndex, 0), character.customSheet!.pages.length - 1);
+    if (typeof selectedSheetTab === "number") selectedSheetTab = Math.min(Math.max(selectedSheetTab, 0), character.customSheet!.pages.length - 1);
 
     sheetSectionEl.innerHTML = `
       <h2>${character.name}'s Sheet</h2>
       <div id="dependency-warning"></div>
-      <div class="sheet-page" id="body-size-section"><h3>Body (core, always present)</h3></div>
-      <div class="page-tabs" id="page-tabs"></div>
-      <div class="sheet-page" id="page-editor-host"></div>
-      <div class="sheet-page" id="variables-host"></div>
+      <div class="sheet-tabs" id="sheet-tabs"></div>
+      <div id="sheet-tab-content"></div>
     `;
     dependencyWarningEl = sheetSectionEl.querySelector<HTMLDivElement>("#dependency-warning")!;
-    pageTabsEl = sheetSectionEl.querySelector<HTMLDivElement>("#page-tabs")!;
-    pageEditorEl = sheetSectionEl.querySelector<HTMLDivElement>("#page-editor-host")!;
-    variablesSectionEl = sheetSectionEl.querySelector<HTMLDivElement>("#variables-host")!;
-
-    const bodySizeSection = sheetSectionEl.querySelector<HTMLDivElement>("#body-size-section")!;
-    for (const def of RESERVED_BODY_SIZE_VARIABLES) renderVariableRow(bodySizeSection, def, character);
+    sheetTabsEl = sheetSectionEl.querySelector<HTMLDivElement>("#sheet-tabs")!;
+    sheetTabContentEl = sheetSectionEl.querySelector<HTMLDivElement>("#sheet-tab-content")!;
 
     renderDependencyWarning(character);
-    renderPageTabs(character);
-    renderPageEditor(character);
-    renderVariablesSection(character);
+    renderSheetTabs(character);
+    renderSheetTabContent(character);
   }
 
   function renderSheetSection(): void {

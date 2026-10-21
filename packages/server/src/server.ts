@@ -11,6 +11,7 @@ import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
 import { listAvailableMods, listCharacterSheetTemplates, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
+import { findLibraryCalls } from "@ttrpg3d/shared";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -126,8 +127,22 @@ const postCharacterSheetPreview = createEndpoint("/accounts/:id/character-sheet-
   if (!account) throw new APIError("NOT_FOUND", { message: "no such account" });
   const markdown = typeof ctx.body?.markdown === "string" ? ctx.body.markdown : "";
   const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
-  const resolvedMarkdown = await resolveCharacterSheetMarkdown(join(process.cwd(), "mods"), account.importedModIds, markdown, variableValues);
-  return { resolvedMarkdown };
+  const modsDir = join(process.cwd(), "mods");
+  const resolvedMarkdown = await resolveCharacterSheetMarkdown(modsDir, account.importedModIds, markdown, variableValues);
+  // MVP goal item 4, round 3 -- per-segment resolved values too (not
+  // just the flattened text), so the client can render each call as a
+  // clickable "roll chip" (characters.ts's test chat panel) instead of
+  // plain substituted text. Reuses resolveCharacterSheetMarkdown
+  // unchanged -- just called once per segment's own substring rather
+  // than once for the whole text, zero new resolution logic.
+  const callSegments = findLibraryCalls(markdown);
+  const segments = await Promise.all(
+    callSegments.map(async (segment) => ({
+      ...segment,
+      value: await resolveCharacterSheetMarkdown(modsDir, account.importedModIds, markdown.slice(segment.start, segment.end), variableValues),
+    })),
+  );
+  return { resolvedMarkdown, segments };
 });
 
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {

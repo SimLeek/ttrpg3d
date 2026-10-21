@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mountCharactersPage } from "./characters.js";
-import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry } from "./api.js";
+import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry, CharacterSheetPreviewResult } from "./api.js";
 
 let container: HTMLElement;
 
@@ -11,7 +11,7 @@ const availableMods: ModManifest[] = [
 let importedModIds: string[];
 let character: CharacterRecord;
 let templates: CharacterSheetTemplateCatalogEntry[];
-let previewResolvedMarkdown: string;
+let previewResponse: CharacterSheetPreviewResult;
 
 function jsonResponse(body: unknown): Response {
   return { json: () => Promise.resolve(body) } as Response;
@@ -22,7 +22,7 @@ function mockFetch(url: string, init?: { method?: string; body?: string }): Prom
 
   if (url.endsWith("/mods") && !url.includes("/accounts/")) return Promise.resolve(jsonResponse(availableMods));
   if (url.includes("/character-sheet-templates")) return Promise.resolve(jsonResponse(templates));
-  if (url.includes("/character-sheet-preview") && method === "POST") return Promise.resolve(jsonResponse({ resolvedMarkdown: previewResolvedMarkdown }));
+  if (url.includes("/character-sheet-preview") && method === "POST") return Promise.resolve(jsonResponse(previewResponse));
 
   if (/\/accounts\/[^/]+\/mods\/[^/]+$/.test(url) && method === "DELETE") {
     const modId = url.split("/mods/")[1]!;
@@ -54,7 +54,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   importedModIds = [];
-  previewResolvedMarkdown = "";
+  previewResponse = { resolvedMarkdown: "", segments: [] };
   character = {
     id: "char-1",
     ownerAccountId: "account-1",
@@ -76,8 +76,8 @@ beforeEach(() => {
       manifest: availableMods[0],
       template: {
         name: "Default Character Sheet",
-        variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }],
-        pages: [{ title: "Overview", markdown: "# Overview\n\nSafe text.", variableIds: ["hp"] }],
+        variables: [{ id: "str", label: "Strength", type: "number", default: 10 }],
+        pages: [{ title: "Overview", markdown: "Strength modifier: {{default-character-sheet.modifier(str)}}", variableIds: ["str"] }],
       },
     },
   ];
@@ -103,9 +103,7 @@ describe("mountCharactersPage", () => {
     expect(modItems.length).toBe(1);
     expect(modItems[0].textContent).toContain("Default Character Sheet");
     expect(container.querySelector(".mod-list")!.textContent).not.toContain("Example");
-
     expect(container.querySelectorAll("#char-list button").length).toBe(1);
-    expect(container.querySelector("#sheet-section h2")!.textContent).toContain("Aria");
   });
 
   it("importing a mod flips only that button in place, without rebuilding the whole list", async () => {
@@ -118,10 +116,10 @@ describe("mountCharactersPage", () => {
     await flush();
 
     expect(button.textContent).toBe("Remove");
-    expect(container.querySelectorAll(".mod-toggle-btn").length).toBe(1); // still the same single button, not duplicated/rebuilt
+    expect(container.querySelectorAll(".mod-toggle-btn").length).toBe(1);
   });
 
-  it("shows a start prompt for a character with no sheet yet; 'start blank' creates an empty, editable customSheet", async () => {
+  it("shows a start prompt for a character with no sheet yet; 'start blank' creates a tabbed sheet defaulting to the Overview page in View mode", async () => {
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
 
@@ -130,8 +128,11 @@ describe("mountCharactersPage", () => {
     await flush();
 
     expect(character.customSheet).not.toBeNull();
-    expect(container.querySelector("#page-tabs")).not.toBeNull();
-    expect(container.querySelector("#page-markdown")).not.toBeNull();
+    const tabs = container.querySelectorAll<HTMLButtonElement>(".sheet-tab");
+    expect(Array.from(tabs).map((t) => t.textContent)).toEqual(["Core & Variables", "Overview"]);
+    expect(tabs[1].classList.contains("active")).toBe(true); // a freshly-started sheet lands on its one real page, not Core
+    expect(container.querySelector(".page-preview")).not.toBeNull(); // View mode by default
+    expect(container.querySelector(".page-markdown")).toBeNull();
   });
 
   it("'start from template' clones the template's pages/variables into customSheet -- editing afterward never touches the mod again", async () => {
@@ -143,47 +144,95 @@ describe("mountCharactersPage", () => {
     await flush();
 
     expect(character.templateId).toBe("default-character-sheet");
-    expect(character.customSheet!.variables.map((v) => v.id)).toEqual(["hp"]);
-    // A real, independent copy -- mutating it must not mutate the catalog entry.
+    expect(character.customSheet!.variables.map((v) => v.id)).toEqual(["str"]);
     character.customSheet!.variables.push({ id: "extra", label: "Extra", type: "number", default: 0 });
-    expect(templates[0].template.variables.length).toBe(1);
+    expect(templates[0].template.variables.length).toBe(1); // independent copy, not a live reference
   });
 
-  it("always renders the three reserved body-size variables once a sheet exists, regardless of its content", async () => {
+  it("switching to the Core & Variables tab shows the reserved body-size widgets and the variable-definitions editor; switching back shows the page", async () => {
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>("#start-blank-btn")!.click();
     await flush();
 
-    const bodySection = container.querySelector("#body-size-section")!;
-    expect(bodySection.textContent).toContain("Body width");
-    expect(bodySection.textContent).toContain("Body height");
-    expect(bodySection.textContent).toContain("Body depth");
+    const [coreTabBtn, pageTabBtn] = Array.from(container.querySelectorAll<HTMLButtonElement>(".sheet-tab"));
+    coreTabBtn.click();
+    await flush();
+    expect(container.querySelector("#body-size-section")!.textContent).toContain("Body width");
+    expect(container.querySelector("#variable-def-list")).not.toBeNull();
+
+    pageTabBtn.click();
+    await flush();
+    expect(container.querySelector("#body-size-section")).toBeNull();
+    expect(container.querySelector(".page-preview")).not.toBeNull();
   });
 
-  it("editing the page markdown updates the local preview instantly, then debounce-fetches and renders the resolved preview", async () => {
+  it("View mode resolves the preview on initial render, without requiring a prior edit (round 3 bug fix)", async () => {
+    importedModIds = ["default-character-sheet"];
+    previewResponse = {
+      resolvedMarkdown: "Strength modifier: 0",
+      segments: [{ start: 20, end: 61, modId: "default-character-sheet", functionName: "modifier", args: ["str"], value: "0" }],
+    };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
+    await flush();
+
+    const preview = container.querySelector(".page-preview")!;
+    expect(preview.textContent).toContain("Strength modifier:");
+    expect(preview.querySelector(".roll-chip")).not.toBeNull(); // resolved as a clickable chip, not left as literal {{...}} text
+    expect(preview.textContent).not.toContain("{{");
+  });
+
+  it("the Edit/View toggle swaps between the raw-markdown textarea and the rendered preview, each full-width (not side by side)", async () => {
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>("#start-blank-btn")!.click();
     await flush();
 
-    // Fake timers only from here on -- the setup above needs real
-    // timers for its own setTimeout-based flush() to resolve at all.
+    expect(container.querySelector(".page-preview")).not.toBeNull();
+    expect(container.querySelector(".page-markdown")).toBeNull();
+
+    container.querySelector<HTMLButtonElement>("#page-mode-toggle")!.click();
+    await flush();
+    expect(container.querySelector(".page-markdown")).not.toBeNull();
+    expect(container.querySelector(".page-preview")).toBeNull();
+
+    container.querySelector<HTMLButtonElement>("#page-mode-toggle")!.click();
+    await flush();
+    expect(container.querySelector(".page-preview")).not.toBeNull();
+    expect(container.querySelector(".page-markdown")).toBeNull();
+  });
+
+  it("editing markdown in Edit mode debounce-saves", async () => {
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>("#start-blank-btn")!.click();
+    await flush();
+    container.querySelector<HTMLButtonElement>("#page-mode-toggle")!.click();
+    await flush();
+
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-
-    const textarea = container.querySelector<HTMLTextAreaElement>("#page-markdown")!;
-    previewResolvedMarkdown = "RESOLVED: 42";
-    textarea.value = "{{some-mod.fn}}";
+    const textarea = container.querySelector<HTMLTextAreaElement>(".page-markdown")!;
+    textarea.value = "New content";
     textarea.dispatchEvent(new Event("input"));
-
-    // Instant local render, before the debounce fires -- unresolved call shown literally.
-    expect(container.querySelector("#page-preview")!.textContent).toContain("{{some-mod.fn}}");
-
     await vi.advanceTimersByTimeAsync(600);
-    expect(container.querySelector("#page-preview")!.textContent).toContain("RESOLVED: 42");
+    expect(character.customSheet!.pages[0].markdown).toBe("New content");
   });
 
-  it("adding and deleting a page works, and always keeps at least one page", async () => {
+  it("a page's own variables render their VALUE widgets directly on the page (not just in Core & Variables)", async () => {
+    importedModIds = ["default-character-sheet"];
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
+    await flush();
+
+    // The cloned "Overview" page lists "str" in its variableIds.
+    expect(container.querySelector("#sheet-tab-content")!.textContent).toContain("Strength");
+    expect(container.querySelector(".sheet-widget-number")).not.toBeNull();
+  });
+
+  it("adding and deleting a page works via the sheet tab bar, and always keeps at least one page", async () => {
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>("#start-blank-btn")!.click();
@@ -191,23 +240,25 @@ describe("mountCharactersPage", () => {
 
     container.querySelector<HTMLButtonElement>("#add-page-btn")!.click();
     await flush();
-    expect(container.querySelectorAll(".page-tab").length).toBe(2);
+    // "Core & Variables" + 2 pages = 3 tabs.
+    expect(container.querySelectorAll(".sheet-tab").length).toBe(3);
     expect(character.customSheet!.pages.length).toBe(2);
 
     container.querySelector<HTMLButtonElement>("#delete-page-btn")!.click();
     await flush();
-    expect(container.querySelectorAll(".page-tab").length).toBe(1);
+    expect(container.querySelectorAll(".sheet-tab").length).toBe(2);
 
-    // Can't delete the last page.
     container.querySelector<HTMLButtonElement>("#delete-page-btn")!.click();
     await flush();
-    expect(container.querySelectorAll(".page-tab").length).toBe(1);
+    expect(container.querySelectorAll(".sheet-tab").length).toBe(2); // can't delete the last page
   });
 
-  it("adding a variable, assigning it to a page, and deleting it all work and persist", async () => {
+  it("adding a variable (in Core & Variables), assigning it to a page, and deleting it all work and persist", async () => {
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>("#start-blank-btn")!.click();
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // "Core & Variables" is the first tab
     await flush();
 
     container.querySelector<HTMLButtonElement>("#add-variable-btn")!.click();
@@ -217,9 +268,6 @@ describe("mountCharactersPage", () => {
 
     const pagesSelect = container.querySelector<HTMLSelectElement>(".var-pages")!;
     pagesSelect.options[0].selected = true;
-    // The "change" listener is delegated on the parent <ul> -- needs
-    // bubbles:true to reach it (unlike a real browser-dispatched
-    // change event, which always bubbles by default).
     pagesSelect.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
     expect(character.customSheet!.pages[0].variableIds).toContain(newVarId);
@@ -241,5 +289,23 @@ describe("mountCharactersPage", () => {
     container.querySelector<HTMLButtonElement>(".mod-toggle-btn")!.click();
     await flush();
     expect(container.querySelector(".dependency-warning")).toBeNull();
+  });
+
+  it("clicking a roll chip posts its label and value to the test chat panel", async () => {
+    importedModIds = ["default-character-sheet"];
+    previewResponse = {
+      resolvedMarkdown: "Strength modifier: 3",
+      segments: [{ start: 20, end: 61, modId: "default-character-sheet", functionName: "modifier", args: ["str"], value: "3" }],
+    };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
+    await flush();
+
+    container.querySelector<HTMLButtonElement>(".roll-chip")!.click();
+    const testChatMessages = container.querySelector("#test-chat-messages")!;
+    expect(testChatMessages.textContent).toContain("Aria");
+    expect(testChatMessages.textContent).toContain("default-character-sheet.modifier");
+    expect(testChatMessages.textContent).toContain("3");
   });
 });

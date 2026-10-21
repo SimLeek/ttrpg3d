@@ -9,7 +9,7 @@
 // (pageManager.ts), not from this outer lobby. See docs/ROADMAP.md's
 // Standing Decisions for the full Game/World split.
 
-import type { GeneratorId, GeneratorParams, CharacterSheetTemplate } from "@ttrpg3d/shared";
+import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -238,12 +238,17 @@ export async function updateCharacterSheet(httpUrl: string, characterId: string,
  * itself still happens client-side (marked + DOMPurify) -- only the
  * library-call resolution half needs this round trip.
  */
-export async function fetchCharacterSheetPreview(httpUrl: string, accountId: string, markdown: string, variableValues: Record<string, number | string>): Promise<string> {
+/** MVP goal item 4, round 3 -- `segments` carries each `{{modId.fn(args)}}` call's OWN resolved value (not just the flattened `resolvedMarkdown`), so the caller can render each one as a clickable "roll chip" instead of plain substituted text. */
+export interface CharacterSheetPreviewResult {
+  resolvedMarkdown: string;
+  segments: (LibraryCallSegment & { value: string })[];
+}
+
+export async function fetchCharacterSheetPreview(httpUrl: string, accountId: string, markdown: string, variableValues: Record<string, number | string>): Promise<CharacterSheetPreviewResult> {
   const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/character-sheet-preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ markdown, variableValues }),
   });
-  const { resolvedMarkdown } = (await res.json()) as { resolvedMarkdown: string };
-  return resolvedMarkdown;
+  return res.json();
 }
