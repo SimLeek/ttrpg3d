@@ -47,6 +47,8 @@ export interface ModManifest {
   entry: string;
   /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- other mod ids this mod needs to function. */
   dependencies?: string[];
+  /** MVP goal item 4, round 2 -- "relevant to character sheets at all" (a template, a library, or both). The characters page's mods list filters on this. */
+  characterSheet?: boolean;
 }
 
 export interface ChatMessage {
@@ -73,9 +75,11 @@ export interface CharacterRecord {
   maxMp: number;
   statusEffects: StatusEffect[];
   createdAt: number;
-  /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which character-sheet-template mod this character uses; null until picked. */
+  /** MVP goal item 4 (docs/ROADMAP.md) -- which mod this sheet was last cloned from / depends on as a library; null until picked. */
   templateId: string | null;
-  /** Flat map keyed by variable id (template-defined + the core RESERVED_BODY_SIZE_VARIABLES ids). */
+  /** The character's OWN editable pages/variables (round 2) -- null until started (blank or cloned from a mod template). */
+  customSheet: CharacterSheetTemplate | null;
+  /** Flat map keyed by variable id (customSheet's own variables + the core RESERVED_BODY_SIZE_VARIABLES ids). */
   variableValues: Record<string, number | string>;
 }
 
@@ -216,12 +220,30 @@ export async function fetchCharacterSheetTemplates(httpUrl: string, accountId: s
   return res.json();
 }
 
-/** Ownership-gated server-side (must be the character's own ownerAccountId) -- accountId is the caller's own, not trusted blindly, just checked fresh. Replaces templateId + variableValues wholesale. Returns the updated CharacterRecord. */
-export async function updateCharacterSheet(httpUrl: string, characterId: string, accountId: string, templateId: string | null, variableValues: Record<string, number | string>): Promise<CharacterRecord> {
+/** Ownership-gated server-side (must be the character's own ownerAccountId) -- accountId is the caller's own, not trusted blindly, just checked fresh. Replaces templateId/customSheet/variableValues wholesale. Returns the updated CharacterRecord. */
+export async function updateCharacterSheet(httpUrl: string, characterId: string, accountId: string, templateId: string | null, customSheet: CharacterSheetTemplate | null, variableValues: Record<string, number | string>): Promise<CharacterRecord> {
   const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}/sheet`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId, templateId, variableValues }),
+    body: JSON.stringify({ accountId, templateId, customSheet, variableValues }),
   });
   return res.json();
+}
+
+/**
+ * MVP goal item 4, round 2 -- resolves a page's `{{modId.fn(args)}}`
+ * library calls (findLibraryCalls) against the account's own
+ * importedModIds, since a mod's real function body is server-side
+ * Node code with no way to run it in the browser. Markdown PARSING
+ * itself still happens client-side (marked + DOMPurify) -- only the
+ * library-call resolution half needs this round trip.
+ */
+export async function fetchCharacterSheetPreview(httpUrl: string, accountId: string, markdown: string, variableValues: Record<string, number | string>): Promise<string> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/character-sheet-preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ markdown, variableValues }),
+  });
+  const { resolvedMarkdown } = (await res.json()) as { resolvedMarkdown: string };
+  return resolvedMarkdown;
 }

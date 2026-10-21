@@ -10,7 +10,7 @@ import { WorldRoom } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
-import { listAvailableMods, listCharacterSheetTemplates } from "./mods/modLoader.js";
+import { listAvailableMods, listCharacterSheetTemplates, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -107,9 +107,27 @@ const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT
   const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
   if (accountId !== character.ownerAccountId) throw new APIError("UNAUTHORIZED", { message: "not this character's owner" });
   const templateId = typeof ctx.body?.templateId === "string" ? ctx.body.templateId : null;
+  const customSheet = typeof ctx.body?.customSheet === "object" && ctx.body.customSheet !== null ? ctx.body.customSheet : null;
   const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
-  store.updateCharacterSheet(characterId, templateId, variableValues);
+  store.updateCharacterSheet(characterId, templateId, customSheet, variableValues);
   return store.getCharacter(characterId);
+});
+
+// Live-preview resolution of a sheet page's `{{modId.fn(args)}}` calls
+// (findLibraryCalls/resolveCharacterSheetMarkdown) against the
+// ACCOUNT's own importedModIds -- a mod not imported is treated as
+// missing even if it exists on disk (see resolveCharacterSheetMarkdown's
+// own doc). Markdown parsing itself stays client-side (characters.ts's
+// existing marked+DOMPurify pipeline); only library-call resolution
+// needs this round trip, since a mod's real function body is
+// server-side Node code with no way to ship it to the browser.
+const postCharacterSheetPreview = createEndpoint("/accounts/:id/character-sheet-preview", { method: "POST", scope: "http" }, async (ctx) => {
+  const account = store.getAccount(ctx.params.id);
+  if (!account) throw new APIError("NOT_FOUND", { message: "no such account" });
+  const markdown = typeof ctx.body?.markdown === "string" ? ctx.body.markdown : "";
+  const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
+  const resolvedMarkdown = await resolveCharacterSheetMarkdown(join(process.cwd(), "mods"), account.importedModIds, markdown, variableValues);
+  return { resolvedMarkdown };
 });
 
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {
@@ -207,6 +225,7 @@ const routes = createRouter({
   deleteAccountMod,
   getAccountCharacterSheetTemplates,
   putCharacterSheet,
+  postCharacterSheetPreview,
   getGames,
   postGame,
   getGameWorlds,

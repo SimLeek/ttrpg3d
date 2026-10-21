@@ -200,20 +200,22 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(() => store.removeModForAccount("not-a-real-account", "default-character-sheet")).not.toThrow();
   });
 
-  it("createCharacter defaults templateId to null and variableValues to an empty object; updateCharacterSheet persists both, no-op for an unknown character id (MVP goal item 4, slice 1)", () => {
+  it("createCharacter defaults templateId/customSheet to null and variableValues to an empty object; updateCharacterSheet persists all three, no-op for an unknown character id (MVP goal item 4)", () => {
     const owner = store.createAccount("Sheet Owner");
     const character = store.createCharacter(owner.id, "Sheet Test", [1, 0, 0]);
 
     expect(store.getCharacter(character.id)?.templateId).toBeNull();
+    expect(store.getCharacter(character.id)?.customSheet).toBeNull();
     expect(store.getCharacter(character.id)?.variableValues).toEqual({});
 
-    store.updateCharacterSheet(character.id, "default-character-sheet", { hp: 7, mp: 10 });
-    expect(store.getCharacter(character.id)).toMatchObject({ templateId: "default-character-sheet", variableValues: { hp: 7, mp: 10 } });
+    const customSheet = { name: "Custom", pages: [{ title: "Overview", markdown: "# Hi", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }] };
+    store.updateCharacterSheet(character.id, "default-character-sheet", customSheet, { hp: 7, mp: 10 });
+    expect(store.getCharacter(character.id)).toMatchObject({ templateId: "default-character-sheet", customSheet, variableValues: { hp: 7, mp: 10 } });
 
-    store.updateCharacterSheet(character.id, null, {});
-    expect(store.getCharacter(character.id)).toMatchObject({ templateId: null, variableValues: {} });
+    store.updateCharacterSheet(character.id, null, null, {});
+    expect(store.getCharacter(character.id)).toMatchObject({ templateId: null, customSheet: null, variableValues: {} });
 
-    expect(() => store.updateCharacterSheet("not-a-real-character", "default-character-sheet", {})).not.toThrow();
+    expect(() => store.updateCharacterSheet("not-a-real-character", "default-character-sheet", null, {})).not.toThrow();
   });
 
   it("getWorld returns the world record by id, undefined for an unknown id", () => {

@@ -27,7 +27,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { CharacterSheetTemplate } from "@ttrpg3d/shared";
+import type { CharacterSheetTemplate, CharacterSheetLibraryFunction } from "@ttrpg3d/shared";
+import { findLibraryCalls } from "@ttrpg3d/shared";
 
 export interface ModManifest {
   id: string;
@@ -37,6 +38,8 @@ export interface ModManifest {
   entry: string;
   /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- other mod ids this mod needs to function (e.g. a shared stats-library mod a character-sheet template depends on). One level only, not transitive, for this slice -- see characterSheet.ts's computeMissingModDependencies. */
   dependencies?: string[];
+  /** MVP goal item 4, round 2 -- "relevant to character sheets at all" (a template, a library of callable functions, or both), checked WITHOUT dynamically importing every mod just to find out (same spirit as WorldGeneratorDef.classifications). The characters page's mods list filters on this -- an ordinary behavior-only mod like example-noop has no business showing up there. */
+  characterSheet?: boolean;
 }
 
 /**
@@ -63,6 +66,19 @@ export interface ModEntry {
   register?(ctx: ModContext): void;
   unregister?(ctx: ModContext): void;
   characterSheetTemplate?: CharacterSheetTemplate;
+  /**
+   * MVP goal item 4, round 2 -- named functions a sheet's markdown can
+   * call via `{{modId.functionName(args)}}` (findLibraryCalls). Real
+   * correction: "the mod is not supposed to be _just_ a template, but
+   * also libraries allowing different stuff in the character sheet,
+   * like functions that act on different variables." Plain, trusted
+   * mod code (same trust level register() already has) -- the safety
+   * story is that a sheet's markdown can only ever CALL a pre-named
+   * function by exact name, never supply/construct code itself (no
+   * eval, no Function()), so resolveCharacterSheetMarkdown below is
+   * safe to run against arbitrary, user-authored markdown.
+   */
+  characterSheetLibrary?: Record<string, CharacterSheetLibraryFunction>;
 }
 
 /** Scans `modsDir` for `<mod-id>/mod.json` manifests. Re-reads from disk every call, same "never cache, always read fresh" convention as store.ts's own loadX functions -- mod counts are small, caching isn't worth the staleness risk. Skips (does not throw on) a directory with no mod.json, or one whose manifest fails to parse -- a malformed mod shouldn't take down the whole list. */
@@ -140,4 +156,68 @@ export async function listCharacterSheetTemplates(modsDir: string, modIds: reado
     if (mod.characterSheetTemplate) results.push({ modId, manifest, template: mod.characterSheetTemplate });
   }
   return results;
+}
+
+/** Same shape/reasoning as listCharacterSheetTemplates, for the given mod ids' `characterSheetLibrary` exports instead -- a future "what functions can I call" picker UI. */
+export async function listCharacterSheetLibraries(modsDir: string, modIds: readonly string[]): Promise<{ modId: string; manifest: ModManifest; library: Record<string, CharacterSheetLibraryFunction> }[]> {
+  const manifests = listAvailableMods(modsDir);
+  const results: { modId: string; manifest: ModManifest; library: Record<string, CharacterSheetLibraryFunction> }[] = [];
+  for (const modId of modIds) {
+    const manifest = manifests.find((m) => m.id === modId);
+    if (!manifest) continue;
+    const entryPath = join(modsDir, modId, manifest.entry);
+    const mod = (await import(pathToFileURL(entryPath).href)) as ModEntry;
+    if (mod.characterSheetLibrary) results.push({ modId, manifest, library: mod.characterSheetLibrary });
+  }
+  return results;
+}
+
+/**
+ * Resolves every `{{modId.functionName(args)}}` call in `markdown`
+ * (findLibraryCalls, shared) against the given ALLOWED mod ids (e.g.
+ * an account's own importedModIds -- a mod not in this list is
+ * treated as missing even if it exists on disk, same as a genuinely
+ * unknown id), substituting each call's result. Degrades gracefully
+ * per-segment on an unknown mod/function (a bracketed marker, never
+ * throws) -- same split/spirit as GameRoom.ts's own resolveInlineRolls
+ * against diceRoll.ts's real dice evaluation.
+ */
+export async function resolveCharacterSheetMarkdown(modsDir: string, modIds: readonly string[], markdown: string, variableValues: Readonly<Record<string, number | string>>): Promise<string> {
+  const segments = findLibraryCalls(markdown);
+  if (segments.length === 0) return markdown;
+
+  const allowedModIds = new Set(modIds);
+  const manifests = listAvailableMods(modsDir);
+  const libraryCache = new Map<string, Record<string, CharacterSheetLibraryFunction> | null>();
+
+  async function getLibrary(modId: string): Promise<Record<string, CharacterSheetLibraryFunction> | null> {
+    if (libraryCache.has(modId)) return libraryCache.get(modId)!;
+    let library: Record<string, CharacterSheetLibraryFunction> | null = null;
+    const manifest = allowedModIds.has(modId) ? manifests.find((m) => m.id === modId) : undefined;
+    if (manifest) {
+      const entryPath = join(modsDir, modId, manifest.entry);
+      const mod = (await import(pathToFileURL(entryPath).href)) as ModEntry;
+      library = mod.characterSheetLibrary ?? null;
+    }
+    libraryCache.set(modId, library);
+    return library;
+  }
+
+  function resolveArg(token: string): number | string {
+    const asNumber = Number(token);
+    if (token !== "" && !Number.isNaN(asNumber)) return asNumber;
+    return token in variableValues ? variableValues[token] : token;
+  }
+
+  let result = "";
+  let cursor = 0;
+  for (const segment of segments) {
+    result += markdown.slice(cursor, segment.start);
+    const library = await getLibrary(segment.modId);
+    const fn = library?.[segment.functionName];
+    result += fn ? String(fn(segment.args.map(resolveArg), variableValues)) : `[missing function: ${segment.modId}.${segment.functionName}]`;
+    cursor = segment.end;
+  }
+  result += markdown.slice(cursor);
+  return result;
 }

@@ -72,3 +72,48 @@ export function computeMissingModDependencies(requiredModIds: readonly string[],
   const available = new Set(availableModIds);
   return requiredModIds.filter((id) => !available.has(id));
 }
+
+/**
+ * A mod's "library" export (MVP goal item 4, round 2): plain, trusted
+ * mod code (same trust level `register()` already has) that a sheet's
+ * markdown can call by name via `{{modId.functionName(args)}}` --
+ * see findLibraryCalls below. `args` are the call's own resolved
+ * tokens (a variable id looked up against `variableValues`, or a bare
+ * numeric/string literal); `variableValues` is also passed in full,
+ * for a function that wants more than just its explicit args.
+ */
+export type CharacterSheetLibraryFunction = (args: (number | string)[], variableValues: Readonly<Record<string, number | string>>) => number | string;
+
+export interface LibraryCallSegment {
+  /** Index of the segment's opening `{{` in the original string. */
+  start: number;
+  /** Index just past the segment's closing `}}`. */
+  end: number;
+  modId: string;
+  functionName: string;
+  /** Raw, untrimmed-of-type tokens exactly as written -- a variable id or a bare literal, resolved against actual variableValues only at call time (this function never evaluates anything, same split chatCommands.ts's own findInlineRolls already uses against diceRoll.ts's real evaluation). */
+  args: string[];
+}
+
+/**
+ * Finds every `{{modId.functionName(arg1, arg2)}}` segment in `text`,
+ * in order, left to right -- deliberately curly-braced, distinct from
+ * chatCommands.ts's own `[[...]]` dice segments, so the two never
+ * collide in the same text. The `(...)` argument list is optional
+ * (`{{modId.fn}}` is a valid zero-arg call). Pure string-level
+ * detection only -- actually CALLING the function is server-only (see
+ * modLoader.ts's resolveCharacterSheetMarkdown), since a mod's real
+ * function body is server-side Node code with no way to ship it to
+ * the browser in this project's current architecture.
+ */
+export function findLibraryCalls(text: string): LibraryCallSegment[] {
+  const segments: LibraryCallSegment[] = [];
+  const pattern = /\{\{([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_]+)(?:\(([^)]*)\))?\}\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const rawArgs = match[3] ?? "";
+    const args = rawArgs.trim() === "" ? [] : rawArgs.split(",").map((a) => a.trim());
+    segments.push({ start: match.index, end: match.index + match[0].length, modId: match[1], functionName: match[2], args });
+  }
+  return segments;
+}

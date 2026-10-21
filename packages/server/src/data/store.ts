@@ -31,7 +31,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams } from "@ttrpg3d/shared";
+import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type CharacterSheetTemplate } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -136,23 +136,33 @@ export interface CharacterRecord {
   statusEffects: StatusEffect[];
   createdAt: number;
   /**
-   * MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which character-
-   * sheet-template mod this character uses (the mod's own manifest id
-   * IS the template id, same as modIds elsewhere). `null` until a
-   * template is picked -- a real state, not an error, matching this
-   * project's own "a missing selection is a real state" convention
-   * (e.g. characterId on a world join). Additive alongside the
-   * existing hp/maxHp/mp/maxMp fields above, not a replacement for
-   * them yet -- migrating characterToken.ts's live bars onto the new
-   * `variableValues` system below is a roadmap follow-up, not this
-   * slice.
+   * MVP goal item 4 (docs/ROADMAP.md) -- which mod this sheet was last
+   * CLONED FROM (round 2 real correction: a mod's own
+   * `characterSheetTemplate` is only ever a clone source now, not a
+   * live, permanent reference -- "not 'this is all you get ever' once
+   * the mod is loaded in"). Also doubles as "which mod this sheet
+   * depends on as a library" for computeMissingModDependencies, since
+   * a cloned page's markdown may still call that mod's
+   * `characterSheetLibrary` functions inline. `null` until a template
+   * is picked or a blank sheet is started -- a real state, not an
+   * error, matching this project's own "a missing selection is a real
+   * state" convention (e.g. characterId on a world join).
    */
   templateId: string | null;
   /**
-   * Flat map keyed by variable id (the template's own variable defs,
+   * The character's OWN editable pages/variables (round 2) -- `null`
+   * until the player starts one (blank, or cloned from a mod's
+   * template). Once set, this is what's rendered/edited; the mod
+   * named by `templateId` is never read again for rendering, only
+   * for the dependency check above (its markdown may still call that
+   * mod's library functions by name).
+   */
+  customSheet: CharacterSheetTemplate | null;
+  /**
+   * Flat map keyed by variable id (customSheet's own variable defs,
    * plus the core RESERVED_BODY_SIZE_VARIABLES ids, which use fixed
-   * keys regardless of template). Values are read/written as a whole
-   * by store.updateCharacterSheet -- no per-variable endpoint.
+   * keys regardless of sheet). Values are read/written as a whole by
+   * store.updateCharacterSheet -- no per-variable endpoint.
    */
   variableValues: Record<string, number | string>;
 }
@@ -223,7 +233,7 @@ export function createStore(baseDir: string) {
     // templateId/variableValues are new (MVP goal item 4, slice 1) --
     // same backward-compat default-fill spirit as loadAccounts()/
     // loadGames() already use for their own new fields.
-    return readJson<CharacterRecord[]>(charactersFile, []).map((c) => ({ ...c, templateId: c.templateId ?? null, variableValues: c.variableValues ?? {} }));
+    return readJson<CharacterRecord[]>(charactersFile, []).map((c) => ({ ...c, templateId: c.templateId ?? null, customSheet: c.customSheet ?? null, variableValues: c.variableValues ?? {} }));
   }
 
   function saveCharacters(characters: CharacterRecord[]): void {
@@ -251,6 +261,7 @@ export function createStore(baseDir: string) {
       statusEffects: [],
       createdAt: Date.now(),
       templateId: null,
+      customSheet: null,
       variableValues: {},
     };
     characters.push(character);
@@ -440,12 +451,13 @@ export function createStore(baseDir: string) {
       return loadCharacters().find((c) => c.id === id);
     },
 
-    /** MVP goal item 4 (docs/ROADMAP.md), slice 1 -- replaces both templateId and variableValues wholesale (no per-variable endpoint). No-op if the character id is unknown. Ownership-gating (is the caller actually this character's owner) happens at the caller (server.ts's PUT /characters/:id/sheet), same split enableModForGame/setRespawnAnchor already use. */
-    updateCharacterSheet(characterId: string, templateId: string | null, variableValues: Record<string, number | string>): void {
+    /** MVP goal item 4 (docs/ROADMAP.md) -- replaces templateId/customSheet/variableValues wholesale (no per-field endpoint). No-op if the character id is unknown. Ownership-gating (is the caller actually this character's owner) happens at the caller (server.ts's PUT /characters/:id/sheet), same split enableModForGame/setRespawnAnchor already use. */
+    updateCharacterSheet(characterId: string, templateId: string | null, customSheet: CharacterSheetTemplate | null, variableValues: Record<string, number | string>): void {
       const characters = loadCharacters();
       const character = characters.find((c) => c.id === characterId);
       if (!character) return;
       character.templateId = templateId;
+      character.customSheet = customSheet;
       character.variableValues = variableValues;
       saveCharacters(characters);
     },

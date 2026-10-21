@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { listAvailableMods, createModLoader, listCharacterSheetTemplates } from "./modLoader.js";
+import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown } from "./modLoader.js";
 
 // Isolated synthetic mods directory per test, same spirit as store.test.ts's
 // own mkdtempSync-per-test convention -- these tests shouldn't depend on
@@ -157,6 +157,58 @@ describe("listCharacterSheetTemplates (MVP goal item 4, docs/ROADMAP.md, slice 1
     const realModsDir = join(process.cwd(), "mods");
     const results = await listCharacterSheetTemplates(realModsDir, ["default-character-sheet"]);
     expect(results.length).toBe(1);
-    expect(results[0].template.variables.map((v) => v.id).sort()).toEqual(["hp", "mp"]);
+    expect(results[0].template.variables.map((v) => v.id).sort()).toEqual(["hp", "mp", "str"]);
+  });
+});
+
+describe("listCharacterSheetLibraries / resolveCharacterSheetMarkdown (MVP goal item 4, round 2 -- mods as libraries, not just templates)", () => {
+  it("loadMod/unloadMod are no-ops for a mod that exports only characterSheetLibrary (no register/unregister/template)", async () => {
+    writeMod("library-only-mod", { id: "library-only-mod", name: "Library Only", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetLibrary = { double: (args) => Number(args[0]) * 2 };");
+    const loader = createModLoader(dir);
+    await expect(loader.loadMod("library-only-mod")).resolves.not.toThrow();
+    expect(loader.isLoaded("library-only-mod")).toBe(true);
+  });
+
+  it("listCharacterSheetLibraries resolves the characterSheetLibrary export for each given mod id, skipping ones with none", async () => {
+    writeMod("library-mod", { id: "library-mod", name: "Library Mod", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetLibrary = { double: (args) => Number(args[0]) * 2 };");
+    writeMod("template-only-mod-2", { id: "template-only-mod-2", name: "Template Only", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetTemplate = { name: 'T', pages: [], variables: [] };");
+
+    const results = await listCharacterSheetLibraries(dir, ["library-mod", "template-only-mod-2", "not-a-real-mod"]);
+    expect(results.length).toBe(1);
+    expect(results[0].modId).toBe("library-mod");
+    expect(typeof results[0].library.double).toBe("function");
+  });
+
+  it("resolveCharacterSheetMarkdown calls a real function and substitutes its result, leaving surrounding text intact", async () => {
+    writeMod("math-mod", { id: "math-mod", name: "Math Mod", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetLibrary = { double: (args) => Number(args[0]) * 2 };");
+
+    const resolved = await resolveCharacterSheetMarkdown(dir, ["math-mod"], "Doubled: {{math-mod.double(21)}} done.", {});
+    expect(resolved).toBe("Doubled: 42 done.");
+  });
+
+  it("resolveCharacterSheetMarkdown resolves a variable-id argument against variableValues", async () => {
+    writeMod("math-mod-2", { id: "math-mod-2", name: "Math Mod 2", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetLibrary = { double: (args) => Number(args[0]) * 2 };");
+
+    const resolved = await resolveCharacterSheetMarkdown(dir, ["math-mod-2"], "{{math-mod-2.double(str)}}", { str: 10 });
+    expect(resolved).toBe("20");
+  });
+
+  it("resolveCharacterSheetMarkdown degrades to a bracketed marker for an unknown function, an unknown mod, and a mod that isn't in the allowed modIds list -- never throws", async () => {
+    writeMod("known-mod", { id: "known-mod", name: "Known Mod", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetLibrary = { double: (args) => Number(args[0]) * 2 };");
+
+    await expect(resolveCharacterSheetMarkdown(dir, ["known-mod"], "{{known-mod.notAFunction}}", {})).resolves.toBe("[missing function: known-mod.notAFunction]");
+    await expect(resolveCharacterSheetMarkdown(dir, ["known-mod"], "{{not-a-real-mod.fn}}", {})).resolves.toBe("[missing function: not-a-real-mod.fn]");
+    // Exists on disk, but not in the allowed modIds list -- treated as missing too (an account shouldn't get function calls from a mod it never imported).
+    await expect(resolveCharacterSheetMarkdown(dir, [], "{{known-mod.double(1)}}", {})).resolves.toBe("[missing function: known-mod.double]");
+  });
+
+  it("resolves the real, committed mods/default-character-sheet fixture's modifier function", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const results = await listCharacterSheetLibraries(realModsDir, ["default-character-sheet"]);
+    expect(results.length).toBe(1);
+    expect(results[0].library.modifier([16], {})).toBe(3);
+
+    const resolved = await resolveCharacterSheetMarkdown(realModsDir, ["default-character-sheet"], "Mod: {{default-character-sheet.modifier(str)}}", { str: 16 });
+    expect(resolved).toBe("Mod: 3");
   });
 });
