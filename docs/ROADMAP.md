@@ -72,29 +72,21 @@ discussion (2026-10-15), in dependency order:
      noted under item 5 below is still not built -- that's about
      CHANGING which character a session is playing mid-session, not
      just displaying the one it already has.
-3. **Mod load/unload mechanism, with a minimal (not yet polished) UI**
-   -- split out of the settings-tab item below (2026-10-16 correction)
-   because items 7/8 need SOME real way to load/unload a mod before
-   they're meaningfully testable at all, by BOTH a script test AND a
-   person manually trying one -- a person can't drive a server-side
-   function call directly, so some UI (even a crude, no-styling one --
-   a plain list with load/unload buttons is enough) is genuinely
-   required here, not deferred to item 9. Just the mechanism and that
-   bare-minimum UI: a Game's list of included mod files, real load/
-   unload calls a test can call directly, and a rough manual control
-   for a person to do the same thing -- NOT item 9's polished,
-   integrated settings tab inside the chat panel, which replaces this
-   item's crude UI afterward rather than building on top of it.
-   **Moved up from its original position after the character-sheet
-   system (2026-10-17 correction)**: item 4 below explicitly requires
-   "mod-system-based templates," but no mod-loading mechanism exists
-   anywhere in this codebase yet (confirmed directly -- `VOXEL_TYPES`/
-   `worldGenerators.ts` are flat hardcoded arrays, not a plugin
-   interface; the old Godot game's own real mod system, a directory +
-   `mod.json` manifest + a `register()` call, was never ported). Rather
-   than build character-sheet templates against a mod interface that
-   doesn't exist yet, this item now comes first -- item 4 can depend on
-   it directly instead of the other way around.
+3. ~~**Mod load/unload mechanism, with a minimal (not yet polished) UI**~~
+   -- **DONE** (2026-10-21, see
+   [COMPLETED.md](COMPLETED.md#mvp-goal-items-3--9--mod-loadunload-mechanism-gm-only-settings-ui)
+   for the full implementation, including two real corrections during
+   the work: mods moved from per-world to per-game scope, and the UI's
+   final shape is a GM-only tab inside the chat panel, not a crude
+   standalone one -- see that entry). Shipped together with item 9
+   below, which this entry also now marks done -- real iteration
+   converged directly on item 9's polished shape rather than building
+   this item's originally-planned crude UI first and replacing it
+   later. **Moved up from its original position after the character-
+   sheet system (2026-10-17 correction)**: item 4 below explicitly
+   requires "mod-system-based templates," but no mod-loading mechanism
+   existed anywhere in this codebase before this -- item 4 can depend
+   on it directly instead of the other way around.
 4. **Full character-sheet authoring system** -- depends on item 3
    above (not item 2 -- see item 3's own 2026-10-17 note on why it
    moved ahead of this item). The actual VTT-core data model
@@ -210,14 +202,18 @@ discussion (2026-10-15), in dependency order:
    world generator" literally true (today's generator "picking" is
    just a hardcoded 3-entry catalog, not a real mod file) rather than
    just an analogy.
-9. **Mod-management settings tab, inside the chat panel** (user
-   request, 2026-10-16) -- replaces item 3's crude manual UI with a
-   polished one integrated into the chat panel, on the SAME underlying
-   load/unload mechanism: a Game's set of included mod files
-   (including items 7/8's default mods, and eventually character-
-   sheet-template mods) is configured from a new settings tab inside
-   the already-shipped chat panel (item 0), not hand-edited JSON or a
-   test-only call. Full scope in `docs/PORTING_CHECKLIST.md`'s Phase 6.
+9. ~~**Mod-management settings tab, inside the chat panel**~~ -- **DONE**
+   (2026-10-21, same [COMPLETED.md](COMPLETED.md#mvp-goal-items-3--9--mod-loadunload-mechanism-gm-only-settings-ui)
+   entry as item 3 above -- shipped together). Real correction beyond
+   this item's original framing: it's a **GM-only tab** (appears/
+   disappears with GM mode itself), not a settings tab visible to every
+   player with just the mutation admin-gated -- "mods should definitely
+   also be GM only." Also gained a `seeThroughWalls` toggle in the same
+   tab (not originally scoped here, added alongside once the tab
+   existed). Items 7/8's default mods and any future character-sheet-
+   template mods still need to actually EXIST as real mods before this
+   tab has anything beyond today's one fixture mod to manage --
+   unaffected by this item being done.
 
 Everything else currently sequenced into Phase 2/3/4/7/8/10/11+ below
 is real, worth doing, and NOT dropped -- but it's supporting/polish work
@@ -270,9 +266,12 @@ blocking dependency).
   streaming/voxel edits; `@colyseus/schema` Schema state for player
   transforms. REST for the lobby API goes through Colyseus's own
   `createEndpoint`/`createRouter` (`@colyseus/better-call`), not Express.
-- **Mods are per-world**, not platform-wide -- each world's metadata
-  records which mods it has enabled; registration happens per-`WorldRoom`
-  instance, not once globally at server boot.
+- **Mods are per-GAME**, not platform-wide and not per-world (real
+  correction, 2026-10-17 -- see
+  [COMPLETED.md](COMPLETED.md#mvp-goal-items-3--9--mod-loadunload-mechanism-gm-only-settings-ui)):
+  each game's metadata records which mods it has enabled; registration
+  still happens per-`WorldRoom` instance (reading its world's parent
+  game's enabled list), not once globally at server boot.
 - **Testing split**: `@colyseus/testing` for server/room logic (the
   successor to the old `dev_console.gd` command-queue pattern), real
   Vitest unit tests for pure logic with no 3D/physics involved, and actual
@@ -328,7 +327,7 @@ play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 3 | Real world management -- generator catalog, DM world-create/admin-grant UI | **PARTIAL** | structure/windmill generator ports, procedural skybox, admin-GRANT UI, old-world import |
 | 4 | Voxel interaction -- multi-block placement, hand-equipment dispatch, soft-body swap | **PARTIAL** | dual-hand equip/dispatch, soft-body library spike, health/fall-damage, squeezer-rays, phasing-gloves-as-an-item |
 | 5 | Inventory/items -- catalog + hotbar, server-authoritative item actions | **PARTIAL** | **⭐ MVP: character sheets** -- full scope in the MVP goal section above, now split into item 1 (a small data contract -- owner, token reference, HP/MP, status effects, ships BEFORE item 2), item 2 (tokens/billboards, which only need item 1), and item 3 (the full mod-based-template/scripting/import authoring system, ships AFTER item 2). Chat/dice (item 0) comes first either way; combat/health is built on item 3 once it exists; DM-vs-player stock split, item tooltip, dual-hand equip scheme |
-| 6 | **⭐ MVP: Mod system v2** -- per-world data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 6-9 above: a minimal load/unload mechanism first, then default-blocks mod, default-generators mod, and the mod-management settings tab in the chat panel; also dynamic mod loading/packaging, per-world persisted config, Uint16 wire-format widening |
+| 6 | **⭐ MVP: Mod system v2** -- per-game data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 3/7/8/9 above: the load/unload mechanism + GM-only management tab are DONE (items 3, 9); default-blocks mod (item 7) and default-generators mod (item 8) are not started; also dynamic mod loading/packaging beyond today's per-game enable/disable, Uint16 wire-format widening (needed before 7/8 can allocate real mod voxel ids) |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
 | 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
 | 9 | **⭐ MVP: Battle mode / turn tracker, server-authoritative, more detailed than the old game's** -- also where the distance math lands; full scope (item 5 in the MVP goal section above) depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | NOT STARTED | everything |
