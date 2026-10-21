@@ -163,6 +163,21 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(() => store.disableModForGame("not-a-real-game", "example-noop")).not.toThrow();
   });
 
+  it("createGame defaults seeThroughWalls to true; setSeeThroughWallsForGame persists changes, no-op for an unknown game id", () => {
+    const owner = store.createAccount("Owner");
+    const game = store.createGame("Wall-vis Game", owner.id);
+
+    expect(store.getGame(game.id)?.seeThroughWalls).toBe(true);
+
+    store.setSeeThroughWallsForGame(game.id, false);
+    expect(store.getGame(game.id)?.seeThroughWalls).toBe(false);
+
+    store.setSeeThroughWallsForGame(game.id, true);
+    expect(store.getGame(game.id)?.seeThroughWalls).toBe(true);
+
+    expect(() => store.setSeeThroughWallsForGame("not-a-real-game", false)).not.toThrow();
+  });
+
   it("getWorld returns the world record by id, undefined for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const game = store.createGame("Lookup Game", owner.id);

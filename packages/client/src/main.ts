@@ -46,15 +46,35 @@ function stopRunningGameIfAny(): void {
   }
 }
 
-// MVP goal item 3 (docs/ROADMAP.md): the Settings tab's "Reload this
-// page" button needs to know which world to re-launch -- previously
-// only known transiently inside launchGame's own closure chain
-// (onSwitchWorld's parameters), not readable from outside it.
-let currentWorld: { id: string; name: string } | null = null;
+// GM-only chat tab (chatPanel.ts): a FRESH RunningGame exists after
+// every launchGame call (every page switch), each with its own
+// onGmActiveChange/onSeeThroughWallsChange listener sets -- so the
+// subscription below has to be redone every time, not just once.
+// Tracks the current pair's unsubscribe fns so a stale RunningGame's
+// listeners are dropped before subscribing to the new one (harmless
+// either way since the old RunningGame is discarded, but tidy). Called
+// from two places: the end of launchGame (covers every page switch,
+// where chat already exists) and the end of enterGame's async chat-
+// mount block (covers first entry into a game, where launchGame runs
+// SYNCHRONOUSLY before chat exists, so the launchGame-end call there
+// is a no-op and this one is what actually wires it up).
+let unsubscribeGmTab: (() => void) | null = null;
+
+function wireGmTabToCurrentRunningGame(): void {
+  unsubscribeGmTab?.();
+  unsubscribeGmTab = null;
+  if (!runningGame || !runningChat) return;
+  const chatPanel = runningChat.chatPanel;
+  const unsubActive = runningGame.onGmActiveChange((active) => chatPanel.setGmTabVisible(active));
+  const unsubSeeThroughWalls = runningGame.onSeeThroughWallsChange((enabled) => chatPanel.setSeeThroughWallsState(enabled));
+  unsubscribeGmTab = () => {
+    unsubActive();
+    unsubSeeThroughWalls();
+  };
+}
 
 function launchGame(game: GameRecord, worldId: string, worldName: string, account: Account, characterId: string | null): void {
   lobbyEl.hidden = true;
-  currentWorld = { id: worldId, name: worldName };
   runningGame = startGame(game.id, worldId, worldName, wsUrl, httpUrl, account.displayName, account.id, characterId, (newWorldId, newWorldName) => {
     // Page-management panel's "switch" action -- same proven teardown/
     // setup this file already uses for the lobby->game handoff, just
@@ -65,6 +85,7 @@ function launchGame(game: GameRecord, worldId: string, worldName: string, accoun
     stopRunningGameIfAny();
     launchGame(game, newWorldId, newWorldName, account, characterId);
   });
+  wireGmTabToCurrentRunningGame();
 }
 
 // Chat + quick-actions + party-list are all scoped to the whole GAME,
@@ -118,24 +139,17 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
         initialMessages: history,
         onSend: (text) => connection.send(text),
         onFocusChange: (focused) => runningGame?.setPointerLock(!focused),
-        // Per-GAME, not per-world (real correction, 2026-10-17) -- both
-        // calls return the game's full updated mod id list, fed straight
-        // back into the panel the same way the initial fetch above was.
+        // Pure REST, per-GAME -- doesn't need the current RunningGame at
+        // all, unlike onReloadWorld/onSetSeeThroughWalls below.
         onToggleMod: (modId, enable) => {
           const toggle = enable ? enableGameMod(httpUrl, game.id, account.id, modId) : disableGameMod(httpUrl, game.id, account.id, modId);
           void toggle.then((updatedModIds) => chatPanel.setModsState(availableMods, updatedModIds));
         },
-        // No hot-reload exists -- re-launching the player's own CURRENT
-        // world (tracked via the module-level `currentWorld`, since it
-        // can change via pageManager.ts's own page-switching after this
-        // chat panel was first mounted) is what actually picks up a
-        // changed mod list, same teardown/recreate cycle
-        // onSwitchWorld uses for switching to a DIFFERENT world.
-        onReloadWorld: () => {
-          if (!currentWorld) return;
-          stopRunningGameIfAny();
-          launchGame(game, currentWorld.id, currentWorld.name, account, characterId);
-        },
+        // Both read `runningGame` LAZILY (not captured once at mount
+        // time) -- it's reassigned on every page switch, same reasoning
+        // onFocusChange's setPointerLock call above already relies on.
+        onReloadWorld: () => runningGame?.reloadWorld(),
+        onSetSeeThroughWalls: (enabled) => runningGame?.setSeeThroughWalls(enabled),
       });
       chatPanel.setModsState(availableMods, enabledModIds);
       connection.onMessage((message) => chatPanel.addMessage(message));
@@ -148,6 +162,13 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
       });
 
       runningChat = { connection, chatPanel, quickActionsPanel, partyListPanel, containers: [chatContainer, quickActionsContainer, partyListContainer], gameId: game.id };
+      // First-entry case: launchGame below already ran synchronously
+      // (runningGame is set), but this is the moment runningChat FIRST
+      // becomes available -- the launchGame-end call for THIS entry
+      // happened too early to see it, so wire up here too. See
+      // wireGmTabToCurrentRunningGame's own comment for the full
+      // two-call-site reasoning.
+      wireGmTabToCurrentRunningGame();
     })();
   }
   launchGame(game, worldId, worldName, account, characterId);

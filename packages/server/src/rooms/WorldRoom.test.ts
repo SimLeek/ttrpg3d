@@ -356,6 +356,43 @@ describe("WorldRoom", () => {
     });
   });
 
+  describe("GM-only seeThroughWalls toggle (gmPanel.ts)", () => {
+    it("a world's room state initializes seeThroughWalls from its PARENT GAME's persisted value, defaulting true", async () => {
+      const owner = trackedAccount(`WorldRoom-test-stw-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-stw-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "SeeThroughWalls Test World", "limestone_slab", SLAB_PARAMS);
+
+      const defaultRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      expect(defaultRoom.state.seeThroughWalls).toBe(true);
+
+      store.setSeeThroughWallsForGame(game.id, false);
+      const freshWorld = trackedWorld(game.id, "SeeThroughWalls Test World 2", "limestone_slab", SLAB_PARAMS);
+      const offRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: freshWorld.id });
+      expect(offRoom.state.seeThroughWalls).toBe(false);
+    });
+
+    it("setSeeThroughWalls is ignored from a non-admin, and updates the Schema-synced state + persists to the parent game when sent by the admin", async () => {
+      const owner = trackedAccount(`WorldRoom-test-stw-admin-owner-${Date.now()}`);
+      const stranger = trackedAccount(`WorldRoom-test-stw-admin-stranger-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-stw-admin-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "SeeThroughWalls Admin Test World", "limestone_slab", SLAB_PARAMS);
+
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const strangerClient = await colyseus.connectTo(room, { accountId: stranger.id });
+
+      strangerClient.send("setSeeThroughWalls", { enabled: false });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.seeThroughWalls).toBe(true);
+      expect(store.getGame(game.id)?.seeThroughWalls).toBe(true);
+
+      adminClient.send("setSeeThroughWalls", { enabled: false });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.seeThroughWalls).toBe(false);
+      expect(store.getGame(game.id)?.seeThroughWalls).toBe(false);
+    });
+  });
+
   describe("block edits persist (real per-world storage)", () => {
     it("an edited block is visible to another client in the same room immediately (broadcast)", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });

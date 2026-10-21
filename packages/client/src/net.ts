@@ -60,6 +60,8 @@ export interface WorldConnection {
   /** Actually tells the server this client is leaving the room -- see the
    * doc comment at the bottom of this function for why this exists. */
   leave(): void;
+  /** GM-only chat tab (chatPanel.ts, via game.ts's RunningGame.setSeeThroughWalls) -- sends the admin-gated room message; WorldRoom.ts re-checks admin status server-side regardless of what this client claims. */
+  setSeeThroughWalls(enabled: boolean): void;
 }
 
 export async function connectAndStreamWorld(
@@ -88,6 +90,14 @@ export async function connectAndStreamWorld(
   // features work on your OWN hp/mp too, not just other players'.
   playerBodyMesh: PlayerBodyMesh,
   onSwitchWorld: (worldId: string, worldName: string) => void,
+  // gmOverride.ts's own G-key toggle -- forwarded straight through to
+  // game.ts's RunningGame.onGmActiveChange listeners, for chatPanel.ts's
+  // GM tab (main.ts wires the two together).
+  onGmActiveChange: (active: boolean) => void,
+  // Polled every tick below (not event-based -- see respawnControl.ts's
+  // own worldBottomY/hasRespawnAnchor precedent for reading a scalar
+  // Schema field fresh each tick, no `.listen()` anywhere in this file).
+  onSeeThroughWallsChange: (enabled: boolean) => void,
 ): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
@@ -132,14 +142,14 @@ export async function connectAndStreamWorld(
   for (const req of queuedRequests) room.send("requestChunk", req);
   queuedRequests.length = 0;
 
-  const gmOverride = installGmOverride(noa, room, playerController);
-  installRespawnControl(noa, room, playerController, fallbackSpawn);
-
   function isAdmin(): boolean {
     if (!room) return false;
     const players = (room.state as { players?: Map<string, { isAdmin?: boolean }> } | undefined)?.players;
     return !!players?.get(room.sessionId)?.isAdmin;
   }
+
+  const gmOverride = installGmOverride(noa, room, playerController, onGmActiveChange);
+  installRespawnControl(noa, room, playerController, fallbackSpawn);
 
   // Real bug found live: the client never actually applied the SERVER's
   // own computed spawn position to the local player at all -- it just
@@ -465,6 +475,12 @@ export async function connectAndStreamWorld(
   });
 
   noa.on("tick", () => {
+    // GM-only chat tab's seeThroughWalls checkbox (chatPanel.ts): poll
+    // the room's own Schema-synced value fresh every tick, same idiom
+    // respawnControl.ts already uses for worldBottomY/hasRespawnAnchor
+    // -- no `.listen()` anywhere in this codebase for a scalar field.
+    onSeeThroughWallsChange(!!(room.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls);
+
     // Over a real connection (unlike @colyseus/testing's in-process
     // harness), the initial full-state sync can arrive a tick or two after
     // joinOrCreate() resolves -- confirmed directly via a real-socket smoke
@@ -646,6 +662,10 @@ export async function connectAndStreamWorld(
       for (const token of remoteTokens.values()) token.dispose();
       for (const material of remoteMaterials.values()) material.dispose();
       room.leave();
+    },
+
+    setSeeThroughWalls(enabled: boolean): void {
+      room.send("setSeeThroughWalls", { enabled });
     },
   };
 }

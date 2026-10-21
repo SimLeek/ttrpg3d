@@ -21,7 +21,19 @@ export interface GmOverride {
   isActive(): boolean;
 }
 
-export function installGmOverride(noa: Engine, room: Room, playerController: PlayerController): GmOverride {
+export function installGmOverride(
+  noa: Engine,
+  room: Room,
+  playerController: PlayerController,
+  // gmPanel.ts's whole visibility is driven by this -- the panel
+  // appears/disappears exactly when GM mode is toggled, no separate
+  // hotkey. IMPORTANT: gmPanel.ts must NOT call requestCapture() in
+  // response to this -- the keydown handler below checks isCaptured()
+  // on every press, including the one meant to turn GM mode back OFF,
+  // so claiming capture while active would self-lock GM mode on
+  // permanently (confirmed by reading this handler's own guard order).
+  onActiveChange: (active: boolean) => void,
+): GmOverride {
   let active = false;
 
   function isAdmin(): boolean {
@@ -44,6 +56,7 @@ export function installGmOverride(noa: Engine, room: Room, playerController: Pla
     if (!active && !isAdmin()) return; // can't turn ON without being admin; always allowed to turn back off
     active = !active;
     playerController.setProvider(active ? playerController.noclip : playerController.core);
+    onActiveChange(active);
   });
 
   return { isActive: () => active };

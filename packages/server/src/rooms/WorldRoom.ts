@@ -79,6 +79,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // an already-running room).
   modLoader!: ModLoader;
   private loadedModIds: string[] = [];
+  /** Captured in onCreate for the "setSeeThroughWalls" message handler below, which persists back to the world's PARENT game (store.setSeeThroughWallsForGame) -- undefined only for the no-real-WorldRecord fallback case the worldId doc above describes. */
+  private gameId?: string;
 
   // GM admin-override escape hatch state (core/mod-boundary plan) -- which
   // currently-connected sessions are this world's owner/admin/root,
@@ -120,8 +122,13 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // per-world design is unchanged, only the scope of "which mods" is).
     this.modLoader = createModLoader(join(process.cwd(), "mods"));
     const game = world ? store.getGame(world.gameId) : undefined;
+    this.gameId = world?.gameId;
     this.loadedModIds = game?.modIds ?? [];
     for (const modId of this.loadedModIds) void this.modLoader.loadMod(modId);
+
+    // GM-only panel (gmPanel.ts) -- same per-GAME-scope/per-WORLD-timing
+    // split as modIds just above, reusing the same `game` lookup.
+    this.state.seeThroughWalls = game?.seeThroughWalls ?? true;
 
     if (world?.respawnAnchor) {
       this.state.hasRespawnAnchor = true;
@@ -160,6 +167,19 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.state.respawnAnchorY = player.y;
       this.state.respawnAnchorZ = player.z;
       store.setWorldRespawnAnchor(this.worldId, { x: player.x, y: player.y, z: player.z });
+    });
+
+    // GM-only panel (gmPanel.ts) -- admin-gated the same way setRespawnAnchor
+    // above is. Schema-synced, so every connected client picks this up on
+    // its very next render frame, no reload needed (unlike mods below).
+    // Persisted to the world's PARENT game (per-GAME scope, same as modIds)
+    // so a future room creation for any of this game's worlds starts from
+    // the GM's last choice -- this room's OWN live state is what actually
+    // takes effect immediately, the persistence is just for next time.
+    this.onMessage<{ enabled: boolean }>("setSeeThroughWalls", (client, { enabled }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      this.state.seeThroughWalls = enabled;
+      if (this.gameId) store.setSeeThroughWallsForGame(this.gameId, enabled);
     });
 
     this.onMessage<ChunkRequest>("requestChunk", (client, { cx, cy, cz }) => {

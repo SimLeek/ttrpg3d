@@ -16,11 +16,12 @@ let activePanel: ChatPanelController | null = null;
 // mountChatPanel attaches a window-level keydown listener -- track and
 // destroy() whatever each test mounts, same discipline hotbar.test.ts
 // already uses, so listeners don't pile up across tests sharing the same
-// jsdom `window`. onToggleMod/onReloadWorld default to no-ops so every
-// pre-existing test (which predates the Settings tab) doesn't need to
-// pass them explicitly -- tests that actually exercise the tab override them.
+// jsdom `window`. onToggleMod/onReloadWorld/onSetSeeThroughWalls default
+// to no-ops so every pre-existing test (which predates the GM tab)
+// doesn't need to pass them explicitly -- tests that actually exercise
+// the tab override them.
 function mount(options: Partial<ChatPanelOptions> & Pick<ChatPanelOptions, "initialMessages" | "onSend">): ChatPanelController {
-  activePanel = mountChatPanel(container, { onToggleMod: vi.fn(), onReloadWorld: vi.fn(), ...options });
+  activePanel = mountChatPanel(container, { onToggleMod: vi.fn(), onReloadWorld: vi.fn(), onSetSeeThroughWalls: vi.fn(), ...options });
   return activePanel;
 }
 
@@ -168,18 +169,32 @@ describe("mountChatPanel", () => {
   });
 });
 
-describe("mountChatPanel's Settings tab (MVP goal item 3, docs/ROADMAP.md)", () => {
-  it("starts on the Chat tab; clicking Settings switches panes, clicking Chat switches back", () => {
-    mount({ initialMessages: [], onSend: vi.fn() });
+describe("mountChatPanel's GM tab (MVP goal item 3, docs/ROADMAP.md)", () => {
+  it("the tab bar is hidden until setGmTabVisible(true); becoming visible switches straight to the GM tab, becoming hidden again snaps back to Chat", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    const tabs = container.querySelector<HTMLDivElement>("#chat-tabs")!;
+    expect(tabs.classList.contains("show")).toBe(false);
     expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(false);
 
-    container.querySelector<HTMLButtonElement>("#chat-tab-settings-btn")!.click();
+    panel.setGmTabVisible(true);
+    expect(tabs.classList.contains("show")).toBe(true);
+    expect(container.querySelector("#chat-tab-gm")!.classList.contains("active")).toBe(true);
     expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(false);
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(true);
+
+    panel.setGmTabVisible(false);
+    expect(tabs.classList.contains("show")).toBe(false);
+    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
+  });
+
+  it("clicking between Chat and GM tabs switches panes while both are visible", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    panel.setGmTabVisible(true);
 
     container.querySelector<HTMLButtonElement>("#chat-tab-chat-btn")!.click();
     expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
+
+    container.querySelector<HTMLButtonElement>("#chat-tab-gm-btn")!.click();
+    expect(container.querySelector("#chat-tab-gm")!.classList.contains("active")).toBe(true);
   });
 
   it("setModsState renders each available mod with its current enabled state", () => {
@@ -225,22 +240,16 @@ describe("mountChatPanel's Settings tab (MVP goal item 3, docs/ROADMAP.md)", () 
     expect(reloadBtn.classList.contains("dirty")).toBe(false);
   });
 
-  it("a global Comma press expands the panel (if collapsed) and switches to the Settings tab, without stealing focus from an unrelated input", () => {
-    mount({ initialMessages: [], onSend: vi.fn() });
-    const panel = container.querySelector<HTMLDivElement>("#chat-panel")!;
-    container.querySelector<HTMLButtonElement>("#chat-toggle")!.click(); // collapse it first
-    expect(panel.classList.contains("collapsed")).toBe(true);
+  it("setSeeThroughWallsState reflects the current value, and toggling the checkbox calls onSetSeeThroughWalls", () => {
+    const onSetSeeThroughWalls = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onSetSeeThroughWalls });
+    panel.setSeeThroughWallsState(false);
 
-    dispatchKeyOn(window.document.body, "Comma");
-    expect(panel.classList.contains("collapsed")).toBe(false);
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(true);
+    const checkbox = container.querySelector<HTMLInputElement>("#chat-see-through-walls")!;
+    expect(checkbox.checked).toBe(false);
 
-    const otherInput = document.createElement("input");
-    document.body.appendChild(otherInput);
-    otherInput.focus();
-    container.querySelector<HTMLButtonElement>("#chat-tab-chat-btn")!.click(); // back to Chat tab
-    dispatchKeyOn(otherInput, "Comma");
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(false); // unchanged -- Comma was typed into otherInput, not a global shortcut here
-    otherInput.remove();
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(onSetSeeThroughWalls).toHaveBeenCalledWith(true);
   });
 });
