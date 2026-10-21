@@ -10,6 +10,7 @@ import { WorldRoom } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
+import { listAvailableMods } from "./mods/modLoader.js";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -115,6 +116,37 @@ const getGameChat = createEndpoint("/games/:id/chat", { method: "GET", scope: "h
   }
 });
 
+// MVP goal item 3 (docs/ROADMAP.md): the REST surface chatPanel.ts's
+// Settings tab (via main.ts) and a script test both call directly.
+// Per-GAME, not per-world -- real correction (see GameRecord.modIds's
+// own doc in store.ts); admin-gated via store.isGameAdmin, same
+// pattern postGameWorld already uses for its own game-scoped check.
+const getMods = createEndpoint("/mods", { method: "GET", scope: "http" }, async () => {
+  return listAvailableMods(join(process.cwd(), "mods"));
+});
+
+const getGameMods = createEndpoint("/games/:id/mods", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.getGame(ctx.params.id)?.modIds ?? [];
+});
+
+const postGameMod = createEndpoint("/games/:id/mods", { method: "POST", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (!store.isGameAdmin(gameId, accountId)) throw new APIError("UNAUTHORIZED", { message: "not an admin of this game" });
+  const modId = typeof ctx.body?.modId === "string" ? ctx.body.modId : "";
+  if (!modId) throw new APIError("BAD_REQUEST", { message: "modId is required" });
+  store.enableModForGame(gameId, modId);
+  return store.getGame(gameId)?.modIds ?? [];
+});
+
+const deleteGameMod = createEndpoint("/games/:id/mods/:modId", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  if (!store.isGameAdmin(gameId, accountId)) throw new APIError("UNAUTHORIZED", { message: "not an admin of this game" });
+  store.disableModForGame(gameId, ctx.params.modId);
+  return store.getGame(gameId)?.modIds ?? [];
+});
+
 const routes = createRouter({
   getAccounts,
   postAccount,
@@ -125,6 +157,10 @@ const routes = createRouter({
   getGameWorlds,
   postGameWorld,
   getGameChat,
+  getMods,
+  getGameMods,
+  postGameMod,
+  deleteGameMod,
 });
 
 export const server = defineServer({
