@@ -16,11 +16,9 @@ let activePanel: ChatPanelController | null = null;
 // mountChatPanel attaches a window-level keydown listener -- track and
 // destroy() whatever each test mounts, same discipline hotbar.test.ts
 // already uses, so listeners don't pile up across tests sharing the same
-// jsdom `window`. onToggleMod/onReloadWorld default to no-ops so every
-// pre-existing test (which predates the Settings tab) doesn't need to
-// pass them explicitly -- tests that actually exercise the tab override them.
+// jsdom `window`.
 function mount(options: Partial<ChatPanelOptions> & Pick<ChatPanelOptions, "initialMessages" | "onSend">): ChatPanelController {
-  activePanel = mountChatPanel(container, { onToggleMod: vi.fn(), onReloadWorld: vi.fn(), ...options });
+  activePanel = mountChatPanel(container, options as ChatPanelOptions);
   return activePanel;
 }
 
@@ -164,83 +162,6 @@ describe("mountChatPanel", () => {
     otherInput.focus();
     dispatchKeyOn(otherInput, "Enter");
     expect(document.activeElement).toBe(otherInput);
-    otherInput.remove();
-  });
-});
-
-describe("mountChatPanel's Settings tab (MVP goal item 3, docs/ROADMAP.md)", () => {
-  it("starts on the Chat tab; clicking Settings switches panes, clicking Chat switches back", () => {
-    mount({ initialMessages: [], onSend: vi.fn() });
-    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(false);
-
-    container.querySelector<HTMLButtonElement>("#chat-tab-settings-btn")!.click();
-    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(false);
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(true);
-
-    container.querySelector<HTMLButtonElement>("#chat-tab-chat-btn")!.click();
-    expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
-  });
-
-  it("setModsState renders each available mod with its current enabled state", () => {
-    const panel = mount({ initialMessages: [], onSend: vi.fn() });
-    panel.setModsState(
-      [
-        { id: "mod-a", name: "Mod A", version: "1.0.0", entry: "entry.ts" },
-        { id: "mod-b", name: "Mod B", version: "2.0.0", entry: "entry.ts" },
-      ],
-      ["mod-a"],
-    );
-    const items = container.querySelectorAll<HTMLLIElement>(".mod-list li");
-    expect(items.length).toBe(2);
-    expect(items[0].textContent).toContain("Mod A");
-    expect(items[0].querySelector<HTMLButtonElement>(".mod-toggle-btn")!.textContent).toBe("Disable");
-    expect(items[1].querySelector<HTMLButtonElement>(".mod-toggle-btn")!.textContent).toBe("Enable");
-  });
-
-  it("clicking a mod's toggle button calls onToggleMod with the right args and flags the Reload button as dirty", () => {
-    const onToggleMod = vi.fn();
-    const panel = mount({ initialMessages: [], onSend: vi.fn(), onToggleMod });
-    panel.setModsState([{ id: "mod-a", name: "Mod A", version: "1.0.0", entry: "entry.ts" }], []);
-
-    const reloadBtn = container.querySelector<HTMLButtonElement>("#chat-reload-btn")!;
-    expect(reloadBtn.disabled).toBe(true);
-
-    container.querySelector<HTMLButtonElement>(".mod-toggle-btn")!.click();
-    expect(onToggleMod).toHaveBeenCalledWith("mod-a", true);
-    expect(reloadBtn.disabled).toBe(false);
-    expect(reloadBtn.classList.contains("dirty")).toBe(true);
-  });
-
-  it("clicking Reload calls onReloadWorld and clears the dirty state", () => {
-    const onReloadWorld = vi.fn();
-    const panel = mount({ initialMessages: [], onSend: vi.fn(), onReloadWorld });
-    panel.setModsState([{ id: "mod-a", name: "Mod A", version: "1.0.0", entry: "entry.ts" }], []);
-    container.querySelector<HTMLButtonElement>(".mod-toggle-btn")!.click(); // dirty it first
-
-    const reloadBtn = container.querySelector<HTMLButtonElement>("#chat-reload-btn")!;
-    reloadBtn.click();
-    expect(onReloadWorld).toHaveBeenCalled();
-    expect(reloadBtn.disabled).toBe(true);
-    expect(reloadBtn.classList.contains("dirty")).toBe(false);
-  });
-
-  it("a global Comma press expands the panel (if collapsed) and switches to the Settings tab, without stealing focus from an unrelated input", () => {
-    mount({ initialMessages: [], onSend: vi.fn() });
-    const panel = container.querySelector<HTMLDivElement>("#chat-panel")!;
-    container.querySelector<HTMLButtonElement>("#chat-toggle")!.click(); // collapse it first
-    expect(panel.classList.contains("collapsed")).toBe(true);
-
-    dispatchKeyOn(window.document.body, "Comma");
-    expect(panel.classList.contains("collapsed")).toBe(false);
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(true);
-
-    const otherInput = document.createElement("input");
-    document.body.appendChild(otherInput);
-    otherInput.focus();
-    container.querySelector<HTMLButtonElement>("#chat-tab-chat-btn")!.click(); // back to Chat tab
-    dispatchKeyOn(otherInput, "Comma");
-    expect(container.querySelector("#chat-tab-settings")!.classList.contains("active")).toBe(false); // unchanged -- Comma was typed into otherInput, not a global shortcut here
     otherInput.remove();
   });
 });

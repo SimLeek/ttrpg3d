@@ -63,6 +63,19 @@ export interface GameRecord {
    * respawnAnchor persistence.
    */
   modIds: string[];
+  /**
+   * GM-only panel (gmPanel.ts): whether players can see through walls
+   * in third person (blockShaders.ts's xray-cutout shader). Per-GAME
+   * scope, same reasoning as modIds -- a DM-level table policy, not a
+   * per-player preference. UNLIKE modIds, this is live-synced via
+   * WorldState's own `seeThroughWalls` Schema field (WorldState.ts),
+   * not a reload-required setting -- a toggle takes effect on this
+   * room's connected clients immediately; it's persisted here only so
+   * the next time any of this game's worlds has its room (re)created,
+   * it starts with the GM's last choice rather than resetting to the
+   * `true` default.
+   */
+  seeThroughWalls: boolean;
 }
 
 export interface WorldRecord {
@@ -146,7 +159,7 @@ export function createStore(baseDir: string) {
     // anything iterates it (e.g. `for (const id of game.modIds)`).
     // Defaulted here, at the one place every other reader goes through,
     // rather than at each call site.
-    return readJson<GameRecord[]>(gamesFile, []).map((g) => (g.modIds ? g : { ...g, modIds: [] }));
+    return readJson<GameRecord[]>(gamesFile, []).map((g) => ({ ...g, modIds: g.modIds ?? [], seeThroughWalls: g.seeThroughWalls ?? true }));
   }
 
   function saveGames(games: GameRecord[]): void {
@@ -221,8 +234,8 @@ export function createStore(baseDir: string) {
       if (games.length === 0) {
         const now = Date.now();
         games = [
-          { id: newId(), name: "Root's Game", ownerAccountId: "root", adminAccountIds: [], createdAt: now, modIds: [] },
-          { id: newId(), name: "Test1's Game", ownerAccountId: "test1", adminAccountIds: [], createdAt: now, modIds: [] },
+          { id: newId(), name: "Root's Game", ownerAccountId: "root", adminAccountIds: [], createdAt: now, modIds: [], seeThroughWalls: true },
+          { id: newId(), name: "Test1's Game", ownerAccountId: "test1", adminAccountIds: [], createdAt: now, modIds: [], seeThroughWalls: true },
         ];
         saveGames(games);
         for (const game of games) {
@@ -260,7 +273,7 @@ export function createStore(baseDir: string) {
 
     createGame(name: string, ownerAccountId: string): GameRecord {
       const games = loadGames();
-      const game: GameRecord = { id: newId(), name, ownerAccountId, adminAccountIds: [], createdAt: Date.now(), modIds: [] };
+      const game: GameRecord = { id: newId(), name, ownerAccountId, adminAccountIds: [], createdAt: Date.now(), modIds: [], seeThroughWalls: true };
       games.push(game);
       saveGames(games);
       return game;
@@ -339,6 +352,15 @@ export function createStore(baseDir: string) {
       const game = games.find((g) => g.id === gameId);
       if (!game) return;
       game.modIds = game.modIds.filter((id) => id !== modId);
+      saveGames(games);
+    },
+
+    /** No-op if the game id is unknown, same spirit as enableModForGame/setWorldRespawnAnchor. Admin-gating happens at the caller (WorldRoom.ts's "setSeeThroughWalls" message handler), same split those functions already use. */
+    setSeeThroughWallsForGame(gameId: string, enabled: boolean): void {
+      const games = loadGames();
+      const game = games.find((g) => g.id === gameId);
+      if (!game) return;
+      game.seeThroughWalls = enabled;
       saveGames(games);
     },
 

@@ -92,6 +92,8 @@ export const WorldState = schema(
     respawnAnchorX: t.number().default(0),
     respawnAnchorY: t.number().default(0),
     respawnAnchorZ: t.number().default(0),
+    /** GM-only panel (gmPanel.ts): whether players can see through walls in third person (blockShaders.ts's xray-cutout shader). Room-level, not per-player -- same tier as worldBottomY/hasRespawnAnchor above. Seeded from the world's parent GameRecord.seeThroughWalls at WorldRoom.onCreate, then live-toggleable via the admin-gated "setSeeThroughWalls" message -- auto-synced to every connected client the instant it changes, no reload needed (unlike mods). */
+    seeThroughWalls: t.boolean().default(true),
   },
   "WorldState",
 );

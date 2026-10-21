@@ -15,6 +15,7 @@ import { installVoxelEditor, type CharacterStat } from "./voxelEditor.js";
 import { installGmOverride } from "./gmOverride.js";
 import { installRespawnControl } from "./respawnControl.js";
 import { mountPageManager } from "./pageManager.js";
+import { mountGmPanel } from "./gmPanel.js";
 import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type HoveredBar } from "./characterToken.js";
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
@@ -88,6 +89,15 @@ export async function connectAndStreamWorld(
   // features work on your OWN hp/mp too, not just other players'.
   playerBodyMesh: PlayerBodyMesh,
   onSwitchWorld: (worldId: string, worldName: string) => void,
+  // GM-only panel (gmPanel.ts): "Reload this page" re-launches this
+  // same world (game.ts implements this as `() => onSwitchWorld(worldId, worldName)`,
+  // both already in ITS closure -- net.ts just calls it, doesn't need
+  // to know either value itself).
+  reloadWorld: () => void,
+  // Polled every tick below (not event-based -- see respawnControl.ts's
+  // own worldBottomY/hasRespawnAnchor precedent for reading a scalar
+  // Schema field fresh each tick, no `.listen()` anywhere in this file).
+  onSeeThroughWallsChange: (enabled: boolean) => void,
 ): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
@@ -132,14 +142,24 @@ export async function connectAndStreamWorld(
   for (const req of queuedRequests) room.send("requestChunk", req);
   queuedRequests.length = 0;
 
-  const gmOverride = installGmOverride(noa, room, playerController);
-  installRespawnControl(noa, room, playerController, fallbackSpawn);
-
   function isAdmin(): boolean {
     if (!room) return false;
     const players = (room.state as { players?: Map<string, { isAdmin?: boolean }> } | undefined)?.players;
     return !!players?.get(room.sessionId)?.isAdmin;
   }
+
+  const gmPanelContainer = document.createElement("div");
+  document.body.appendChild(gmPanelContainer);
+  const gmPanel = mountGmPanel(gmPanelContainer, {
+    httpUrl,
+    gameId,
+    accountId,
+    getSeeThroughWalls: () => !!(room!.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls,
+    onSetSeeThroughWalls: (enabled) => room!.send("setSeeThroughWalls", { enabled }),
+    reloadWorld,
+  });
+  const gmOverride = installGmOverride(noa, room, playerController, (active) => gmPanel.setVisible(active));
+  installRespawnControl(noa, room, playerController, fallbackSpawn);
 
   // Real bug found live: the client never actually applied the SERVER's
   // own computed spawn position to the local player at all -- it just
@@ -465,6 +485,12 @@ export async function connectAndStreamWorld(
   });
 
   noa.on("tick", () => {
+    // GM-only panel's seeThroughWalls toggle (gmPanel.ts): poll the
+    // room's own Schema-synced value fresh every tick, same idiom
+    // respawnControl.ts already uses for worldBottomY/hasRespawnAnchor
+    // -- no `.listen()` anywhere in this codebase for a scalar field.
+    onSeeThroughWallsChange(!!(room.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls);
+
     // Over a real connection (unlike @colyseus/testing's in-process
     // harness), the initial full-state sync can arrive a tick or two after
     // joinOrCreate() resolves -- confirmed directly via a real-socket smoke
@@ -640,6 +666,8 @@ export async function connectAndStreamWorld(
     leave() {
       pageManager.destroy();
       pageManagerContainer.remove();
+      gmPanel.destroy();
+      gmPanelContainer.remove();
       contextMenu.destroy();
       contextMenuContainer.remove();
       statInputContainer.remove();

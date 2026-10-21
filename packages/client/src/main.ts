@@ -14,7 +14,7 @@
 import Navigo from "navigo";
 import { mountLobby, type Account, type GameRecord, type WorldRecord } from "./lobby.js";
 import { startGame, type RunningGame } from "./game.js";
-import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, fetchAvailableMods, fetchGameMods, enableGameMod, disableGameMod, ACCOUNT_STORAGE_KEY, CHARACTER_STORAGE_KEY } from "./api.js";
+import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, ACCOUNT_STORAGE_KEY, CHARACTER_STORAGE_KEY } from "./api.js";
 import { connectChat, type ChatConnection } from "./chatNet.js";
 import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
 import { mountQuickActionsPanel, type QuickActionsPanelController } from "./quickActionsPanel.js";
@@ -46,15 +46,8 @@ function stopRunningGameIfAny(): void {
   }
 }
 
-// MVP goal item 3 (docs/ROADMAP.md): the Settings tab's "Reload this
-// page" button needs to know which world to re-launch -- previously
-// only known transiently inside launchGame's own closure chain
-// (onSwitchWorld's parameters), not readable from outside it.
-let currentWorld: { id: string; name: string } | null = null;
-
 function launchGame(game: GameRecord, worldId: string, worldName: string, account: Account, characterId: string | null): void {
   lobbyEl.hidden = true;
-  currentWorld = { id: worldId, name: worldName };
   runningGame = startGame(game.id, worldId, worldName, wsUrl, httpUrl, account.displayName, account.id, characterId, (newWorldId, newWorldName) => {
     // Page-management panel's "switch" action -- same proven teardown/
     // setup this file already uses for the lobby->game handoff, just
@@ -108,36 +101,12 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
     document.body.appendChild(quickActionsContainer);
     document.body.appendChild(partyListContainer);
     void (async () => {
-      const [connection, history, availableMods, enabledModIds] = await Promise.all([
-        connectChat(wsUrl, game.id, account.displayName, account.id, characterId),
-        fetchGameChat(httpUrl, game.id),
-        fetchAvailableMods(httpUrl),
-        fetchGameMods(httpUrl, game.id),
-      ]);
+      const [connection, history] = await Promise.all([connectChat(wsUrl, game.id, account.displayName, account.id, characterId), fetchGameChat(httpUrl, game.id)]);
       const chatPanel = mountChatPanel(chatContainer, {
         initialMessages: history,
         onSend: (text) => connection.send(text),
         onFocusChange: (focused) => runningGame?.setPointerLock(!focused),
-        // Per-GAME, not per-world (real correction, 2026-10-17) -- both
-        // calls return the game's full updated mod id list, fed straight
-        // back into the panel the same way the initial fetch above was.
-        onToggleMod: (modId, enable) => {
-          const toggle = enable ? enableGameMod(httpUrl, game.id, account.id, modId) : disableGameMod(httpUrl, game.id, account.id, modId);
-          void toggle.then((updatedModIds) => chatPanel.setModsState(availableMods, updatedModIds));
-        },
-        // No hot-reload exists -- re-launching the player's own CURRENT
-        // world (tracked via the module-level `currentWorld`, since it
-        // can change via pageManager.ts's own page-switching after this
-        // chat panel was first mounted) is what actually picks up a
-        // changed mod list, same teardown/recreate cycle
-        // onSwitchWorld uses for switching to a DIFFERENT world.
-        onReloadWorld: () => {
-          if (!currentWorld) return;
-          stopRunningGameIfAny();
-          launchGame(game, currentWorld.id, currentWorld.name, account, characterId);
-        },
       });
-      chatPanel.setModsState(availableMods, enabledModIds);
       connection.onMessage((message) => chatPanel.addMessage(message));
       connection.onError((reason) => chatPanel.showError(reason));
 

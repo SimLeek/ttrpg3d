@@ -293,6 +293,17 @@ export function startGame(
   const localPlayerPos: [number, number, number] = [0, 0, 0];
   const localCameraPos: [number, number, number] = [0, 0, 0];
   const centerGlobal: [number, number, number] = [0, 0, 0];
+  // GM-only panel toggle (gmPanel.ts, wired via net.ts's per-tick poll
+  // of the room's Schema-synced `seeThroughWalls` field) -- true (the
+  // existing/default behavior) until net.ts's connection resolves and
+  // reports the real value. When false, feed the PLAYER's own position
+  // as both uniforms below: blockShaders.ts's cutout math only runs
+  // when distance(cameraPos, playerPos) > xray_cameraMinDist (2.0), so
+  // a zero-distance pair unconditionally skips the cutout branch for
+  // every fragment on every draw call (including shadow passes, since
+  // the uniform is one shared global pair, not view-gated) -- a
+  // provable early-exit, not a heuristic.
+  let seeThroughWallsEnabled = true;
   scene.onBeforeRenderObservable.add(() => {
     // noa.ents.getPosition returns the BOTTOM-CENTER of the player's AABB
     // (confirmed directly in components/position.js's own doc comment),
@@ -309,7 +320,7 @@ export function startGame(
     centerGlobal[2] = feet[2];
     noa.globalToLocal(centerGlobal, null, localPlayerPos);
     noa.globalToLocal(noa.camera.getPosition(), null, localCameraPos);
-    updateXrayUniforms(localPlayerPos, localCameraPos);
+    updateXrayUniforms(localPlayerPos, seeThroughWallsEnabled ? localCameraPos : localPlayerPos);
   });
 
   const playerController = installPlayerController(noa);
@@ -358,7 +369,30 @@ export function startGame(
   // stop() below chains onto this (rather than needing its own connected/
   // not-yet-connected branch) so leaving works correctly whether the
   // connection has finished by then or not.
-  const connection = connectAndStreamWorld(noa, serverUrl, playerName, worldId, accountId, characterId, hotbar.getEquippedItem, playerController, SPAWN, httpUrl, gameId, playerBodyMesh, onSwitchWorld).catch((err) => {
+  const connection = connectAndStreamWorld(
+    noa,
+    serverUrl,
+    playerName,
+    worldId,
+    accountId,
+    characterId,
+    hotbar.getEquippedItem,
+    playerController,
+    SPAWN,
+    httpUrl,
+    gameId,
+    playerBodyMesh,
+    onSwitchWorld,
+    // GM-only panel's "Reload this page" button (gmPanel.ts, mounted in
+    // net.ts) -- re-runs the exact SAME teardown/recreate cycle
+    // onSwitchWorld already provides for switching to a DIFFERENT
+    // world, just targeting this same world/worldName (both already in
+    // this closure's scope, so net.ts doesn't need to know either).
+    () => onSwitchWorld(worldId, worldName),
+    (enabled) => {
+      seeThroughWallsEnabled = enabled;
+    },
+  ).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
     return null;
   });
