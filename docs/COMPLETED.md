@@ -386,6 +386,90 @@ are intentionally minimal placeholders, not final UI; the client-side
 admin/GM override yet, even though the server-side handlers already
 admin-gate correctly.
 
+## MVP goal items 3 + 9 — Mod load/unload mechanism, GM-only settings UI
+
+Shipped together (2026-10-21) rather than items 3's originally-planned
+"crude" UI followed later by item 9's polished replacement -- real
+iteration during this work converged directly on the polished version
+(see corrections below), so the standalone crude-UI step was skipped
+entirely rather than built and then thrown away.
+
+**Mechanism** (`packages/server/src/mods/modLoader.ts`): directory-based
+-- `mods/<mod-id>/mod.json` manifest (`id`/`name`/`version`/`entry`) +
+an entry module exporting `register(ctx)`/`unregister(ctx)`.
+`ModContext` is deliberately an empty type for now -- real direction
+during planning: "you're not going to be able to just do the mod
+mechanism fully and then all the other things, because the
+requirements... will be fully detailed only when we do those tasks, so
+really we should be doing a full base mod mechanism," i.e. generic
+lifecycle only, not pre-built with content-specific registration APIs
+(voxel types, character-sheet variables) that items 4/7/8 will add once
+their real needs are known. No hot-reload (same precedent the old
+Godot game's own real mod system had) -- toggling only takes effect
+the next time a world's room is (re)created.
+
+**Real correction (2026-10-17), mid-implementation**: the first version
+scoped mods per-WORLD with a crude list bolted onto `pageManager.ts`.
+Rejected directly: "mods for this page... too fine grained... I think
+they should be per game, not per page." Reworked to `GameRecord.modIds`
+(per-GAME scope), while registration TIMING stays per-`WorldRoom`
+creation (reading its world's *parent game's* modIds) -- the
+`docs/PORTING_CHECKLIST.md` Phase 6 note about per-world registration
+timing was never actually about which record owns the enabled-mod list.
+
+**Second real correction (2026-10-21)**: the per-game UI first moved
+into a new Settings tab inside `chatPanel.ts` (visible to every player,
+only the *mutation* REST calls admin-gated server-side). Rejected:
+"mods should definitely also be GM only... everything on current
+settings should be on the gm only panel, which should appear and
+disappear whenever gm mode is toggled." A standalone floating overlay
+(`gmPanel.ts`) was tried next, gated on `gmOverride.ts`'s own G-key
+toggle -- also rejected: "don't just make everything a window... this
+should be a gm-only panel in the same space as chat, so it should be
+another tab... GM on means the tab appears, GM off means the tab
+disappears." Final shape: a **GM tab inside `chatPanel.ts`**, whose tab
+bar only exists in the DOM while GM mode is active (no separate
+hotkey) -- `gmOverride.ts` gained an `onActiveChange` callback as the
+single source of truth, forwarded through `game.ts`'s `RunningGame`
+(`onGmActiveChange`/`onSeeThroughWallsChange` subscriptions,
+`setSeeThroughWalls`/`reloadWorld` methods) up to `main.ts`, which
+re-subscribes on every `launchGame` call since each page switch creates
+a fresh `RunningGame`. A real pitfall caught and avoided before
+shipping: `gmOverride.ts`'s own KeyG handler checks `isCaptured()` on
+*every* press, including the one meant to turn GM mode back off -- the
+standalone overlay's planned `requestCapture()` while visible would
+have permanently locked GM mode on with no way to exit it; the shipped
+tab never claims capture (no free-text input to protect, unlike
+`pageManager.ts`).
+
+**Also added in the same pass**: `seeThroughWalls`, a GM-only, per-game,
+live-synced (no reload -- unlike mods) toggle for `blockShaders.ts`'s
+third-person xray-cutout shader. New `WorldState.seeThroughWalls`
+Schema field (room-level, same tier as `worldBottomY`/`hasRespawnAnchor`),
+persisted to `GameRecord.seeThroughWalls` for the next room creation.
+Disabling it feeds the *same point* as both the shader's player/camera
+uniforms -- the shader's own early-exit (`distance(cameraPos,
+playerPos) > xray_cameraMinDist`) then never fires, for every material
+using the plugin, on every draw call including shadow passes, with no
+heuristic needed. Real follow-up correction found live: that alone only
+removed the visual fade -- the camera could still physically clip
+through walls, since `cameraZoom.ts` permanently disables noa's own
+collision clamp for an unrelated reason (letting a zoomed-out camera
+see past thin terrain, the whole reason the xray shader exists).
+`cameraZoom.ts` now exposes `setWallClipAllowed()`, toggled alongside
+the shader: `seeThroughWalls` off also restores noa's real
+`Camera.prototype.updateAfterEntityRenderSystems` (removing the no-op
+override reveals it again), so both effects track together -- genuinely
+two distinct exploration modes (hidden spaces vs. a fully visible 3D
+dungeon map) from one GM toggle, confirmed working both ways live.
+
+**Known, accepted limitation**: `seeThroughWalls` persists to the
+world's PARENT game, but only the room that received the toggle updates
+its OWN live state immediately -- another already-running world/room
+in the same game won't see the change until it's next (re)created. Same
+class of limitation mods themselves already had (per-game config,
+per-room-creation timing).
+
 ## Phase 2 — MVP
 
 - `scripts/movement_resource.gd`, `basic_jump_resource.gd`,
