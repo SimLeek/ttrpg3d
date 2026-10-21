@@ -150,6 +150,40 @@ discussion (2026-10-15), in dependency order:
      Needs real character data to resolve against (the account's
      currently-controlled character), hence sequenced here rather than
      attempted with item 1's minimal record alone.
+   - **NEW -- a third top-level page, scoped to the ACCOUNT (not a
+     game), for viewing/testing character sheets outside any game**
+     (real request, 2026-10-21). Site layout becomes three pages: the
+     games lobby (today's `/`), a game itself (today's `/game/:id`),
+     and this new characters page -- listing the account's own
+     characters (ownership is already per-account, see above), each
+     rendering its real character sheet. Neither this page nor the
+     in-game sheet view needs 3D/noa at all to render a sheet -- it's
+     just the template's markup + the typed-variable widgets above --
+     so this page is a genuinely lighter-weight host than the game
+     page, not a stripped-down copy of it.
+     - **An out-of-game test harness, not just a read-only viewer**:
+       both this page and the in-game sheet view must be able to set
+       HP/other variables, run the template's own macros/scripts, and
+       see what WOULD be posted to chat -- without a live game
+       session/room to actually post into. This page needs its own
+       local stand-in for "post to chat" (render the message, don't
+       send it anywhere real).
+     - **Mods need a way to split game-affecting behavior from sheet-
+       only behavior, so ONE mod implementation works unmodified in
+       both places**: a character-sheet-template mod's functions that
+       only touch the sheet/variables/chat-preview must be callable
+       here, while any functions that touch live game state (the
+       world, other players, voxels) must be excluded/filtered out
+       entirely on this page, not just inert. This is a real
+       constraint on item 3's `ModContext` (today deliberately an
+       empty type, per that item's own "don't pre-build the content-
+       specific API before its real shape is known" direction) --
+       whatever shape item 4 gives `ModContext` needs to let a mod
+       register these two categories separately (or needs this page
+       to only ever call into a distinct, game-state-free subset of a
+       mod's exports), rather than the host having to guess which of
+       a mod's functions are "safe" to call from a context with no
+       live world/room behind it.
 5. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
    the full implementation) for the chrome itself: all 4 panels exist
