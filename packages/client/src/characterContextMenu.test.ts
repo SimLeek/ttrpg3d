@@ -11,6 +11,7 @@ function mount(overrides: Partial<CharacterContextMenuCallbacks> = {}) {
     onEditTokenProperties: vi.fn(),
     onSelectStatusEffects: vi.fn(),
     onDeleteInstance: vi.fn(),
+    onControl: vi.fn(),
     ...overrides,
   };
   menu = mountCharacterContextMenu(container, callbacks);
@@ -68,6 +69,25 @@ describe("mountCharacterContextMenu", () => {
     menu.open(10, 10, "char-focused", undefined);
     container.querySelector<HTMLButtonElement>("#ctx-edit-token")!.click();
     expect(callbacks.onEditTokenProperties).toHaveBeenCalledWith("char-focused", undefined);
+  });
+
+  it("'Control' is enabled when opened with a real instanceId, and calls the callback with just the instance id, then closes -- real request: \"Add context menu item: control - switches current control to this token\"", () => {
+    const { menu, callbacks } = mount();
+    menu.open(10, 10, "char-11", "inst-11");
+    const btn = container.querySelector<HTMLButtonElement>("#ctx-control")!;
+    expect(btn.disabled).toBe(false);
+    btn.click();
+    expect(callbacks.onControl).toHaveBeenCalledWith("inst-11");
+    expect(menu.isOpen()).toBe(false);
+  });
+
+  it("'Control' is disabled when opened with instanceId=undefined (already controlling this character), and clicking it does nothing", () => {
+    const { menu, callbacks } = mount();
+    menu.open(10, 10, "char-12", undefined);
+    const btn = container.querySelector<HTMLButtonElement>("#ctx-control")!;
+    expect(btn.disabled).toBe(true);
+    btn.click();
+    expect(callbacks.onControl).not.toHaveBeenCalled();
   });
 
   it("'Delete instance' is enabled when opened with a real instanceId, and calls the callback with just the instance id, then closes (MVP goal item 4 follow-up)", () => {

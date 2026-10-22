@@ -22,6 +22,15 @@
 // insert the old focus back into otherCharacters at opposite ends,
 // which is what makes Tab and Shift+Tab true inverses of each other
 // around the ring [focused, ...otherCharacters].
+//
+// Real feedback: "the tokens do not persist upon exiting and
+// re-entering games... they should be stored and loaded with the
+// page/world." `otherCharacters` moved off PlayerState onto the WORLD
+// itself (`room.state.otherCharacters`, not any one session's own
+// array) -- so the ring Tab/Shift+Tab cycle through is now THIS
+// client's own `accountId`-filtered VIEW of that shared world array,
+// not a literal per-session list to index into. Someone else's placed
+// monster in the same world is never part of your own ring.
 
 import type { Room } from "@colyseus/sdk";
 import type { PlayerController } from "./movement/PlayerController.js";
@@ -30,28 +39,30 @@ import { isCaptured } from "./inputCapture.js";
 interface OtherCharacterLike {
   /** MVP goal item 4 follow-up ("multiple instances of the same character... for monsters") -- the real identity to target; characterId alone can no longer address one specific placed instance. */
   instanceId: string;
+  /** Which account placed this -- the ring filter, now that otherCharacters is world-level and shared by everyone in the room, not scoped to one session's own array. */
+  placedByAccountId: string;
   x: number;
   y: number;
   z: number;
 }
 
-interface PlayerStateLike {
-  otherCharacters: OtherCharacterLike[];
+interface WorldStateLike {
+  otherCharacters?: OtherCharacterLike[];
 }
 
-export function installFocusCycling(room: Room, playerController: PlayerController): void {
-  function myPlayer(): PlayerStateLike | undefined {
-    const players = (room.state as { players?: Map<string, PlayerStateLike> } | undefined)?.players;
-    return players?.get(room.sessionId);
+export function installFocusCycling(room: Room, playerController: PlayerController, accountId: string): void {
+  function myRing(): OtherCharacterLike[] {
+    const otherCharacters = (room.state as WorldStateLike | undefined)?.otherCharacters;
+    return otherCharacters?.filter((o) => o.placedByAccountId === accountId) ?? [];
   }
 
   function cycleFocus(direction: "next" | "previous"): void {
-    const player = myPlayer();
-    if (!player || player.otherCharacters.length === 0) return; // nothing else to cycle to -- real state (solo character), not an error
+    const ring = myRing();
+    if (ring.length === 0) return; // nothing else to cycle to -- real state (solo character), not an error
 
     // Tab always targets the FRONT of the ring, Shift+Tab the BACK --
     // same selection WorldRoom.test.ts's own ring tests exercise.
-    const target = direction === "next" ? player.otherCharacters[0] : player.otherCharacters[player.otherCharacters.length - 1];
+    const target = direction === "next" ? ring[0] : ring[ring.length - 1];
     playerController.teleportTo([target.x, target.y, target.z]);
     room.send("focusCharacter", { instanceId: target.instanceId, direction });
   }

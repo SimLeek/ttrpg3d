@@ -46,12 +46,29 @@ interface BarLike {
   colorB: number;
 }
 
-/** Mirrors WorldState.ts's OtherCharacterState -- one of a session's OWN characters present in the world but not currently focused/controlled (MVP goal item 4 follow-up: drag-and-drop placement + Tab/Shift+Tab focus cycling). Same per-character fields RemotePlayerLike has, minus `name` (the session's own display name has no bearing on a specific OTHER character) and `isAdmin`/`accountId`/`otherCharacters` (irrelevant to a non-focused entry). */
+/**
+ * Mirrors WorldState.ts's OtherCharacterState -- one of this WORLD'S
+ * placed-but-unfocused character instances (MVP goal item 4 follow-up:
+ * drag-and-drop placement + Tab/Shift+Tab/Control focus cycling). Same
+ * per-character fields RemotePlayerLike has, minus `name` (the
+ * session's own display name has no bearing on a specific OTHER
+ * character) and `isAdmin`/`otherCharacters` (irrelevant to a
+ * non-focused entry).
+ *
+ * Real feedback: "the tokens do not persist upon exiting and
+ * re-entering games... they should be stored and loaded with the
+ * page/world." This now lives at `room.state.otherCharacters`
+ * (world-level), NOT nested under a particular session's player entry
+ * -- `placedByAccountId` is what identifies "mine" now (Tab/Shift+Tab's
+ * ring filters by it), not "is it in my own session's array" (there's
+ * only ONE array, shared by everyone in the room).
+ */
 interface OtherCharacterLike {
-  /** MVP goal item 4 follow-up ("multiple instances of the same character... for monsters") -- the REAL identity of a placed instance; characterId alone is no longer unique among a session's otherCharacters, since several instances of the same character can coexist. */
+  /** MVP goal item 4 follow-up ("multiple instances of the same character... for monsters") -- the REAL identity of a placed instance; characterId alone is no longer unique among all of a world's otherCharacters, since several instances of the same character can coexist. */
   instanceId: string;
   characterId: string;
   characterName: string;
+  placedByAccountId: string;
   x: number;
   y: number;
   z: number;
@@ -83,8 +100,12 @@ interface RemotePlayerLike {
   bodyWidth: number;
   bodyHeight: number;
   bodyDepth: number;
-  /** MVP goal item 4 follow-up (multi-character presence) -- this session's OWN placed-but-unfocused characters. See OtherCharacterLike's own doc. */
-  otherCharacters: OtherCharacterLike[];
+}
+
+/** The shape of `room.state` this file actually reads -- `players` (per-session) alongside the world-level `otherCharacters` array (see OtherCharacterLike's own doc for why this moved off PlayerState). */
+interface WorldStateLike {
+  players?: Map<string, RemotePlayerLike>;
+  otherCharacters?: OtherCharacterLike[];
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -191,7 +212,7 @@ export async function connectAndStreamWorld(
 
   const gmOverride = installGmOverride(noa, room, playerController, onGmActiveChange);
   installRespawnControl(noa, room, playerController, fallbackSpawn);
-  installFocusCycling(room, playerController);
+  installFocusCycling(room, playerController, accountId);
   installCharacterPlacement(noa, room);
 
   // Real bug found live: the client never actually applied the SERVER's
@@ -263,17 +284,14 @@ export async function connectAndStreamWorld(
    * share a characterId.
    */
   function findCharacterLike(characterId: string, instanceId: string | undefined): RemotePlayerLike | OtherCharacterLike | undefined {
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    if (!players) return undefined;
-    for (const p of players.values()) {
-      if (instanceId === undefined) {
+    const state = room!.state as WorldStateLike | undefined;
+    if (instanceId === undefined) {
+      for (const p of state?.players?.values() ?? []) {
         if (p.characterId === characterId) return p;
-        continue;
       }
-      const other = p.otherCharacters.find((o) => o.instanceId === instanceId);
-      if (other) return other;
+      return undefined;
     }
-    return undefined;
+    return state?.otherCharacters?.find((o) => o.instanceId === instanceId);
   }
 
   const contextMenuContainer = document.createElement("div");
@@ -296,6 +314,17 @@ export async function connectAndStreamWorld(
     // gate), so no extra check needed here.
     onDeleteInstance: (instanceId) => {
       room!.send("removeCharacterInstance", { instanceId });
+    },
+    // Real request: "Add context menu item: control - switches current
+    // control to this token." A direct, non-ring jump to whichever
+    // instance the menu was opened for -- reuses the SAME focusCharacter
+    // message Tab/Shift+Tab already send (WorldRoom.ts's handler),
+    // always with direction "next" (an arbitrary jump has no ring
+    // position to invert, and "next" is the same "old focus goes to the
+    // tail" behavior Tab itself uses). Same gate as Delete -- only ever
+    // invoked with a real instanceId.
+    onControl: (instanceId) => {
+      room!.send("focusCharacter", { instanceId, direction: "next" });
     },
   });
   let lastMenuOpenScreen = { x: 0, y: 0 };
@@ -494,48 +523,47 @@ export async function connectAndStreamWorld(
 
   function rebuildTrackedTokens(): void {
     trackedTokens.length = 0;
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    if (!players) return;
-    for (const [sessionId, p] of players) {
+    const state = room!.state as WorldStateLike | undefined;
+    for (const [sessionId, p] of state?.players ?? []) {
       const owned = sessionId === room!.sessionId;
       const token = remoteTokens.get(sessionId);
-      if (token) {
-        // The body box (local: playerBodyMesh.mesh; remote: remoteBodyMeshes)
-        // is an EXTRA, coarser pick target for the same token -- see
-        // tokenPicking.ts's TrackedToken doc for the real "the player should
-        // be easier [to pick than the thin billboard]" request this answers.
-        const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
-        trackedTokens.push({
-          sessionId,
-          characterId: p.characterId,
-          tokenKey: sessionId,
-          owned: !!p.characterId && owned,
-          planeMesh: token.mesh,
-          extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
-        });
-      }
-      // MVP goal item 4 follow-up (multi-character presence, then
-      // "multiple instances... for monsters"): each placed-but-
-      // unfocused otherCharacters entry is its own separate pickable
-      // token, keyed by instanceId (see the matching render loop below
-      // -- characterId alone is no longer unique among a session's
-      // otherCharacters, several instances of the same character can
-      // coexist) -- owned by the SAME session that holds it, never by
-      // characterId identity (one session can own several at once).
-      for (const other of p.otherCharacters) {
-        const otherToken = remoteTokens.get(other.instanceId);
-        if (!otherToken) continue;
-        const otherBodyMesh = remoteBodyMeshes.get(other.instanceId);
-        trackedTokens.push({
-          sessionId,
-          characterId: other.characterId,
-          tokenKey: other.instanceId,
-          instanceId: other.instanceId,
-          owned,
-          planeMesh: otherToken.mesh,
-          extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
-        });
-      }
+      if (!token) continue;
+      // The body box (local: playerBodyMesh.mesh; remote: remoteBodyMeshes)
+      // is an EXTRA, coarser pick target for the same token -- see
+      // tokenPicking.ts's TrackedToken doc for the real "the player should
+      // be easier [to pick than the thin billboard]" request this answers.
+      const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
+      trackedTokens.push({
+        sessionId,
+        characterId: p.characterId,
+        tokenKey: sessionId,
+        owned: !!p.characterId && owned,
+        planeMesh: token.mesh,
+        extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
+      });
+    }
+    // MVP goal item 4 follow-up (multi-character presence, then world-
+    // level persistence + "multiple instances... for monsters"): one
+    // flat loop over the WORLD'S whole otherCharacters now (not nested
+    // per-player -- these aren't scoped to any particular session any
+    // more), each its own separate pickable token keyed by instanceId
+    // (characterId alone is no longer unique, several instances of the
+    // same character can coexist). "Owned" is by `placedByAccountId`,
+    // not session identity -- it's YOUR account's placed instance
+    // regardless of which of your sessions (if more than one) placed it.
+    for (const other of state?.otherCharacters ?? []) {
+      const otherToken = remoteTokens.get(other.instanceId);
+      if (!otherToken) continue;
+      const otherBodyMesh = remoteBodyMeshes.get(other.instanceId);
+      trackedTokens.push({
+        sessionId: room!.sessionId,
+        characterId: other.characterId,
+        tokenKey: other.instanceId,
+        instanceId: other.instanceId,
+        owned: other.placedByAccountId === accountId,
+        planeMesh: otherToken.mesh,
+        extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
+      });
     }
   }
 
@@ -604,7 +632,8 @@ export async function connectAndStreamWorld(
     // harness), the initial full-state sync can arrive a tick or two after
     // joinOrCreate() resolves -- confirmed directly via a real-socket smoke
     // test, not an assumption. Guard rather than assume state is populated.
-    const players = (room.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
+    const state = room.state as WorldStateLike | undefined;
+    const players = state?.players;
     if (!players) return;
     const seen = new Set<string>();
     for (const [sessionId, p] of players) {
@@ -715,61 +744,61 @@ export async function connectAndStreamWorld(
       });
     }
 
-    // MVP goal item 4 follow-up (multi-character presence, then
-    // "multiple instances... for monsters"): every player's placed-
-    // but-unfocused otherCharacters entries each get their own static
-    // box+token, built/updated/resized exactly like a remote player's
-    // focused slot above -- keyed by instanceId, NOT characterId
-    // (several independent instances of the same character can
-    // coexist now, so characterId alone can no longer identify "this
-    // one specific box+token"). Never physics-driven (doPhysics=false,
-    // same as any ordinary remote player) -- these only ever move via
-    // an explicit placeCharacter/focusCharacter message, never on
-    // their own.
-    for (const [, p] of players) {
-      for (const other of p.otherCharacters) {
-        const key = other.instanceId;
-        seen.add(key);
+    // MVP goal item 4 follow-up (multi-character presence, then world-
+    // level persistence + "multiple instances... for monsters"): one
+    // flat loop over the WORLD'S whole otherCharacters now (not nested
+    // per-player -- these aren't scoped to any particular session any
+    // more, see OtherCharacterLike's own doc), each getting its own
+    // static box+token, built/updated/resized exactly like a remote
+    // player's focused slot above -- keyed by instanceId, NOT
+    // characterId (several independent instances of the same character
+    // can coexist now, so characterId alone can no longer identify
+    // "this one specific box+token"). Never physics-driven
+    // (doPhysics=false, same as any ordinary remote player) -- these
+    // only ever move via an explicit placeCharacter/focusCharacter
+    // message, never on their own.
+    for (const other of state?.otherCharacters ?? []) {
+      const key = other.instanceId;
+      seen.add(key);
 
-        let eid = remoteEntities.get(key);
-        let material = remoteMaterials.get(key);
-        let token = remoteTokens.get(key);
-        if (eid === undefined || !material || !token) {
-          material = new BABYLON.StandardMaterial(`otherCharacterMat-${key}`, scene);
-          material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
-          remoteMaterials.set(key, material);
+      let eid = remoteEntities.get(key);
+      let material = remoteMaterials.get(key);
+      let token = remoteTokens.get(key);
+      if (eid === undefined || !material || !token) {
+        material = new BABYLON.StandardMaterial(`otherCharacterMat-${key}`, scene);
+        material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+        remoteMaterials.set(key, material);
 
-          const mesh = BABYLON.MeshBuilder.CreateBox(`other-${key}`, { width: other.bodyWidth, height: other.bodyHeight, depth: other.bodyDepth }, scene);
-          mesh.material = material;
-          eid = noa.entities.add([other.x, other.y, other.z], other.bodyWidth, other.bodyHeight, mesh, [0, other.bodyHeight / 2, 0], false, false);
-          remoteEntities.set(key, eid);
-          remoteBodyMeshes.set(key, mesh);
-          appliedBodySizes.set(key, [other.bodyWidth, other.bodyHeight, other.bodyDepth]);
-          const anchor = createBodyAnchor(mesh);
-          remoteTokenAnchors.set(key, anchor);
+        const mesh = BABYLON.MeshBuilder.CreateBox(`other-${key}`, { width: other.bodyWidth, height: other.bodyHeight, depth: other.bodyDepth }, scene);
+        mesh.material = material;
+        eid = noa.entities.add([other.x, other.y, other.z], other.bodyWidth, other.bodyHeight, mesh, [0, other.bodyHeight / 2, 0], false, false);
+        remoteEntities.set(key, eid);
+        remoteBodyMeshes.set(key, mesh);
+        appliedBodySizes.set(key, [other.bodyWidth, other.bodyHeight, other.bodyDepth]);
+        const anchor = createBodyAnchor(mesh);
+        remoteTokenAnchors.set(key, anchor);
 
-          token = createCharacterToken(scene, other.characterName);
-          token.mesh.parent = anchor;
-          token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(other.bodyHeight), 0);
+        token = createCharacterToken(scene, other.characterName);
+        token.mesh.parent = anchor;
+        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(other.bodyHeight), 0);
+        token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+        noa.rendering.addMeshToScene(token.mesh, false);
+        remoteTokens.set(key, token);
+      } else {
+        noa.entities.setPosition(eid, [other.x, other.y, other.z]);
+        material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+        if (bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth)) {
+          resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth);
+          token.mesh.position.y = tokenYOffsetFor(other.bodyHeight);
           token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
-          noa.rendering.addMeshToScene(token.mesh, false);
-          remoteTokens.set(key, token);
-        } else {
-          noa.entities.setPosition(eid, [other.x, other.y, other.z]);
-          material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
-          if (bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth)) {
-            resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth);
-            token.mesh.position.y = tokenYOffsetFor(other.bodyHeight);
-            token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
-          }
         }
-
-        token.update({
-          name: other.characterName,
-          bars: toTokenBars(other.bars),
-          statusEffects: Array.from(other.statusEffects ?? []),
-        });
       }
+
+      token.update({
+        name: other.characterName,
+        bars: toTokenBars(other.bars),
+        statusEffects: Array.from(other.statusEffects ?? []),
+      });
     }
 
     // MVP goal item 4 follow-up: `key` here is either a sessionId (a
