@@ -19,8 +19,33 @@ import "@babylonjs/core/Culling/ray.js";
 import * as BABYLON from "@babylonjs/core";
 
 export interface TrackedToken {
+  /** The OWNING session's id -- for a session's focused character this is also this token's own identity key (see `tokenKey`); for one of that session's placed-but-unfocused `otherCharacters` entries, this is still the owning session (for the `owned` check), even though the entry's OWN identity key is its characterId, not this. */
   sessionId: string;
   characterId: string;
+  /**
+   * MVP goal item 4 follow-up (multi-character presence): a session's
+   * FOCUSED character and each of its `otherCharacters` entries are
+   * all separately-tracked tokens now, so `sessionId` alone can no
+   * longer uniquely identify "this specific token" the way it used to
+   * (one session can have several at once). This is the stable string
+   * callers use to track hover/highlight identity across ticks instead
+   * -- the owning session's id for a focused-slot token (unchanged
+   * behavior), or the characterId for an otherCharacters entry.
+   */
+  tokenKey: string;
+  /**
+   * MVP goal item 4 follow-up ("multiple instances of the same
+   * character... for monsters"): undefined for a FOCUSED-slot token;
+   * the specific OtherCharacterState's own instanceId for a placed
+   * instance (equal to `tokenKey` in that case -- kept as its own
+   * explicit field rather than relying on callers to infer "is this
+   * token's tokenKey actually an instanceId" from context). Callers
+   * (net.ts) pass this through to setCharacterVariableValue/
+   * setStatusEffects/setCharacterToken/removeCharacterInstance so the
+   * server edits the right thing -- one specific instance, or (when
+   * undefined) the shared character record via the focused slot.
+   */
+  instanceId?: string;
   /** Whether the LOCAL client owns this token (its own character, or any of theirs once multi-character control exists) -- only an owned token highlights on hover, per the spec. */
   owned: boolean;
   /** The token's own billboard content plane (characterToken.ts's `mesh`) -- the precise pick target the bar geometric hit-test needs (net.ts checks a pick's `pickedMesh` against this before attempting it). */
@@ -42,6 +67,8 @@ export interface TrackedToken {
 export interface TokenPickResult {
   sessionId: string;
   characterId: string;
+  tokenKey: string;
+  instanceId?: string;
   owned: boolean;
   /** The ray's world-space hit point -- callers (net.ts) transform this into the token's own local space via its mesh's world matrix to do the bar geometric hit-test (characterToken.ts's hitTestLocalPoint). */
   worldPoint: BABYLON.Vector3;
@@ -82,5 +109,5 @@ export function pickToken(scene: BABYLON.Scene, tokens: readonly TrackedToken[],
 
   const token = meshToToken.get(hit.pickedMesh);
   if (!token) return undefined;
-  return { sessionId: token.sessionId, characterId: token.characterId, owned: token.owned, worldPoint: hit.pickedPoint, pickedMesh: hit.pickedMesh };
+  return { sessionId: token.sessionId, characterId: token.characterId, tokenKey: token.tokenKey, instanceId: token.instanceId, owned: token.owned, worldPoint: hit.pickedPoint, pickedMesh: hit.pickedMesh };
 }

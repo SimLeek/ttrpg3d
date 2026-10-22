@@ -42,14 +42,22 @@ function blockAabb(x: number, y: number, z: number): AABB {
 }
 
 export interface TokenInteractionHooks {
-  /** Coarse mesh-level pick (tokenPicking.ts) -- answers "is the cursor over a token, and do I own it" right now. Backs the right-click context menu. */
-  pickOwnedToken: () => { characterId: string } | undefined;
+  /**
+   * Coarse mesh-level pick (tokenPicking.ts) -- answers "is the cursor
+   * over a token, and do I own it" right now. Backs the right-click
+   * context menu. `instanceId` (MVP goal item 4 follow-up, "multiple
+   * instances of the same character... for monsters"): undefined for
+   * the focused character, the specific placed instance's own id
+   * otherwise -- callers need this to edit/delete the RIGHT one once
+   * several instances can share a characterId.
+   */
+  pickOwnedToken: () => { characterId: string; instanceId?: string } | undefined;
   /** The GUI's own fine-grained hover state (characterToken.ts's hitTestLocalPoint) -- answers "is the cursor over an editable bar, and which variable does it point at" right now (bars are whatever the character's sheet configures, not a fixed hp/mp pair -- docs/ROADMAP.md item 4 follow-up). Backs left-click-to-edit. */
-  pickHoveredStatBar: () => { characterId: string; variableId: string } | undefined;
-  /** Opens characterContextMenu.ts at the given viewport coordinates for the picked character. */
-  openContextMenu: (characterId: string, screenX: number, screenY: number) => void;
+  pickHoveredStatBar: () => { characterId: string; instanceId?: string; variableId: string } | undefined;
+  /** Opens characterContextMenu.ts at the given viewport coordinates for the picked character/instance. */
+  openContextMenu: (characterId: string, instanceId: string | undefined, screenX: number, screenY: number) => void;
   /** Opens the HTML <input> overlay (net.ts) at the given viewport coordinates to edit one variable's current value. */
-  openStatEditor: (characterId: string, variableId: string, screenX: number, screenY: number) => void;
+  openStatEditor: (characterId: string, instanceId: string | undefined, variableId: string, screenX: number, screenY: number) => void;
 }
 
 export function installVoxelEditor(
@@ -102,7 +110,7 @@ export function installVoxelEditor(
   noa.inputs.down.on("fire", () => {
     const hoveredStat = tokenInteraction?.pickHoveredStatBar();
     if (hoveredStat) {
-      tokenInteraction!.openStatEditor(hoveredStat.characterId, hoveredStat.variableId, lastClickScreen.x, lastClickScreen.y);
+      tokenInteraction!.openStatEditor(hoveredStat.characterId, hoveredStat.instanceId, hoveredStat.variableId, lastClickScreen.x, lastClickScreen.y);
       return;
     }
 
@@ -116,7 +124,7 @@ export function installVoxelEditor(
   noa.inputs.down.on("alt-fire", () => {
     const picked = tokenInteraction?.pickOwnedToken();
     if (picked) {
-      tokenInteraction!.openContextMenu(picked.characterId, lastClickScreen.x, lastClickScreen.y);
+      tokenInteraction!.openContextMenu(picked.characterId, picked.instanceId, lastClickScreen.x, lastClickScreen.y);
       return;
     }
 

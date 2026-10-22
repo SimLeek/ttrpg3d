@@ -14,6 +14,8 @@ import { CHUNK_SIZE, decodeChunk, type ChunkRequest, type Item } from "@ttrpg3d/
 import { installVoxelEditor } from "./voxelEditor.js";
 import { installGmOverride } from "./gmOverride.js";
 import { installRespawnControl } from "./respawnControl.js";
+import { installFocusCycling } from "./focusCycling.js";
+import { installCharacterPlacement } from "./characterPlacement.js";
 import { mountPageManager } from "./pageManager.js";
 import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type CharacterTokenBarData, type HoveredBar } from "./characterToken.js";
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
@@ -44,6 +46,26 @@ interface BarLike {
   colorB: number;
 }
 
+/** Mirrors WorldState.ts's OtherCharacterState -- one of a session's OWN characters present in the world but not currently focused/controlled (MVP goal item 4 follow-up: drag-and-drop placement + Tab/Shift+Tab focus cycling). Same per-character fields RemotePlayerLike has, minus `name` (the session's own display name has no bearing on a specific OTHER character) and `isAdmin`/`accountId`/`otherCharacters` (irrelevant to a non-focused entry). */
+interface OtherCharacterLike {
+  /** MVP goal item 4 follow-up ("multiple instances of the same character... for monsters") -- the REAL identity of a placed instance; characterId alone is no longer unique among a session's otherCharacters, since several instances of the same character can coexist. */
+  instanceId: string;
+  characterId: string;
+  characterName: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  tokenColorR: number;
+  tokenColorG: number;
+  tokenColorB: number;
+  bars: BarLike[];
+  bodyWidth: number;
+  bodyHeight: number;
+  bodyDepth: number;
+  statusEffects: StatusEffectLike[];
+}
+
 interface RemotePlayerLike {
   name: string;
   x: number;
@@ -61,6 +83,8 @@ interface RemotePlayerLike {
   bodyWidth: number;
   bodyHeight: number;
   bodyDepth: number;
+  /** MVP goal item 4 follow-up (multi-character presence) -- this session's OWN placed-but-unfocused characters. See OtherCharacterLike's own doc. */
+  otherCharacters: OtherCharacterLike[];
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -167,6 +191,8 @@ export async function connectAndStreamWorld(
 
   const gmOverride = installGmOverride(noa, room, playerController, onGmActiveChange);
   installRespawnControl(noa, room, playerController, fallbackSpawn);
+  installFocusCycling(room, playerController);
+  installCharacterPlacement(noa, room);
 
   // Real bug found live: the client never actually applied the SERVER's
   // own computed spawn position to the local player at all -- it just
@@ -225,20 +251,29 @@ export async function connectAndStreamWorld(
   // left-click-to-edit bar-value overlay, both DOM overlays mounted up front
   // so voxelEditor.ts's hooks (installed just below) always have
   // somewhere real to open into.
-  //
-  // Real bug found live: the "owned" predicate used to compare against
-  // the characterId THIS CLIENT ORIGINALLY SENT (the `characterId`
-  // parameter) -- but WorldRoom.ts's onJoin can resolve a DIFFERENT one
-  // server-side (the default-character fallback, when none was
-  // explicitly picked), and the client never learns about that via the
-  // parameter it passed in. Reading the LOCAL SESSION's own resolved
-  // characterId fresh off synced Schema state instead -- room.state's
-  // own player entry for `room.sessionId` is already the authoritative,
-  // live-updated answer to "which character am I actually playing," so
-  // there's no reason to track a separate, potentially-stale local copy.
-  function myResolvedCharacterId(): string {
+
+  /**
+   * MVP goal item 4 follow-up (multi-character presence, then
+   * "multiple instances... for monsters"): the stat-value/color/
+   * status-effect editors below need to read the CURRENT value of
+   * whichever specific thing is being edited. `instanceId` undefined
+   * means "the focused slot" (characterId must match a player's own
+   * `characterId`); defined means ONE SPECIFIC placed otherCharacters
+   * entry -- now required to disambiguate, since several instances can
+   * share a characterId.
+   */
+  function findCharacterLike(characterId: string, instanceId: string | undefined): RemotePlayerLike | OtherCharacterLike | undefined {
     const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    return players?.get(room!.sessionId)?.characterId ?? "";
+    if (!players) return undefined;
+    for (const p of players.values()) {
+      if (instanceId === undefined) {
+        if (p.characterId === characterId) return p;
+        continue;
+      }
+      const other = p.otherCharacters.find((o) => o.instanceId === instanceId);
+      if (other) return other;
+    }
+    return undefined;
   }
 
   const contextMenuContainer = document.createElement("div");
@@ -248,11 +283,19 @@ export async function connectAndStreamWorld(
       // Stub -- full character sheets are MVP goal item 3, not built yet.
       // The menu item itself is disabled client-side too (characterContextMenu.ts).
     },
-    onEditTokenProperties: (characterId) => {
-      openColorEditor(characterId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
+    onEditTokenProperties: (characterId, instanceId) => {
+      openColorEditor(characterId, instanceId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
     },
-    onSelectStatusEffects: (characterId) => {
-      openStatusEffectsEditor(characterId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
+    onSelectStatusEffects: (characterId, instanceId) => {
+      openStatusEffectsEditor(characterId, instanceId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
+    },
+    // MVP goal item 4 follow-up: real request -- "add a 'delete' to the
+    // right click character menu, which will delete the instance in 3d
+    // in the game but not the link or character." Only ever invoked
+    // with a real instanceId (characterContextMenu.ts's own `canDelete`
+    // gate), so no extra check needed here.
+    onDeleteInstance: (instanceId) => {
+      room!.send("removeCharacterInstance", { instanceId });
     },
   });
   let lastMenuOpenScreen = { x: 0, y: 0 };
@@ -261,13 +304,12 @@ export async function connectAndStreamWorld(
   statInputContainer.style.cssText = "position:fixed;z-index:1001;";
   document.body.appendChild(statInputContainer);
 
-  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). */
-  function openStatEditor(characterIdToEdit: string, variableId: string, x: number, y: number): void {
+  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). `instanceId` (MVP goal item 4 follow-up, independent per-instance stats): when set, this edit is an EPHEMERAL override on just that one placed instance (WorldRoom.ts's instanceVariableOverrides) -- never the shared character record. */
+  function openStatEditor(characterIdToEdit: string, instanceId: string | undefined, variableId: string, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "number";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; width:60px; font-size:14px; z-index:1001;`;
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    const current = Array.from(players?.values() ?? []).find((p) => p.characterId === characterIdToEdit);
+    const current = findCharacterLike(characterIdToEdit, instanceId);
     const currentBar = current?.bars.find((b) => b.variableId === variableId);
     input.value = String(currentBar?.value ?? 0);
     statInputContainer.innerHTML = "";
@@ -287,7 +329,7 @@ export async function connectAndStreamWorld(
 
     function commit(): void {
       const value = Number(input.value);
-      if (Number.isFinite(value)) room!.send("setCharacterVariableValue", { characterId: characterIdToEdit, variableId, value });
+      if (Number.isFinite(value)) room!.send("setCharacterVariableValue", { characterId: characterIdToEdit, instanceId, variableId, value });
       statInputContainer.innerHTML = "";
     }
     input.addEventListener("keydown", (e) => {
@@ -297,8 +339,8 @@ export async function connectAndStreamWorld(
     input.addEventListener("blur", commit);
   }
 
-  /** Minimal color-picker overlay backing "Edit token properties" -- full token-property authoring is downstream of MVP goal item 3, this is just the color this project's rendering can actually use today (characterToken.ts's generalization of the existing fixed-color-box convention). */
-  function openColorEditor(characterIdToEdit: string, x: number, y: number): void {
+  /** Minimal color-picker overlay backing "Edit token properties" -- full token-property authoring is downstream of MVP goal item 3, this is just the color this project's rendering can actually use today (characterToken.ts's generalization of the existing fixed-color-box convention). `instanceId`: see openStatEditor's own doc -- same ephemeral, per-instance-only semantics when set. */
+  function openColorEditor(characterIdToEdit: string, instanceId: string | undefined, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "color";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; z-index:1001;`;
@@ -308,20 +350,19 @@ export async function connectAndStreamWorld(
     input.addEventListener("change", () => {
       const hex = input.value;
       const color: [number, number, number] = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255];
-      room!.send("setCharacterToken", { characterId: characterIdToEdit, color });
+      room!.send("setCharacterToken", { characterId: characterIdToEdit, instanceId, color });
       statInputContainer.innerHTML = "";
     });
   }
 
-  /** Minimal status-effect toggle overlay -- a flat, fixed small catalog (no mod-based status-effect catalog/definitions system yet, that's downstream of MVP goal item 3). */
-  function openStatusEffectsEditor(characterIdToEdit: string, x: number, y: number): void {
+  /** Minimal status-effect toggle overlay -- a flat, fixed small catalog (no mod-based status-effect catalog/definitions system yet, that's downstream of MVP goal item 3). `instanceId`: see openStatEditor's own doc -- same ephemeral, per-instance-only semantics when set. */
+  function openStatusEffectsEditor(characterIdToEdit: string, instanceId: string | undefined, x: number, y: number): void {
     const CATALOG: StatusEffectLike[] = [
       { icon: "poison", label: "Poisoned" },
       { icon: "stun", label: "Stunned" },
       { icon: "blessed", label: "Blessed" },
     ];
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    const current = Array.from(players?.values() ?? []).find((p) => p.characterId === characterIdToEdit);
+    const current = findCharacterLike(characterIdToEdit, instanceId);
     const activeLabels = new Set((current?.statusEffects ?? []).map((e) => e.label));
 
     const panel = document.createElement("div");
@@ -336,7 +377,7 @@ export async function connectAndStreamWorld(
         if (checkbox.checked) activeLabels.add(effect.label);
         else activeLabels.delete(effect.label);
         const statusEffects = CATALOG.filter((e) => activeLabels.has(e.label));
-        room!.send("setStatusEffects", { characterId: characterIdToEdit, statusEffects });
+        room!.send("setStatusEffects", { characterId: characterIdToEdit, instanceId, statusEffects });
       });
       label.appendChild(checkbox);
       label.appendChild(document.createTextNode(` ${effect.label}`));
@@ -413,8 +454,8 @@ export async function connectAndStreamWorld(
     return changed;
   }
   const trackedTokens: TrackedToken[] = [];
-  let hoveredSessionId: string | undefined;
-  let hoveredBarSessionId: string | undefined;
+  let hoveredTokenKey: string | undefined;
+  let hoveredBarTokenKey: string | undefined;
 
   /**
    * Real bug found live, confirmed via direct debug logging (not guessed):
@@ -456,20 +497,45 @@ export async function connectAndStreamWorld(
     const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
     if (!players) return;
     for (const [sessionId, p] of players) {
+      const owned = sessionId === room!.sessionId;
       const token = remoteTokens.get(sessionId);
-      if (!token) continue;
-      // The body box (local: playerBodyMesh.mesh; remote: remoteBodyMeshes)
-      // is an EXTRA, coarser pick target for the same token -- see
-      // tokenPicking.ts's TrackedToken doc for the real "the player should
-      // be easier [to pick than the thin billboard]" request this answers.
-      const bodyMesh = sessionId === room!.sessionId ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
-      trackedTokens.push({
-        sessionId,
-        characterId: p.characterId,
-        owned: !!p.characterId && p.characterId === myResolvedCharacterId(),
-        planeMesh: token.mesh,
-        extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
-      });
+      if (token) {
+        // The body box (local: playerBodyMesh.mesh; remote: remoteBodyMeshes)
+        // is an EXTRA, coarser pick target for the same token -- see
+        // tokenPicking.ts's TrackedToken doc for the real "the player should
+        // be easier [to pick than the thin billboard]" request this answers.
+        const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
+        trackedTokens.push({
+          sessionId,
+          characterId: p.characterId,
+          tokenKey: sessionId,
+          owned: !!p.characterId && owned,
+          planeMesh: token.mesh,
+          extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
+        });
+      }
+      // MVP goal item 4 follow-up (multi-character presence, then
+      // "multiple instances... for monsters"): each placed-but-
+      // unfocused otherCharacters entry is its own separate pickable
+      // token, keyed by instanceId (see the matching render loop below
+      // -- characterId alone is no longer unique among a session's
+      // otherCharacters, several instances of the same character can
+      // coexist) -- owned by the SAME session that holds it, never by
+      // characterId identity (one session can own several at once).
+      for (const other of p.otherCharacters) {
+        const otherToken = remoteTokens.get(other.instanceId);
+        if (!otherToken) continue;
+        const otherBodyMesh = remoteBodyMeshes.get(other.instanceId);
+        trackedTokens.push({
+          sessionId,
+          characterId: other.characterId,
+          tokenKey: other.instanceId,
+          instanceId: other.instanceId,
+          owned,
+          planeMesh: otherToken.mesh,
+          extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
+        });
+      }
     }
   }
 
@@ -481,15 +547,15 @@ export async function connectAndStreamWorld(
    * the exact same "which owned token's bar, if any, is at this screen
    * point" answer, just at different moments (continuously vs. on click).
    */
-  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; sessionId: string; variableId: string } | undefined {
+  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; instanceId?: string; variableId: string } | undefined {
     const result = pickToken(scene, trackedTokens, screenPoint);
     if (!result?.owned) return undefined;
-    const token = remoteTokens.get(result.sessionId);
+    const token = remoteTokens.get(result.tokenKey);
     if (!token) return undefined;
     if (result.pickedMesh !== token.mesh) return undefined; // hit the body box (the coarser extraHitboxMeshes target), not the billboard plane -- not precise enough for bar editing
     const localPoint = BABYLON.Vector3.TransformCoordinates(result.worldPoint, token.mesh.getWorldMatrix().clone().invert());
     const variableId = token.hitTestLocalPoint(localPoint.x, localPoint.y);
-    return variableId ? { characterId: result.characterId, sessionId: result.sessionId, variableId } : undefined;
+    return variableId ? { characterId: result.characterId, tokenKey: result.tokenKey, instanceId: result.instanceId, variableId } : undefined;
   }
 
   // ---- voxel edits: apply locally immediately (installVoxelEditor already
@@ -509,15 +575,15 @@ export async function connectAndStreamWorld(
     {
       pickOwnedToken: () => {
         const result = pickToken(scene, trackedTokens, currentPickScreenPoint());
-        return result?.owned ? { characterId: result.characterId } : undefined;
+        return result?.owned ? { characterId: result.characterId, instanceId: result.instanceId } : undefined;
       },
       pickHoveredStatBar: () => {
         const resolved = resolveHoveredBar(currentPickScreenPoint());
-        return resolved ? { characterId: resolved.characterId, variableId: resolved.variableId } : undefined;
+        return resolved ? { characterId: resolved.characterId, instanceId: resolved.instanceId, variableId: resolved.variableId } : undefined;
       },
-      openContextMenu: (characterIdToOpen, x, y) => {
+      openContextMenu: (characterIdToOpen, instanceId, x, y) => {
         lastMenuOpenScreen = { x, y };
-        contextMenu.open(x, y, characterIdToOpen);
+        contextMenu.open(x, y, characterIdToOpen, instanceId);
       },
       openStatEditor,
     },
@@ -648,41 +714,107 @@ export async function connectAndStreamWorld(
         statusEffects: Array.from(p.statusEffects ?? []),
       });
     }
-    for (const [sessionId, eid] of remoteEntities) {
-      if (!seen.has(sessionId)) {
+
+    // MVP goal item 4 follow-up (multi-character presence, then
+    // "multiple instances... for monsters"): every player's placed-
+    // but-unfocused otherCharacters entries each get their own static
+    // box+token, built/updated/resized exactly like a remote player's
+    // focused slot above -- keyed by instanceId, NOT characterId
+    // (several independent instances of the same character can
+    // coexist now, so characterId alone can no longer identify "this
+    // one specific box+token"). Never physics-driven (doPhysics=false,
+    // same as any ordinary remote player) -- these only ever move via
+    // an explicit placeCharacter/focusCharacter message, never on
+    // their own.
+    for (const [, p] of players) {
+      for (const other of p.otherCharacters) {
+        const key = other.instanceId;
+        seen.add(key);
+
+        let eid = remoteEntities.get(key);
+        let material = remoteMaterials.get(key);
+        let token = remoteTokens.get(key);
+        if (eid === undefined || !material || !token) {
+          material = new BABYLON.StandardMaterial(`otherCharacterMat-${key}`, scene);
+          material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+          remoteMaterials.set(key, material);
+
+          const mesh = BABYLON.MeshBuilder.CreateBox(`other-${key}`, { width: other.bodyWidth, height: other.bodyHeight, depth: other.bodyDepth }, scene);
+          mesh.material = material;
+          eid = noa.entities.add([other.x, other.y, other.z], other.bodyWidth, other.bodyHeight, mesh, [0, other.bodyHeight / 2, 0], false, false);
+          remoteEntities.set(key, eid);
+          remoteBodyMeshes.set(key, mesh);
+          appliedBodySizes.set(key, [other.bodyWidth, other.bodyHeight, other.bodyDepth]);
+          const anchor = createBodyAnchor(mesh);
+          remoteTokenAnchors.set(key, anchor);
+
+          token = createCharacterToken(scene, other.characterName);
+          token.mesh.parent = anchor;
+          token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(other.bodyHeight), 0);
+          token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+          noa.rendering.addMeshToScene(token.mesh, false);
+          remoteTokens.set(key, token);
+        } else {
+          noa.entities.setPosition(eid, [other.x, other.y, other.z]);
+          material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+          if (bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth)) {
+            resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth);
+            token.mesh.position.y = tokenYOffsetFor(other.bodyHeight);
+            token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+          }
+        }
+
+        token.update({
+          name: other.characterName,
+          bars: toTokenBars(other.bars),
+          statusEffects: Array.from(other.statusEffects ?? []),
+        });
+      }
+    }
+
+    // MVP goal item 4 follow-up: `key` here is either a sessionId (a
+    // focused slot) or a characterId (an otherCharacters entry) -- both
+    // namespaces share these same Maps (see the render loops above),
+    // and this cleanup is identity-agnostic: anything no longer in
+    // `seen` this tick gets disposed, regardless of which kind of key
+    // it is. This is what cleans up a focus-swapped-out or
+    // removeCharacterInstance-deleted otherCharacters entry, with no
+    // separate cleanup code needed for either.
+    for (const [key, eid] of remoteEntities) {
+      if (!seen.has(key)) {
         // deleteEntity is inherited from ent-comp's ECS base class -- see
         // the same cast rationale in movement/PlayerController.ts.
         (noa.entities as unknown as { deleteEntity(id: number): void }).deleteEntity(eid);
-        remoteEntities.delete(sessionId);
-        remoteBodyMeshes.delete(sessionId); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
-        appliedBodySizes.delete(sessionId);
-        remoteTokenAnchors.get(sessionId)?.dispose();
-        remoteTokenAnchors.delete(sessionId);
-        remoteTokens.get(sessionId)?.dispose();
-        remoteTokens.delete(sessionId);
-        remoteMaterials.get(sessionId)?.dispose();
-        remoteMaterials.delete(sessionId);
+        remoteEntities.delete(key);
+        remoteBodyMeshes.delete(key); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
+        appliedBodySizes.delete(key);
+        remoteTokenAnchors.get(key)?.dispose();
+        remoteTokenAnchors.delete(key);
+        remoteTokens.get(key)?.dispose();
+        remoteTokens.delete(key);
+        remoteMaterials.get(key)?.dispose();
+        remoteMaterials.delete(key);
       }
     }
 
     rebuildTrackedTokens();
     const screenPoint = currentPickScreenPoint();
     const picked = pickToken(scene, trackedTokens, screenPoint);
-    const nextHovered = picked?.owned ? picked.sessionId : undefined;
-    if (nextHovered !== hoveredSessionId) {
-      if (hoveredSessionId) setHighlight(hoveredSessionId, false);
+    const nextHovered = picked?.owned ? picked.tokenKey : undefined;
+    if (nextHovered !== hoveredTokenKey) {
+      if (hoveredTokenKey) setHighlight(hoveredTokenKey, false);
       if (nextHovered) setHighlight(nextHovered, true);
-      hoveredSessionId = nextHovered;
+      hoveredTokenKey = nextHovered;
     }
 
     // Real request: the bar itself should show feedback for whichever one
     // is specifically under the cursor, same spirit as the coarser token/
     // body-box outline above.
     const hoveredBar = resolveHoveredBar(screenPoint);
-    if (hoveredBar?.sessionId !== hoveredBarSessionId) {
-      if (hoveredBarSessionId) remoteTokens.get(hoveredBarSessionId)?.setHoveredBar(undefined);
-      if (hoveredBar) remoteTokens.get(hoveredBar.sessionId)?.setHoveredBar(hoveredBar.variableId);
-      hoveredBarSessionId = hoveredBar?.sessionId;
+    if (hoveredBar?.tokenKey !== hoveredBarTokenKey) {
+      if (hoveredBarTokenKey) remoteTokens.get(hoveredBarTokenKey)?.setHoveredBar(undefined);
+      if (hoveredBar) remoteTokens.get(hoveredBar.tokenKey)?.setHoveredBar(hoveredBar.variableId);
+      hoveredBarTokenKey = hoveredBar?.tokenKey;
     }
   });
 
@@ -696,9 +828,9 @@ export async function connectAndStreamWorld(
   // feature -- not hand-rolled) is a much more visible "this is
   // interactable" indicator, applied to BOTH meshes so whichever one the
   // cursor is actually over still shows the SAME obvious feedback.
-  function setHighlight(sessionId: string, on: boolean): void {
-    const bodyMesh = sessionId === room!.sessionId ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
-    const planeMesh = remoteTokens.get(sessionId)?.mesh;
+  function setHighlight(tokenKey: string, on: boolean): void {
+    const bodyMesh = tokenKey === room!.sessionId ? playerBodyMesh.mesh : remoteBodyMeshes.get(tokenKey);
+    const planeMesh = remoteTokens.get(tokenKey)?.mesh;
     for (const mesh of [bodyMesh, planeMesh]) {
       if (!mesh) continue;
       mesh.renderOutline = on;

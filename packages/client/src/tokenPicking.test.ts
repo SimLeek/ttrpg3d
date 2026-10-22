@@ -21,7 +21,7 @@ describe("pickToken (coarse mesh-level pick, headless NullEngine)", () => {
     const scene = makeSceneWithCamera();
     const offscreenBox = BABYLON.MeshBuilder.CreateBox("offscreen", {}, scene);
     offscreenBox.position = new BABYLON.Vector3(100, 100, 100);
-    const tokens: TrackedToken[] = [{ sessionId: "s1", characterId: "c1", owned: true, planeMesh: offscreenBox }];
+    const tokens: TrackedToken[] = [{ sessionId: "s1", characterId: "c1", tokenKey: "s1", owned: true, planeMesh: offscreenBox }];
     expect(pickToken(scene, tokens)).toBeUndefined();
   });
 
@@ -29,7 +29,7 @@ describe("pickToken (coarse mesh-level pick, headless NullEngine)", () => {
     const scene = makeSceneWithCamera();
     const box = BABYLON.MeshBuilder.CreateBox("token-hitbox", {}, scene);
     box.position = BABYLON.Vector3.Zero(); // directly ahead of the camera at (0,0,-5) looking at origin
-    const tokens: TrackedToken[] = [{ sessionId: "s1", characterId: "c1", owned: true, planeMesh: box }];
+    const tokens: TrackedToken[] = [{ sessionId: "s1", characterId: "c1", tokenKey: "s1", owned: true, planeMesh: box }];
 
     const result = pickToken(scene, tokens);
     expect(result?.sessionId).toBe("s1");
@@ -45,7 +45,7 @@ describe("pickToken (coarse mesh-level pick, headless NullEngine)", () => {
     plane.position = new BABYLON.Vector3(0, 10, 0); // well away from the camera ray -- only the body box is in front of it
     const bodyBox = BABYLON.MeshBuilder.CreateBox("body", {}, scene);
     bodyBox.position = BABYLON.Vector3.Zero();
-    const tokens: TrackedToken[] = [{ sessionId: "s1", characterId: "c1", owned: true, planeMesh: plane, extraHitboxMeshes: [bodyBox] }];
+    const tokens: TrackedToken[] = [{ sessionId: "s1", characterId: "c1", tokenKey: "s1", owned: true, planeMesh: plane, extraHitboxMeshes: [bodyBox] }];
 
     const result = pickToken(scene, tokens);
     expect(result?.sessionId).toBe("s1");
@@ -59,8 +59,8 @@ describe("pickToken (coarse mesh-level pick, headless NullEngine)", () => {
     const offCenterBox = BABYLON.MeshBuilder.CreateBox("off-center-token", {}, scene);
     offCenterBox.position = new BABYLON.Vector3(1, 0, 0);
     const tokens: TrackedToken[] = [
-      { sessionId: "center", characterId: "c1", owned: true, planeMesh: centerBox },
-      { sessionId: "off-center", characterId: "c2", owned: true, planeMesh: offCenterBox },
+      { sessionId: "center", characterId: "c1", tokenKey: "center", owned: true, planeMesh: centerBox },
+      { sessionId: "off-center", characterId: "c2", tokenKey: "off-center", owned: true, planeMesh: offCenterBox },
     ];
 
     // Default (no screenPoint) hits the centered box, matching crosshair callers.

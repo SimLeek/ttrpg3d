@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mountChatPanel, type ChatPanelController, type ChatPanelOptions } from "./chatPanel.js";
+import { mountChatPanel, CHARACTER_DRAG_MIME, type ChatPanelController, type ChatPanelOptions } from "./chatPanel.js";
 import type { ChatMessage } from "./api.js";
 
 function msg(senderName: string, text: string, id = 1): ChatMessage {
@@ -359,5 +359,22 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
     container.querySelector<HTMLButtonElement>(".delete-char-btn[data-character-id='mine']")!.click();
     expect(onDeleteCharacter).toHaveBeenCalledWith("mine");
     confirmSpy.mockRestore();
+  });
+
+  it("MVP goal item 4 follow-up (drag-and-drop placement): a row is draggable only for the viewer's OWN character, and dragstart puts its characterId on dataTransfer under CHARACTER_DRAG_MIME", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", false);
+
+    const mineLi = container.querySelector<HTMLLIElement>("li[data-character-id='mine']")!;
+    const theirsLi = container.querySelector<HTMLLIElement>("li[data-character-id='theirs']")!;
+    expect(mineLi.draggable).toBe(true);
+    expect(theirsLi.draggable).toBe(false);
+
+    const setData = vi.fn();
+    const event = new Event("dragstart", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { setData, effectAllowed: "" } });
+    mineLi.dispatchEvent(event);
+
+    expect(setData).toHaveBeenCalledWith(CHARACTER_DRAG_MIME, "mine");
   });
 });

@@ -371,6 +371,248 @@ describe("WorldRoom", () => {
     });
   });
 
+  describe("multi-character presence: placement, focus cycling, instance delete (MVP goal item 4 follow-up)", () => {
+    const owner = trackedAccount(`WorldRoom-test-multi-owner-${Date.now()}`);
+    const game = trackedGame(`WorldRoom-test-multi-game-${Date.now()}`, owner.id);
+    const world = trackedWorld(game.id, "Multi-Character Test World", "limestone_slab", SLAB_PARAMS);
+
+    it("placeCharacter adds a new otherCharacters entry for one of the sender's OWN other characters, within range of their focused position", async () => {
+      const focused = store.createCharacter(owner.id, "Focused", [1, 0, 0]);
+      const placed = store.createCharacter(owner.id, "Placed", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: placed.id, x: player.x + 2, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(1);
+      expect(player.otherCharacters[0]).toMatchObject({ characterId: placed.id, characterName: "Placed", x: player.x + 2 });
+      expect(player.otherCharacters[0].instanceId).not.toBe(""); // real identity, not derived from characterId
+    });
+
+    it("placeCharacter creates a SEPARATE, independent instance each time, even for the SAME character -- real request: \"I can't add multiple instances of the same character. I would want to do that for monsters\"", async () => {
+      const focused = store.createCharacter(owner.id, "GoblinHandler", [1, 0, 0]);
+      const goblin = store.createCharacter(owner.id, "Goblin", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: goblin.id, x: player.x + 1, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: goblin.id, x: player.x + 2, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: goblin.id, x: player.x + 3, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(3); // three goblins, not one moved entry
+      expect(player.otherCharacters.every((o) => o.characterId === goblin.id)).toBe(true);
+      const instanceIds = player.otherCharacters.map((o) => o.instanceId);
+      expect(new Set(instanceIds).size).toBe(3); // each has its own real identity
+      expect(player.otherCharacters.map((o) => o.x)).toEqual([player.x + 1, player.x + 2, player.x + 3]); // independent positions, not all moved to the last drop
+    });
+
+    it("placeCharacter rejects a drop farther than MAX_CHARACTER_PLACEMENT_DISTANCE from the sender's own live position (never trusts a client-side distance check)", async () => {
+      const focused = store.createCharacter(owner.id, "FarFocused", [1, 0, 0]);
+      const placed = store.createCharacter(owner.id, "FarPlaced", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: placed.id, x: player.x + 9999, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(0);
+    });
+
+    it("placeCharacter rejects a character owned by someone else -- you can only ever place your OWN characters", async () => {
+      const focused = store.createCharacter(owner.id, "SelfFocused", [1, 0, 0]);
+      const otherOwner = trackedAccount(`WorldRoom-test-multi-otherowner-${Date.now()}`);
+      const notMine = store.createCharacter(otherOwner.id, "NotMine", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: notMine.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(0);
+    });
+
+    it("focusCharacter swaps the focused character and a placed otherCharacters entry's data (position, body size, bars all move with it)", async () => {
+      const focused = store.createCharacter(owner.id, "WasFocused", [1, 0, 0]);
+      const toFocus = store.createCharacter(owner.id, "WillBeFocused", [0, 1, 0]);
+      store.updateCharacterSheet(toFocus.id, null, null, { bodyWidth: 1.0, bodyHeight: 2.0, bodyDepth: 1.0 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      const placedAt = { x: player.x + 1, y: player.y, z: player.z + 1 };
+      client.send("placeCharacter", { characterId: toFocus.id, ...placedAt });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      client.send("focusCharacter", { instanceId: player.otherCharacters[0].instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(toFocus.id);
+      expect([player.x, player.y, player.z]).toEqual([placedAt.x, placedAt.y, placedAt.z]);
+      expect(player.bodyHeight).toBe(2.0);
+      expect(player.otherCharacters).toHaveLength(1);
+      expect(player.otherCharacters[0].characterId).toBe(focused.id); // the previously-focused one, snapshotted
+      expect(player.otherCharacters[0].instanceId).not.toBe(""); // the snapshot gets its own real identity too
+    });
+
+    it("focusCharacter cycles forward through a 3-character ring and returns to the start after 3 'next' presses (Tab)", async () => {
+      const a = store.createCharacter(owner.id, "RingA", [1, 0, 0]);
+      const b = store.createCharacter(owner.id, "RingB", [0, 1, 0]);
+      const c = store.createCharacter(owner.id, "RingC", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: a.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: b.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: c.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([b.id, c.id]);
+
+      // Tab always targets otherCharacters[0] -- same selection net.ts's own focus-cycling module uses.
+      client.send("focusCharacter", { instanceId: player.otherCharacters[0].instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(b.id);
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([c.id, a.id]);
+
+      client.send("focusCharacter", { instanceId: player.otherCharacters[0].instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(c.id);
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([a.id, b.id]);
+
+      client.send("focusCharacter", { instanceId: player.otherCharacters[0].instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(a.id);
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([b.id, c.id]); // back to the exact starting arrangement
+    });
+
+    it("focusCharacter's 'previous' direction (Shift+Tab) is the true inverse of 'next' (Tab) -- one of each returns to the exact original state", async () => {
+      const a = store.createCharacter(owner.id, "InverseA", [1, 0, 0]);
+      const b = store.createCharacter(owner.id, "InverseB", [0, 1, 0]);
+      const c = store.createCharacter(owner.id, "InverseC", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: a.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: b.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: c.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Tab (next): targets otherCharacters[0].
+      client.send("focusCharacter", { instanceId: player.otherCharacters[0].instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(b.id);
+
+      // Shift+Tab (previous): targets otherCharacters[last] -- same selection net.ts's own module uses.
+      client.send("focusCharacter", { instanceId: player.otherCharacters[player.otherCharacters.length - 1].instanceId, direction: "previous" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(a.id); // back to the exact original focus
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([b.id, c.id]); // and the exact original arrangement
+    });
+
+    it("focusCharacter is a no-op for an instanceId that isn't one of the sender's own placed instances", async () => {
+      const focused = store.createCharacter(owner.id, "StaysFocused", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("focusCharacter", { instanceId: "not-a-real-instance", direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(focused.id);
+    });
+
+    it("removeCharacterInstance deletes ONE specific placed instance but never the character record itself, and leaves other instances of the SAME character untouched (right-click 'Delete instance' -- not deleteCharacter/unlinkCharacterFromGame)", async () => {
+      const focused = store.createCharacter(owner.id, "KeepsFocus", [1, 0, 0]);
+      const goblin = store.createCharacter(owner.id, "ToRemove", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: goblin.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: goblin.id, x: player.x + 1, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.otherCharacters).toHaveLength(2);
+      const [first, second] = player.otherCharacters;
+
+      client.send("removeCharacterInstance", { instanceId: first.instanceId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(1);
+      expect(player.otherCharacters[0].instanceId).toBe(second.instanceId); // the OTHER goblin instance survives untouched
+      expect(store.getCharacter(goblin.id)).toBeDefined(); // the character record itself survives regardless
+    });
+
+    it("removeCharacterInstance cannot even address the character the sender is controlling -- it has no instanceId at all (structural, not a separate check): real request, keep at least one controllable instance", async () => {
+      const focused = store.createCharacter(owner.id, "CannotSelfDelete", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("removeCharacterInstance", { instanceId: "not-a-real-instance" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(focused.id); // unchanged -- still connected and playing as this character
+    });
+
+    it("notifyCharacterSheetChanged refreshes EVERY placed instance of a character, not just the first", async () => {
+      const focused = store.createCharacter(owner.id, "FocusedForRefresh", [1, 0, 0]);
+      const placedChar = store.createCharacter(owner.id, "PlacedForRefresh", [0, 1, 0]);
+      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
+      store.updateCharacterSheet(placedChar.id, null, customSheet, { hp: 10 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: placedChar.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: placedChar.id, x: player.x + 1, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.otherCharacters.map((o) => o.bars[0].value)).toEqual([10, 10]);
+
+      store.updateCharacterSheet(placedChar.id, null, customSheet, { hp: 2 });
+      notifyCharacterSheetChanged(placedChar.id);
+
+      expect(player.otherCharacters.map((o) => o.bars[0].value)).toEqual([2, 2]);
+    });
+
+    it("setCharacterVariableValue with an instanceId gives independent, per-instance stats -- real request: \"I would want to do that for monsters\" (killing one goblin shouldn't zero out the others)", async () => {
+      const focused = store.createCharacter(owner.id, "GoblinKeeper", [1, 0, 0]);
+      const goblinSheet = store.createCharacter(owner.id, "IndependentGoblin", [0, 1, 0]);
+      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
+      store.updateCharacterSheet(goblinSheet.id, null, customSheet, { hp: 10 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: goblinSheet.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: goblinSheet.id, x: player.x + 1, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const [goblinA, goblinB] = player.otherCharacters;
+
+      // Damage ONLY goblin A.
+      client.send("setCharacterVariableValue", { characterId: goblinSheet.id, instanceId: goblinA.instanceId, variableId: "hp", value: 3 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters.find((o) => o.instanceId === goblinA.instanceId)!.bars[0].value).toBe(3);
+      expect(player.otherCharacters.find((o) => o.instanceId === goblinB.instanceId)!.bars[0].value).toBe(10); // untouched -- independent, not a shared pool
+      expect(store.getCharacter(goblinSheet.id)?.variableValues.hp).toBe(10); // the shared record itself is never touched by an instance-scoped edit
+    });
+
+    it("setCharacterVariableValue WITHOUT an instanceId still edits the shared character record as before, and does not touch a placed instance's own independent value", async () => {
+      const focused = store.createCharacter(owner.id, "SharedEditOwner", [1, 0, 0]);
+      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
+      store.updateCharacterSheet(focused.id, null, customSheet, { hp: 10 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+
+      client.send("setCharacterVariableValue", { characterId: focused.id, variableId: "hp", value: 4 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const player = room.state.players.get(client.sessionId)!;
+      expect(player.bars[0].value).toBe(4); // the focused slot, exactly as before this round
+      expect(store.getCharacter(focused.id)?.variableValues.hp).toBe(4);
+    });
+  });
+
   describe("mod load mechanism (MVP goal item 3, docs/ROADMAP.md)", () => {
     it("a world whose PARENT GAME has the example-noop mod enabled has it actually registered when the world's room is created (per-GAME scope, not per-world -- real correction, 2026-10-17)", async () => {
       const owner = trackedAccount(`WorldRoom-test-mod-owner-${Date.now()}`);

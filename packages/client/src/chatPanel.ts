@@ -69,6 +69,9 @@ const COLLAPSED_WIDTH = 28;
 
 type ChatPanelTab = "chat" | "characters" | "gm";
 
+/** MVP goal item 4 follow-up (drag-and-drop placement) -- the dataTransfer key a dragged Characters-tab row's characterId travels under; characterPlacement.ts's `drop` handler reads this same key back out. A custom type, not plain "text/plain", so a drag from somewhere else in the page (or outside it) is never mistaken for a character drop. */
+export const CHARACTER_DRAG_MIME = "application/x-ttrpg3d-character-id";
+
 export interface ChatPanelOptions {
   initialMessages: ChatMessage[];
   /** `asCharacterId` is whichever character the compose row's "post as" dropdown currently has selected -- null for the default "my username." */
@@ -302,8 +305,13 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
             const isOwner = character.ownerAccountId === viewerAccountId;
             const canManage = isAdmin || isOwner;
             const visibilityIsAll = link.visibility === "all";
+            // MVP goal item 4 follow-up (drag-and-drop placement): only
+            // your OWN characters are draggable -- placeCharacter is
+            // self-service only (WorldRoom.ts), so starting a drag for
+            // someone else's character could only ever end in a silent
+            // server-side no-op. `isOwner` already computed above.
             return `
-          <li data-character-id="${character.id}">
+          <li data-character-id="${character.id}" ${isOwner ? 'draggable="true"' : ""}>
             <button type="button" class="open-character-btn" data-character-id="${character.id}">${character.name}</button>
             ${
               canManage
@@ -350,6 +358,20 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       const name = visibleLinks.find((l) => l.character.id === characterId)?.character.name ?? "this character";
       if (window.confirm(`Delete "${name}"? This can't be undone.`)) options.onDeleteCharacter(characterId);
     }
+  });
+
+  // MVP goal item 4 follow-up (drag-and-drop placement): the native
+  // HTML5 drag-and-drop `dataTransfer` channel is the mechanism itself
+  // -- no new ChatPanelOptions callback needed, net.ts's own `drop`
+  // listener on noa's canvas reads this same characterId straight back
+  // out (this file stays "noa-free, pure presentational," per its own
+  // header -- dataTransfer is a browser-native channel, not a room
+  // message or app callback).
+  characterGroupsEl.addEventListener("dragstart", (event) => {
+    const li = (event.target as HTMLElement).closest<HTMLLIElement>("li[draggable='true']");
+    if (!li || !event.dataTransfer) return;
+    event.dataTransfer.setData(CHARACTER_DRAG_MIME, li.dataset.characterId!);
+    event.dataTransfer.effectAllowed = "copy";
   });
 
   characterGroupsEl.addEventListener("change", (event) => {

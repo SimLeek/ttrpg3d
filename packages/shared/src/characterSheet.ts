@@ -85,6 +85,16 @@ export const RESERVED_BODY_SIZE_VARIABLES: CharacterSheetVariableDef[] = [
 ];
 
 /**
+ * MVP goal item 4 follow-up (drag-and-drop character placement) -- how
+ * far (world units) a placed character can be from the one you're
+ * currently controlling. Shared so the client's live hover-marker
+ * preview (valid/invalid color while dragging) and the server's own
+ * re-validation of a "placeCharacter" message (never trust the
+ * client's own check) agree on the exact same number.
+ */
+export const MAX_CHARACTER_PLACEMENT_DISTANCE = 16;
+
+/**
  * x-of-y values store BOTH halves in `variableValues` -- the "current"
  * half lives under the variable's own id, the "max" half lives under
  * this derived key. Shared between the client (characterSheetWidgets.ts's
