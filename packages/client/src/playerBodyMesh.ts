@@ -49,23 +49,32 @@ export interface PlayerBodyMesh {
  * entity's body in place -- scales the SAME mesh object (never
  * replaces it, so a caller's own `mesh.parent = ...`/hit-testing
  * references keep working unchanged), re-anchors the mesh ECS
- * component's vertical offset for the new height via
- * `addComponentAgain` (noa's own "remove if present, then add" helper
- * -- confirmed directly in noa-engine's source, exactly what's needed
- * here, no unsafe cast required since it's in noa's own .d.ts unlike
- * the plain `addComponent`/`removeComponent` this file used before),
- * and resizes the REAL collision box via noa's `entities.setEntitySize`
- * (confirmed directly in noa's own source: mutates the live physics
- * body's AABB in place -- a no-op for an entity with no physics
- * component at all, like net.ts's remote players, confirmed via
- * `_updateDerivedPositionData`'s own `if (physDat) ...` guard, so this
- * is equally safe to call for local (physics) and remote (no physics)
- * entities). Used both for the local player (via `resizeLocalPlayerBody`
- * below) and remote players (net.ts, directly).
+ * component's vertical offset for the new height, and resizes the REAL
+ * collision box via noa's `entities.setEntitySize` (confirmed directly
+ * in noa's own source: mutates the live physics body's AABB in place
+ * -- a no-op for an entity with no physics component at all, like
+ * net.ts's remote players, confirmed via `_updateDerivedPositionData`'s
+ * own `if (physDat) ...` guard, so this is equally safe to call for
+ * local (physics) and remote (no physics) entities).
+ *
+ * Real bug found live, second pass ("the character no longer displays
+ * ... just a circle shadow and then nothing"): the offset re-anchor
+ * used to go through `entities.addComponentAgain`, which -- confirmed
+ * directly in noa's own mesh component source -- is "remove the
+ * component, then add it," and the mesh component's `onRemove` calls
+ * `state.mesh.dispose()`. That disposed the exact mesh object this
+ * function was trying to REUSE (scaled, not rebuilt), so every resize
+ * silently destroyed the visible box -- collision kept working because
+ * `setEntitySize` touches a completely separate (physics) component,
+ * unaffected by the mesh component being torn down. Fixed by mutating
+ * the mesh component's OWN existing state object in place instead
+ * (`entities.getMeshData`, also noa's own, typed API) -- no
+ * remove/re-add, no dispose, nothing else touched.
  */
 export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Mesh, width: number, height: number, depth: number): void {
   mesh.scaling.set(width / PLAYER_BODY_WIDTH, height / PLAYER_BODY_HEIGHT, depth / PLAYER_BODY_DEPTH);
-  noa.entities.addComponentAgain(entityId, noa.entities.names.mesh, { mesh, offset: [0, height / 2, 0] });
+  const meshData = noa.entities.getMeshData(entityId);
+  if (meshData) meshData.offset[1] = height / 2;
   noa.entities.setEntitySize(entityId, width, height, depth);
 }
 
