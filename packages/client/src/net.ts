@@ -376,8 +376,26 @@ export async function connectAndStreamWorld(
   // PLAYER_BODY_HEIGHT constant everyone used to have -- this is now a
   // function of each player's own current height instead of a module-
   // level constant.
+  // Real bug found live, confirmed by reasoning through the math (not
+  // guessed): the token's own mesh is scaled uniformly by
+  // tokenScaleFor(bodyHeight) below (so a taller character gets a
+  // proportionally bigger nameplate) -- but this offset calculation was
+  // using the RAW, unscaled TOKEN_PLANE_HEIGHT constant for its
+  // half-height term, as if the plane were always rendered at scale 1.
+  // At a short body (scale floored to MIN_TOKEN_SCALE), the real plane
+  // is HALF as tall as this assumed, so the computed center sat too
+  // high above the box ("well above... at 0.8"). At a tall body (scale
+  // > 1), the real plane is TALLER than this assumed, so its true
+  // bottom edge dropped below the intended clearance and into the box
+  // ("intersecting... at 2.8 or 3.8"). Multiplying by the SAME scale
+  // factor actually applied to the mesh fixes this for every size.
+  const MIN_TOKEN_SCALE = 0.5; // real request: "there should be a minimum size so that things still print"
+  function tokenScaleFor(bodyHeight: number): number {
+    return Math.max(MIN_TOKEN_SCALE, bodyHeight / PLAYER_BODY_HEIGHT);
+  }
   function tokenYOffsetFor(bodyHeight: number): number {
-    const heightAboveFeet = bodyHeight + TOKEN_CLEARANCE_ABOVE_HEAD + TOKEN_PLANE_HEIGHT / 2;
+    const scaledPlaneHeight = TOKEN_PLANE_HEIGHT * tokenScaleFor(bodyHeight);
+    const heightAboveFeet = bodyHeight + TOKEN_CLEARANCE_ABOVE_HEAD + scaledPlaneHeight / 2;
     return heightAboveFeet - bodyHeight / 2;
   }
   const remoteEntities = new Map<string, number>(); // sessionId -> noa entity id
@@ -542,7 +560,7 @@ export async function connectAndStreamWorld(
           // the real squish/offset-drift bug this fixes.
           localToken.mesh.parent = playerBodyMesh.tokenAnchor;
           localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
-          localToken.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+          localToken.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
           // Real bug found live: a mesh built via plain MeshBuilder and
           // just parented, without ever going through noa's own rendering
           // API, is NEVER added to noa's custom octree-based active-mesh
@@ -566,7 +584,7 @@ export async function connectAndStreamWorld(
         if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
           resizeLocalPlayerBody(noa, playerBodyMesh, p.bodyWidth, p.bodyHeight, p.bodyDepth);
           localToken.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
-          localToken.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+          localToken.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
         }
         localToken.update({
           name: p.characterName || p.name,
@@ -611,7 +629,7 @@ export async function connectAndStreamWorld(
         // an extra link in the SAME parent chain).
         token.mesh.parent = anchor;
         token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
-        token.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+        token.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
         noa.rendering.addMeshToScene(token.mesh, false); // see the matching comment on the local-token branch above -- same real bug, same fix
         remoteTokens.set(sessionId, token);
       } else {
@@ -620,7 +638,7 @@ export async function connectAndStreamWorld(
         if (bodySizeChanged(sessionId, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
           resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, p.bodyWidth, p.bodyHeight, p.bodyDepth);
           token.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
-          token.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+          token.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
         }
       }
 
