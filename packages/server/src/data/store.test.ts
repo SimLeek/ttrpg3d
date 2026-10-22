@@ -253,7 +253,7 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(store.getCharacter(otherCharacter.id)).toEqual(otherCharacter);
   });
 
-  it("createCharacter creates a character with a unique id, defaulted stats, and no status effects", () => {
+  it("createCharacter creates a character with a unique id, no sheet yet, and no status effects", () => {
     const owner = store.createAccount("Owner");
     const a = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
     const b = store.createCharacter(owner.id, "Bram", [0, 0, 1]);
@@ -261,8 +261,7 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(a.id).not.toBe(b.id);
     expect(a.ownerAccountId).toBe(owner.id);
     expect(a.token).toEqual({ color: [1, 0, 0] });
-    expect(a.hp).toBe(a.maxHp);
-    expect(a.mp).toBe(a.maxMp);
+    expect(a.customSheet).toBeNull();
     expect(a.statusEffects).toEqual([]);
   });
 
@@ -315,15 +314,15 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(store.listCharactersForAccount(owner.id)).toHaveLength(1);
   });
 
-  it("updateCharacterStats writes a single stat and persists it; a no-op for an unknown id", () => {
+  it("updateCharacterVariableValue writes a single variableValues entry and persists it, leaving the rest alone; a no-op for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const character = store.createCharacter(owner.id, "Statted", [1, 0, 0]);
+    store.updateCharacterSheet(character.id, null, null, { hp: 10, mp: 10 });
 
-    store.updateCharacterStats(character.id, "hp", 3);
-    expect(store.getCharacter(character.id)?.hp).toBe(3);
-    expect(store.getCharacter(character.id)?.maxHp).toBe(character.maxHp);
+    store.updateCharacterVariableValue(character.id, "hp", 3);
+    expect(store.getCharacter(character.id)?.variableValues).toEqual({ hp: 3, mp: 10 });
 
-    expect(() => store.updateCharacterStats("not-a-real-character", "hp", 99)).not.toThrow();
+    expect(() => store.updateCharacterVariableValue("not-a-real-character", "hp", 99)).not.toThrow();
   });
 
   it("setCharacterStatusEffects replaces the status effects list and persists it", () => {

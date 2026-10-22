@@ -1,7 +1,7 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, type WorldStateType } from "./WorldState.js";
-import type { StatusEffect } from "../data/store.js";
+import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
+import { WorldState, PlayerState, StatusEffectState, BarState, type WorldStateType, type PlayerStateType } from "./WorldState.js";
+import type { StatusEffect, CharacterRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -34,12 +34,10 @@ interface JoinOptions {
   characterId?: string;
 }
 
-type CharacterStat = "hp" | "maxHp" | "mp" | "maxMp";
-const CHARACTER_STATS: readonly CharacterStat[] = ["hp", "maxHp", "mp", "maxMp"];
-
-interface SetCharacterStatMessage {
+/** Replaces the old hp/maxHp/mp/maxMp-specific SetCharacterStatMessage -- `variableId` is whichever sheet variable the clicked bar points at (always the CURRENT half; `max` is edited on the character sheet page, not in-game). */
+interface SetCharacterVariableValueMessage {
   characterId: string;
-  stat: CharacterStat;
+  variableId: string;
   value: number;
 }
 
@@ -55,6 +53,22 @@ interface SetCharacterTokenMessage {
 
 function flatIndex(i: number, j: number, k: number): number {
   return i * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + k;
+}
+
+/** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues and replaces the player's whole `bars` Schema array -- used both at join and after any setCharacterVariableValue edit, so every connected session always sees a freshly-derived list rather than a stale one. */
+function applyBarsToPlayer(player: PlayerStateType, character: CharacterRecord): void {
+  player.bars.clear();
+  for (const resolved of resolveCharacterBars(character.customSheet, character.variableValues)) {
+    const bar = new BarState();
+    bar.variableId = resolved.variableId;
+    bar.label = resolved.label;
+    bar.value = resolved.value;
+    bar.max = resolved.max;
+    bar.colorR = resolved.color[0];
+    bar.colorG = resolved.color[1];
+    bar.colorB = resolved.color[2];
+    player.bars.push(bar);
+  }
 }
 
 export class WorldRoom extends Room<{ state: WorldStateType }> {
@@ -236,24 +250,27 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.yaw = yaw;
     });
 
-    // Click-to-edit HP/MP backend (MVP goal items 1-2). Gated to the
-    // editing character's own owner session or an admin -- same spirit as
-    // setRespawnAnchor's admin gate above, plus a self-edit allowance since
-    // this is a per-character stat a player edits on their own token.
-    this.onMessage<SetCharacterStatMessage>("setCharacterStat", (client, { characterId, stat, value }) => {
-      if (!CHARACTER_STATS.includes(stat)) return;
+    // Click-to-edit bars backend (MVP goal items 1-2, generalized per
+    // docs/ROADMAP.md item 4's follow-up -- was HP/MP-specific
+    // setCharacterStat). Gated to the editing character's own owner
+    // session or an admin -- same spirit as setRespawnAnchor's admin
+    // gate above, plus a self-edit allowance since this is a
+    // per-character value a player edits on their own token.
+    this.onMessage<SetCharacterVariableValueMessage>("setCharacterVariableValue", (client, { characterId, variableId, value }) => {
       const sender = this.state.players.get(client.sessionId);
       const isSelf = sender?.characterId === characterId;
       if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
 
-      store.updateCharacterStats(characterId, stat, value);
+      store.updateCharacterVariableValue(characterId, variableId, value);
+      const character = store.getCharacter(characterId);
+      if (!character) return;
       for (const player of this.state.players.values()) {
-        if (player.characterId === characterId) player[stat] = value;
+        if (player.characterId === characterId) applyBarsToPlayer(player, character);
       }
     });
 
     // Backs the "Select status effects" context-menu item -- same gating
-    // as setCharacterStat above.
+    // as setCharacterVariableValue above.
     this.onMessage<SetStatusEffectsMessage>("setStatusEffects", (client, { characterId, statusEffects }) => {
       const sender = this.state.players.get(client.sessionId);
       const isSelf = sender?.characterId === characterId;
@@ -273,7 +290,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     });
 
     // Backs the "Edit token properties" context-menu item -- same gating
-    // as setCharacterStat/setStatusEffects above.
+    // as setCharacterVariableValue/setStatusEffects above.
     this.onMessage<SetCharacterTokenMessage>("setCharacterToken", (client, { characterId, color }) => {
       const sender = this.state.players.get(client.sessionId);
       const isSelf = sender?.characterId === characterId;
@@ -329,10 +346,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.tokenColorR = character.token.color[0];
       player.tokenColorG = character.token.color[1];
       player.tokenColorB = character.token.color[2];
-      player.hp = character.hp;
-      player.maxHp = character.maxHp;
-      player.mp = character.mp;
-      player.maxMp = character.maxMp;
+      applyBarsToPlayer(player, character);
       for (const effect of character.statusEffects) {
         const effectState = new StatusEffectState();
         effectState.icon = effect.icon;

@@ -62,10 +62,6 @@ beforeEach(() => {
     ownerAccountId: "account-1",
     name: "Aria",
     token: { color: [1, 0, 0] },
-    hp: 10,
-    maxHp: 10,
-    mp: 10,
-    maxMp: 10,
     statusEffects: [],
     createdAt: 0,
     templateId: null,
@@ -405,6 +401,64 @@ describe("mountCharactersPage", () => {
     await flush();
     expect(character.customSheet!.variables.length).toBe(0);
     expect(character.customSheet!.pages[0].variableIds).not.toContain(newVarId);
+  });
+
+  it("Bars section: Add is disabled with no xOfY variables, only offers xOfY variables once one exists, and add/recolor/delete all persist (\"set up what actually display as bars in game\")", async () => {
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>("#start-blank-btn")!.click();
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // "Core & Variables"
+    await flush();
+
+    // No xOfY variable yet -- a plain "number" var doesn't make Add
+    // enabled either (a bar needs a current AND a max).
+    container.querySelector<HTMLButtonElement>("#add-variable-btn")!.click();
+    await flush();
+    expect(container.querySelector<HTMLButtonElement>("#add-bar-btn")!.disabled).toBe(true);
+    expect(container.querySelector(".bar-hint")).not.toBeNull();
+
+    const typeSelect = container.querySelector<HTMLSelectElement>(".var-type")!;
+    typeSelect.value = "xOfY";
+    typeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+
+    const addBarBtn = container.querySelector<HTMLButtonElement>("#add-bar-btn")!;
+    expect(addBarBtn.disabled).toBe(false);
+    addBarBtn.click();
+    await flush();
+    expect(character.customSheet!.bars).toHaveLength(1);
+    const newVarId = character.customSheet!.variables[0].id;
+    const barVarOptions = Array.from(container.querySelectorAll<HTMLOptionElement>(".bar-var option")).map((o) => o.value);
+    expect(barVarOptions).toEqual([newVarId]); // only xOfY variables offered
+    expect(character.customSheet!.bars![0].variableId).toBe(newVarId);
+
+    const colorInput = container.querySelector<HTMLInputElement>(".bar-color")!;
+    colorInput.value = "#c0392b";
+    colorInput.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(character.customSheet!.bars![0].color.map((c) => Math.round(c * 255))).toEqual([192, 57, 43]);
+
+    container.querySelector<HTMLButtonElement>(".delete-bar-btn")!.click();
+    await flush();
+    expect(character.customSheet!.bars).toHaveLength(0);
+  });
+
+  it("deleting a variable that a bar points at also removes the now-dangling bar entry", async () => {
+    character.customSheet = {
+      name: "Sheet",
+      pages: [{ title: "Overview", markdown: "", variableIds: ["hp"] }],
+      variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }],
+      bars: [{ variableId: "hp", color: [1, 0, 0] }],
+    };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // "Core & Variables"
+    await flush();
+
+    container.querySelector<HTMLButtonElement>(".delete-var-btn")!.click();
+    await flush();
+    expect(character.customSheet!.bars).toHaveLength(0);
   });
 
   it("shows the dependency warning when the cloned-from mod isn't imported, and clears it once imported", async () => {

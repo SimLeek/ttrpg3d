@@ -129,10 +129,6 @@ export interface CharacterRecord {
   ownerAccountId: string;
   name: string;
   token: { color: [number, number, number] };
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
   statusEffects: StatusEffect[];
   createdAt: number;
   /**
@@ -254,10 +250,6 @@ export function createStore(baseDir: string) {
       ownerAccountId,
       name,
       token: { color },
-      hp: 10,
-      maxHp: 10,
-      mp: 10,
-      maxMp: 10,
       statusEffects: [],
       createdAt: Date.now(),
       templateId: null,
@@ -488,12 +480,12 @@ export function createStore(baseDir: string) {
       return createCharacterInternal(accountId, `${account.displayName}'s Character`, colorFromAccountId(accountId));
     },
 
-    /** The click-to-edit write-back (WorldRoom's setCharacterStat handler) -- `stat` is whichever flat numeric field was edited (hp/maxHp/mp/maxMp), never the whole record, so an admin/self edit can't accidentally clobber name/token/statusEffects. No-op for an unknown id, same "stale id, not a crash" spirit as setWorldRespawnAnchor. */
-    updateCharacterStats(id: string, stat: "hp" | "maxHp" | "mp" | "maxMp", value: number): void {
+    /** The click-to-edit write-back (WorldRoom's setCharacterVariableValue handler) -- writes ONE key into variableValues, never the whole record, so an admin/self edit can't accidentally clobber name/token/statusEffects/customSheet. Generalizes the old hp/maxHp/mp/maxMp-specific updateCharacterStats now that bars (and any other in-game-editable value) point at arbitrary sheet variables instead of fixed fields. No-op for an unknown id, same "stale id, not a crash" spirit as setWorldRespawnAnchor. */
+    updateCharacterVariableValue(id: string, variableId: string, value: number): void {
       const characters = loadCharacters();
       const character = characters.find((c) => c.id === id);
       if (!character) return;
-      character[stat] = value;
+      character.variableValues = { ...character.variableValues, [variableId]: value };
       saveCharacters(characters);
     },
 

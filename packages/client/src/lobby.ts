@@ -37,12 +37,13 @@ function randomCharacterColor(): [number, number, number] {
   return [Math.random(), Math.random(), Math.random()];
 }
 
-function colorToHex([r, g, b]: [number, number, number]): string {
+/** Exported -- characters.ts's bar-color picker reuses this exact conversion instead of inventing a second one (this project's one existing color convention: 0-1 floats everywhere except at an `<input type="color">` boundary). */
+export function colorToHex([r, g, b]: [number, number, number]): string {
   const toHex = (c: number) => Math.round(c * 255).toString(16).padStart(2, "0");
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-function hexToColor(hex: string): [number, number, number] {
+export function hexToColor(hex: string): [number, number, number] {
   return [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255];
 }
 

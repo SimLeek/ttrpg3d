@@ -69,10 +69,6 @@ export interface CharacterRecord {
   ownerAccountId: string;
   name: string;
   token: { color: [number, number, number] };
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
   statusEffects: StatusEffect[];
   createdAt: number;
   /** MVP goal item 4 (docs/ROADMAP.md) -- which mod this sheet was last cloned from / depends on as a library; null until picked. */

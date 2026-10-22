@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { renderVariableWidget, buildVariableWidgetHtml, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, xOfYMaxKey } from "./characterSheetWidgets.js";
-import type { CharacterSheetVariableDef } from "@ttrpg3d/shared";
+import { renderVariableWidget, buildVariableWidgetHtml, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
+import { xOfYMaxKey, type CharacterSheetVariableDef } from "@ttrpg3d/shared";
 
 let container: HTMLElement;
 

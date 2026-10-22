@@ -23,7 +23,7 @@ export interface TrackedToken {
   characterId: string;
   /** Whether the LOCAL client owns this token (its own character, or any of theirs once multi-character control exists) -- only an owned token highlights on hover, per the spec. */
   owned: boolean;
-  /** The token's own billboard content plane (characterToken.ts's `mesh`) -- the precise pick target the HP/MP-bar geometric hit-test needs (net.ts checks a pick's `pickedMesh` against this before attempting it). */
+  /** The token's own billboard content plane (characterToken.ts's `mesh`) -- the precise pick target the bar geometric hit-test needs (net.ts checks a pick's `pickedMesh` against this before attempting it). */
   planeMesh: BABYLON.AbstractMesh;
   /**
    * Real request: "even if raycasting the billboard is hard, the player
@@ -33,7 +33,7 @@ export interface TrackedToken {
    * own body -- not register as a hover/highlight/context-menu target at
    * all. These extra meshes (the body box) are additional pick targets for
    * the SAME token, used for highlighting/the context menu; hitting one
-   * does NOT enable the precise HP/MP-bar hit-test (that needs `planeMesh`
+   * does NOT enable the precise bar hit-test (that needs `planeMesh`
    * specifically).
    */
   extraHitboxMeshes?: readonly BABYLON.AbstractMesh[];
@@ -43,7 +43,7 @@ export interface TokenPickResult {
   sessionId: string;
   characterId: string;
   owned: boolean;
-  /** The ray's world-space hit point -- callers (net.ts) transform this into the token's own local space via its mesh's world matrix to do the HP/MP-bar geometric hit-test (characterToken.ts's hitTestLocalPoint). */
+  /** The ray's world-space hit point -- callers (net.ts) transform this into the token's own local space via its mesh's world matrix to do the bar geometric hit-test (characterToken.ts's hitTestLocalPoint). */
   worldPoint: BABYLON.Vector3;
   /** Which exact mesh was hit -- precise bar-click editing only makes sense when this is the token's own `planeMesh`, not one of its coarser `extraHitboxMeshes`. */
   pickedMesh: BABYLON.AbstractMesh;

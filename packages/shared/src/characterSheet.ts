@@ -39,6 +39,23 @@ export interface CharacterSheetPageDef {
 }
 
 /**
+ * Which variables the in-game billboard token shows as fill bars
+ * (MVP goal item 4 follow-up, docs/ROADMAP.md: "HP/MP become DEFAULT
+ * ... not permanent/fixed ... linked to the billboard bars"). Only
+ * `xOfY` variables make sense here (a bar needs a current AND a max
+ * to compute a fill ratio) -- the authoring UI only offers those as
+ * choices, and `resolveCharacterBars` below silently skips a bar
+ * pointing at anything else (stale id, wrong type, or removed
+ * variable -- same "stale id, not a crash" spirit used throughout
+ * this codebase, not an error).
+ */
+export interface CharacterSheetBarDef {
+  variableId: string;
+  /** 0-1 floats, matching this project's one existing color convention (CharacterRecord.token.color, lobby.ts's colorToHex/hexToColor). */
+  color: [number, number, number];
+}
+
+/**
  * A mod's own manifest id IS the template id -- no separate id field
  * here, same as every other mod-identified thing in this codebase
  * (modIds lists, etc.) already works.
@@ -47,6 +64,8 @@ export interface CharacterSheetTemplate {
   name: string;
   pages: CharacterSheetPageDef[];
   variables: CharacterSheetVariableDef[];
+  /** Optional -- customSheet JSON persisted before this field existed won't have it; every reader defaults via `sheet.bars ?? []`, same backward-compat spirit as store.ts's `c.customSheet ?? null`. */
+  bars?: CharacterSheetBarDef[];
 }
 
 /**
@@ -64,6 +83,57 @@ export const RESERVED_BODY_SIZE_VARIABLES: CharacterSheetVariableDef[] = [
   { id: "bodyHeight", label: "Body height", type: "number", default: 1.8 },
   { id: "bodyDepth", label: "Body depth", type: "number", default: 0.6 },
 ];
+
+/**
+ * x-of-y values store BOTH halves in `variableValues` -- the "current"
+ * half lives under the variable's own id, the "max" half lives under
+ * this derived key. Shared between the client (characterSheetWidgets.ts's
+ * widgets, characters.ts's inline-ref rendering) and the server
+ * (resolveCharacterBars below, WorldRoom.ts's click-to-edit) so both
+ * sides agree on where the max half lives without duplicating the
+ * convention.
+ */
+export function xOfYMaxKey(variableId: string): string {
+  return `${variableId}Max`;
+}
+
+function asNumber(value: number | string | undefined, fallback: number): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) return Number(value);
+  return fallback;
+}
+
+export interface ResolvedBar {
+  variableId: string;
+  label: string;
+  value: number;
+  max: number;
+  color: [number, number, number];
+}
+
+/**
+ * Resolves a sheet's configured bars against a character's actual
+ * `variableValues`, for the in-game billboard (characterToken.ts) and
+ * the Colyseus schema sync that feeds it (WorldRoom.ts's onJoin +
+ * setCharacterVariableValue). A bar pointing at a missing or
+ * non-`xOfY` variable is silently skipped -- same "stale id, not a
+ * crash" spirit as computeMissingModDependencies above, since a
+ * variable can be renamed/retyped/deleted after a bar was configured
+ * for it.
+ */
+export function resolveCharacterBars(sheet: Pick<CharacterSheetTemplate, "variables" | "bars"> | null, variableValues: Readonly<Record<string, number | string>>): ResolvedBar[] {
+  if (!sheet) return [];
+  const bars: ResolvedBar[] = [];
+  for (const bar of sheet.bars ?? []) {
+    const def = sheet.variables.find((v) => v.id === bar.variableId);
+    if (!def || def.type !== "xOfY") continue;
+    const defaultFallback = typeof def.default === "number" ? def.default : 0;
+    const value = asNumber(variableValues[def.id] ?? def.default, defaultFallback);
+    const max = asNumber(variableValues[xOfYMaxKey(def.id)] ?? def.max, defaultFallback);
+    bars.push({ variableId: def.id, label: def.label, value, max, color: bar.color });
+  }
+  return bars;
+}
 
 /**
  * Shared by the account-scoped characters page (checked against the

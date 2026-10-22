@@ -223,8 +223,10 @@ describe("WorldRoom", () => {
     const game = trackedGame(`WorldRoom-test-char-game-${Date.now()}`, owner.id);
     const world = trackedWorld(game.id, "Character Test World", "limestone_slab", SLAB_PARAMS);
 
-    it("a join with a real characterId populates the flattened character fields; a missing/unknown one leaves them at defaults and doesn't crash", async () => {
+    it("a join with a real characterId populates the flattened character fields plus the resolved bars from its sheet; a missing/unknown one leaves them at defaults and doesn't crash", async () => {
       const character = store.createCharacter(owner.id, "Aria", [0.5, 0.25, 0.75]);
+      const customSheet = { name: "Aria's Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [0.75, 0.22, 0.17] as [number, number, number] }] };
+      store.updateCharacterSheet(character.id, null, customSheet, { hp: 7 });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
 
       const withCharacter = await colyseus.connectTo(room, { characterId: character.id });
@@ -232,13 +234,13 @@ describe("WorldRoom", () => {
       expect(joined.characterId).toBe(character.id);
       expect(joined.characterName).toBe("Aria");
       expect([joined.tokenColorR, joined.tokenColorG, joined.tokenColorB]).toEqual([0.5, 0.25, 0.75]);
-      expect(joined.hp).toBe(character.hp);
-      expect(joined.maxHp).toBe(character.maxHp);
+      expect(joined.bars).toHaveLength(1);
+      expect(joined.bars[0]).toMatchObject({ variableId: "hp", label: "HP", value: 7, max: 10, colorR: 0.75, colorG: 0.22, colorB: 0.17 });
 
       const withoutCharacter = await colyseus.connectTo(room);
       const joinedBare = room.state.players.get(withoutCharacter.sessionId)!;
       expect(joinedBare.characterId).toBe("");
-      expect(joinedBare.hp).toBe(0);
+      expect(joinedBare.bars).toHaveLength(0);
 
       const withUnknownCharacter = await colyseus.connectTo(room, { characterId: "not-a-real-character" });
       const joinedUnknown = room.state.players.get(withUnknownCharacter.sessionId)!;
@@ -272,27 +274,30 @@ describe("WorldRoom", () => {
       expect(store.getCharacter(joined.characterId)?.ownerAccountId).toBe(freshOwner.id);
     });
 
-    it("setCharacterStat writes back through store.getCharacter and the live Schema field when sent by the character's own owner", async () => {
+    it("setCharacterVariableValue writes back through store.getCharacter and re-resolves the live Schema bar when sent by the character's own owner", async () => {
       const character = store.createCharacter(owner.id, "Statted", [1, 0, 0]);
+      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
+      store.updateCharacterSheet(character.id, null, customSheet, { hp: 10 });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const client = await colyseus.connectTo(room, { characterId: character.id });
 
-      client.send("setCharacterStat", { characterId: character.id, stat: "hp", value: 3 });
+      client.send("setCharacterVariableValue", { characterId: character.id, variableId: "hp", value: 3 });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(room.state.players.get(client.sessionId)!.hp).toBe(3);
-      expect(store.getCharacter(character.id)?.hp).toBe(3);
+      expect(room.state.players.get(client.sessionId)!.bars[0].value).toBe(3);
+      expect(store.getCharacter(character.id)?.variableValues.hp).toBe(3);
     });
 
-    it("setCharacterStat is ignored from a client who is neither the character's own owner session nor an admin", async () => {
+    it("setCharacterVariableValue is ignored from a client who is neither the character's own owner session nor an admin", async () => {
       const character = store.createCharacter(owner.id, "Guarded", [0, 1, 0]);
+      store.updateCharacterSheet(character.id, null, null, { hp: 10 });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const bystander = await colyseus.connectTo(room);
 
-      bystander.send("setCharacterStat", { characterId: character.id, stat: "hp", value: 1 });
+      bystander.send("setCharacterVariableValue", { characterId: character.id, variableId: "hp", value: 1 });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(store.getCharacter(character.id)?.hp).toBe(character.hp);
+      expect(store.getCharacter(character.id)?.variableValues.hp).toBe(10);
     });
 
     it("setCharacterToken writes back through store.getCharacter and the live Schema fields when sent by the character's own owner", async () => {

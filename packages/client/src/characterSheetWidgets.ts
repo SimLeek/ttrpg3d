@@ -39,7 +39,7 @@
 // Pure DOM, no noa dependency -- same "noa-free, unit-testable"
 // convention chatPanel.ts/hotbar.ts already follow.
 
-import type { CharacterSheetVariableDef } from "@ttrpg3d/shared";
+import { xOfYMaxKey, type CharacterSheetVariableDef } from "@ttrpg3d/shared";
 
 export type VariableValueMap = Readonly<Record<string, number | string>>;
 
@@ -51,17 +51,6 @@ function asNumber(value: number | string | undefined, fallback: number): number 
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) return Number(value);
   return fallback;
-}
-
-/**
- * x-of-y values now store BOTH halves in `variableValues` (round 4 --
- * previously the "max" half was read-only, always the variable
- * DEFINITION's own static `def.max`). `xOfYMaxKey` is the convention
- * for where the max half lives; `def.max`/`def.default` are only the
- * INITIAL value before a character has ever set their own.
- */
-export function xOfYMaxKey(variableId: string): string {
-  return `${variableId}Max`;
 }
 
 function xOfYMax(def: CharacterSheetVariableDef, values: VariableValueMap): number {

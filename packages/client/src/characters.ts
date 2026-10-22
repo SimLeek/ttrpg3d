@@ -38,7 +38,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_BODY_SIZE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef } from "@ttrpg3d/shared";
+import { RESERVED_BODY_SIZE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import {
   fetchAvailableMods,
   fetchAccountMods,
@@ -56,6 +56,7 @@ import {
 } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
+import { colorToHex, hexToColor } from "./lobby.js";
 
 const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "xOfY", "text"];
 const SAVE_DEBOUNCE_MS = 500;
@@ -100,6 +101,9 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       .characters-page .variable-def-list input { width: 90px; }
       .characters-page .variable-def-list select.var-pages { min-width: 120px; }
       .characters-page .var-value-label { color: #999; font-size: 0.85em; }
+      .characters-page .bar-def-list { list-style: none; padding: 0; margin: 0 0 8px; }
+      .characters-page .bar-def-list li { display: flex; gap: 6px; align-items: center; padding: 6px; margin-bottom: 4px; background: #2a2a2a; border-radius: 6px; }
+      .characters-page .bar-hint { color: #999; font-size: 0.85em; margin: 4px 0 0; }
       .characters-page .library-hint { color: #999; font-size: 0.85em; margin: 0 0 6px; }
       .characters-page .library-hint code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 3px; }
       .characters-page .library-list { list-style: none; padding: 0; margin: 0; }
@@ -368,6 +372,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
   // ---- the "Core & Variables" tab: body-size + variable definitions --
 
   let variablesSectionEl: HTMLDivElement;
+  let barsSectionEl: HTMLDivElement;
 
   function renderVariablesSection(character: CharacterRecord): void {
     const sheet = character.customSheet!;
@@ -448,6 +453,13 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
         // found live: switching xOfY -> number left both the old
         // xOfY boxes AND a number box on screen at once).
         renderList();
+        // The Bars section's variable dropdown only offers xOfY
+        // variables -- a type change can add/remove this variable
+        // from that set, so it needs a refresh too (a SIBLING
+        // sub-tree, not this list's own ancestor -- same "only rebuild
+        // what's visible, never your own parent" discipline as the
+        // mod-toggle handler refreshing the dependency warning).
+        renderBarsSection(character);
         return;
       }
       saveSheet(character);
@@ -459,8 +471,10 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       const index = Number(button.dataset.index);
       const [removed] = sheet.variables.splice(index, 1);
       for (const page of sheet.pages) page.variableIds = page.variableIds.filter((id) => id !== removed.id);
+      sheet.bars = (sheet.bars ?? []).filter((b) => b.variableId !== removed.id);
       saveSheet(character);
       renderList();
+      renderBarsSection(character);
     });
 
     variablesSectionEl.querySelector<HTMLButtonElement>("#add-variable-btn")!.addEventListener("click", () => {
@@ -469,6 +483,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       sheet.variables.push({ id: `var${n}`, label: `Variable ${n}`, type: "number", default: 0 });
       saveSheet(character);
       renderList();
+      renderBarsSection(character);
     });
   }
 
@@ -490,12 +505,76 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     parent.append(section);
   }
 
+  /**
+   * "Set up what actually display as bars in game ... just a list of
+   * var refs and colors and a color picker." Only `xOfY` variables
+   * are offered as choices -- a bar needs a current AND a max to
+   * compute a fill ratio, so a plain number/text variable can't be
+   * one. Placed right after Variables (bars reference them directly)
+   * and before Libraries.
+   */
+  function renderBarsSection(character: CharacterRecord): void {
+    const sheet = character.customSheet!;
+    sheet.bars ??= [];
+    const xOfYVariables = sheet.variables.filter((v) => v.type === "xOfY");
+
+    barsSectionEl.innerHTML = `
+      <h3>Bars (shown on the in-game token)</h3>
+      <ul class="bar-def-list" id="bar-def-list"></ul>
+      <button type="button" id="add-bar-btn"${xOfYVariables.length === 0 ? " disabled" : ""}>+ Add bar</button>
+      ${xOfYVariables.length === 0 ? `<p class="bar-hint">Add an xOfY variable first.</p>` : ""}
+    `;
+    const listEl = barsSectionEl.querySelector<HTMLUListElement>("#bar-def-list")!;
+
+    function renderList(): void {
+      const bars = sheet.bars!;
+      listEl.innerHTML = bars
+        .map(
+          (b, i) => `
+        <li data-index="${i}">
+          <select class="bar-var" data-field="variableId">${xOfYVariables.map((v) => `<option value="${v.id}"${v.id === b.variableId ? " selected" : ""}>${v.label}</option>`).join("")}</select>
+          <input class="bar-color" data-field="color" type="color" value="${colorToHex(b.color)}" />
+          <button type="button" class="delete-bar-btn" data-index="${i}">Delete</button>
+        </li>`,
+        )
+        .join("");
+    }
+    renderList();
+
+    listEl.addEventListener("change", (event) => {
+      const target = event.target as HTMLInputElement | HTMLSelectElement;
+      const li = target.closest<HTMLLIElement>("li[data-index]");
+      if (!li) return;
+      const bar = sheet.bars![Number(li.dataset.index)];
+      if (target.dataset.field === "variableId") bar.variableId = target.value;
+      else if (target.dataset.field === "color") bar.color = hexToColor(target.value);
+      saveSheet(character);
+    });
+
+    listEl.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".delete-bar-btn");
+      if (!button) return;
+      sheet.bars!.splice(Number(button.dataset.index), 1);
+      saveSheet(character);
+      renderList();
+    });
+
+    barsSectionEl.querySelector<HTMLButtonElement>("#add-bar-btn")?.addEventListener("click", () => {
+      const newBar: CharacterSheetBarDef = { variableId: xOfYVariables[0].id, color: [1, 1, 1] };
+      sheet.bars!.push(newBar);
+      saveSheet(character);
+      renderList();
+    });
+  }
+
   function renderCoreTabContent(character: CharacterRecord): void {
-    sheetTabContentEl.innerHTML = `<div class="sheet-page" id="body-size-section"><h3>Body (core, always present)</h3></div><div class="sheet-page" id="variables-host"></div>`;
+    sheetTabContentEl.innerHTML = `<div class="sheet-page" id="body-size-section"><h3>Body (core, always present)</h3></div><div class="sheet-page" id="variables-host"></div><div class="sheet-page" id="bars-host"></div>`;
     const bodySizeSection = sheetTabContentEl.querySelector<HTMLDivElement>("#body-size-section")!;
     for (const def of RESERVED_BODY_SIZE_VARIABLES) renderVariableRow(bodySizeSection, def, character);
     variablesSectionEl = sheetTabContentEl.querySelector<HTMLDivElement>("#variables-host")!;
     renderVariablesSection(character);
+    barsSectionEl = sheetTabContentEl.querySelector<HTMLDivElement>("#bars-host")!;
+    renderBarsSection(character);
     renderLibrariesSection(sheetTabContentEl);
   }
 
@@ -566,7 +645,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       <div class="variable-row" id="start-template-list"></div>
     `;
     sheetSectionEl.querySelector<HTMLButtonElement>("#start-blank-btn")!.addEventListener("click", () => {
-      character.customSheet = { name: `${character.name}'s Sheet`, pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [] };
+      character.customSheet = { name: `${character.name}'s Sheet`, pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [], bars: [] };
       character.templateId = null;
       selectedSheetTab = 0; // land on the real page just created, not the Core tab
       pageMode = "view";

@@ -43,6 +43,14 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "mp", label: "MP", type: "xOfY", default: 10, max: 10 },
     { id: "str", label: "Strength", type: "number", default: 10 },
   ],
+  // Matches the colors the old hardcoded HP/MP billboard bars used
+  // (#c0392b / #2980b9) -- bars are now configurable per-sheet
+  // (docs/ROADMAP.md item 4 follow-up), but a freshly-cloned default
+  // sheet should still look the same as it always did.
+  bars: [
+    { variableId: "hp", color: [0.753, 0.224, 0.169] },
+    { variableId: "mp", color: [0.161, 0.502, 0.733] },
+  ],
   pages: [
     {
       title: "Overview",

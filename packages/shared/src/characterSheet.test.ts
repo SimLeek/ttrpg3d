@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs } from "./characterSheet.js";
+import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate } from "./characterSheet.js";
 
 describe("computeMissingModDependencies", () => {
   it("returns an empty array when every required mod is available", () => {
@@ -107,5 +107,40 @@ describe("findVariableRefs (MVP goal item 4, round 4 -- inline-in-markdown varia
 
   it("returns an empty array for text with no references", () => {
     expect(findVariableRefs("just prose, no references here")).toEqual([]);
+  });
+});
+
+describe("resolveCharacterBars (replaces the old hardcoded hp/mp billboard bars with configurable var-ref + color bars)", () => {
+  const sheet: CharacterSheetTemplate = {
+    name: "Test",
+    pages: [],
+    variables: [
+      { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 },
+      { id: "str", label: "Strength", type: "number", default: 10 },
+    ],
+    bars: [
+      { variableId: "hp", color: [0.75, 0.22, 0.17] },
+      { variableId: "str", color: [0, 0, 0] }, // not xOfY -- skipped
+      { variableId: "nonexistent", color: [0, 0, 0] }, // stale id -- skipped
+    ],
+  };
+
+  it("resolves an xOfY bar's current/max from variableValues, falling back to the definition's default/max before any value is set", () => {
+    expect(resolveCharacterBars(sheet, {})).toEqual([{ variableId: "hp", label: "HP", value: 10, max: 10, color: [0.75, 0.22, 0.17] }]);
+  });
+
+  it("uses the character's own stored values once set, via the shared xOfYMaxKey convention", () => {
+    expect(resolveCharacterBars(sheet, { hp: 4, [xOfYMaxKey("hp")]: 16 })).toEqual([{ variableId: "hp", label: "HP", value: 4, max: 16, color: [0.75, 0.22, 0.17] }]);
+  });
+
+  it("silently skips a bar pointing at a non-xOfY or missing variable, rather than throwing", () => {
+    const resolved = resolveCharacterBars(sheet, {});
+    expect(resolved).toHaveLength(1);
+    expect(resolved.map((b) => b.variableId)).toEqual(["hp"]);
+  });
+
+  it("returns an empty array when the sheet is null or has no bars configured", () => {
+    expect(resolveCharacterBars(null, {})).toEqual([]);
+    expect(resolveCharacterBars({ variables: [] }, {})).toEqual([]);
   });
 });
