@@ -58,6 +58,20 @@ export interface TokenInteractionHooks {
   openContextMenu: (characterId: string, instanceId: string | undefined, screenX: number, screenY: number) => void;
   /** Opens the HTML <input> overlay (net.ts) at the given viewport coordinates to edit one variable's current value. */
   openStatEditor: (characterId: string, instanceId: string | undefined, variableId: string, screenX: number, screenY: number) => void;
+  /**
+   * Real feedback, two related bugs found live: "if I right click
+   * while in default mode, the context menu pops up instead of me
+   * placing an item... some UI remains after used, like status effect
+   * or token properties. Once the screen is left clicked in select
+   * mode, all of those floating UIs should disappear if they're still
+   * there, and should remain in select mode if there were any, but if
+   * there were not any then it should move to default mode." Closes
+   * any currently-open floating overlay (net.ts's stat-value/color/
+   * status-effect editors, and the context menu) -- returns whether
+   * anything WAS actually open, so the "fire" handler below knows
+   * whether to stay in Select mode or drop back to Default.
+   */
+  closeFloatingUi: () => boolean;
 }
 
 export function installVoxelEditor(
@@ -107,34 +121,60 @@ export function installVoxelEditor(
     { capture: true },
   );
 
+  // Real bug found live: "if I right click while in default mode, the
+  // context menu pops up instead of me placing an item. Those should
+  // be off in default mode... Right clicking or left clicking in
+  // default mode should add or remove blocks as usual, but that
+  // should not happen in select or other modes." Before this fix,
+  // fire/alt-fire ALWAYS checked for a token/bar under the cursor
+  // first, regardless of mode -- harmless back when Default (pointer-
+  // locked, crosshair-based) was the ONLY mode, but wrong now that
+  // Select (modePanel.ts: free cursor) exists specifically FOR token/
+  // UI interaction. `noa.container.hasPointerLock` is the real,
+  // already-established mode signal (currentPickScreenPoint in net.ts
+  // already branches on it) -- Default and Select are now a clean
+  // either/or: block editing ONLY in Default, token/stat/floating-UI
+  // interaction ONLY in Select, never both from the same click.
   noa.inputs.down.on("fire", () => {
+    if (noa.container.hasPointerLock) {
+      const tgt = noa.targetedBlock;
+      if (!tgt) return;
+      const [x, y, z] = tgt.position;
+      noa.setBlock(AIR, x, y, z);
+      onEdit(x, y, z, AIR);
+      return;
+    }
+
     const hoveredStat = tokenInteraction?.pickHoveredStatBar();
     if (hoveredStat) {
       tokenInteraction!.openStatEditor(hoveredStat.characterId, hoveredStat.instanceId, hoveredStat.variableId, lastClickScreen.x, lastClickScreen.y);
       return;
     }
 
-    const tgt = noa.targetedBlock;
-    if (!tgt) return;
-    const [x, y, z] = tgt.position;
-    noa.setBlock(AIR, x, y, z);
-    onEdit(x, y, z, AIR);
+    // Clicked on nothing in particular while in Select mode -- real
+    // request: dismiss any leftover floating UI (status effects/token
+    // properties/stat editor, or the context menu); stay in Select if
+    // something WAS open, otherwise drop back to Default.
+    const hadOpenUi = tokenInteraction?.closeFloatingUi() ?? false;
+    if (!hadOpenUi) noa.container.setPointerLock(true);
   });
 
   noa.inputs.down.on("alt-fire", () => {
-    const picked = tokenInteraction?.pickOwnedToken();
-    if (picked) {
-      tokenInteraction!.openContextMenu(picked.characterId, picked.instanceId, lastClickScreen.x, lastClickScreen.y);
+    if (noa.container.hasPointerLock) {
+      const item = getEquippedItem();
+      if (!item || item.kind !== "place-block") return; // nothing equipped, or a future non-block item kind with no placement behavior
+      const tgt = noa.targetedBlock;
+      if (!tgt) return;
+      const [x, y, z] = tgt.adjacent;
+      if (!isGmModeActive() && aabbsOverlap(blockAabb(x, y, z), playerAabb(noa))) return; // would overlap the player -- refuse, same as the old game (GM mode bypasses this, same as it bypasses terrain collision)
+      noa.setBlock(item.voxelId, x, y, z);
+      onEdit(x, y, z, item.voxelId);
       return;
     }
 
-    const item = getEquippedItem();
-    if (!item || item.kind !== "place-block") return; // nothing equipped, or a future non-block item kind with no placement behavior
-    const tgt = noa.targetedBlock;
-    if (!tgt) return;
-    const [x, y, z] = tgt.adjacent;
-    if (!isGmModeActive() && aabbsOverlap(blockAabb(x, y, z), playerAabb(noa))) return; // would overlap the player -- refuse, same as the old game (GM mode bypasses this, same as it bypasses terrain collision)
-    noa.setBlock(item.voxelId, x, y, z);
-    onEdit(x, y, z, item.voxelId);
+    const picked = tokenInteraction?.pickOwnedToken();
+    if (picked) {
+      tokenInteraction!.openContextMenu(picked.characterId, picked.instanceId, lastClickScreen.x, lastClickScreen.y);
+    }
   });
 }

@@ -124,6 +124,18 @@ export interface WorldConnection {
   leave(): void;
   /** GM-only chat tab (chatPanel.ts, via game.ts's RunningGame.setSeeThroughWalls) -- sends the admin-gated room message; WorldRoom.ts re-checks admin status server-side regardless of what this client claims. */
   setSeeThroughWalls(enabled: boolean): void;
+  /**
+   * MVP goal item 4 follow-up -- real bug found live: dragging your
+   * OWN currently-focused character onto the world is silently
+   * rejected server-side (WorldRoom.ts's placeCharacter: "characterId
+   * === sender.characterId" -- it already has a live position,
+   * wherever you are), but nothing told the player WHY nothing
+   * happened on drop. main.ts (via game.ts's RunningGame) reads this
+   * to keep that one row in the Characters tab non-draggable, so the
+   * confusing "I dropped it and nothing happened" case can't occur in
+   * the first place. Empty string if not yet known/no character.
+   */
+  getFocusedCharacterId(): string;
 }
 
 export async function connectAndStreamWorld(
@@ -614,6 +626,17 @@ export async function connectAndStreamWorld(
         contextMenu.open(x, y, characterIdToOpen, instanceId);
       },
       openStatEditor,
+      // Real request: dismiss any leftover floating overlay on a
+      // Select-mode click that didn't hit anything else -- returns
+      // whether there WAS one, so voxelEditor.ts's "fire" handler
+      // knows whether to stay in Select mode or drop back to Default.
+      closeFloatingUi: () => {
+        const hadStatUi = statInputContainer.innerHTML !== "";
+        statInputContainer.innerHTML = "";
+        const hadContextMenu = contextMenu.isOpen();
+        if (hadContextMenu) contextMenu.close();
+        return hadStatUi || hadContextMenu;
+      },
     },
   );
 
@@ -906,6 +929,11 @@ export async function connectAndStreamWorld(
 
     setSeeThroughWalls(enabled: boolean): void {
       room.send("setSeeThroughWalls", { enabled });
+    },
+
+    getFocusedCharacterId(): string {
+      const state = room.state as WorldStateLike | undefined;
+      return state?.players?.get(room.sessionId)?.characterId ?? "";
     },
   };
 }
