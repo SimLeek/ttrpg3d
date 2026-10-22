@@ -1,6 +1,6 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, BarState, type WorldStateType, type PlayerStateType } from "./WorldState.js";
+import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
+import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType } from "./WorldState.js";
 import type { StatusEffect, CharacterRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
@@ -51,13 +51,48 @@ interface SetCharacterTokenMessage {
   color: [number, number, number];
 }
 
+/** MVP goal item 4 follow-up (drag-and-drop placement). */
+interface PlaceCharacterMessage {
+  characterId: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling). */
+interface FocusCharacterMessage {
+  characterId: string;
+}
+
+/** MVP goal item 4 follow-up (right-click "Delete instance"). */
+interface RemoveCharacterInstanceMessage {
+  characterId: string;
+}
+
 function flatIndex(i: number, j: number, k: number): number {
   return i * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + k;
 }
 
-/** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues and replaces the player's whole `bars` Schema array -- used both at join and after any setCharacterVariableValue edit, so every connected session always sees a freshly-derived list rather than a stale one. */
-function applyBarsToPlayer(player: PlayerStateType, character: CharacterRecord): void {
-  player.bars.clear();
+/**
+ * MVP goal item 4 follow-up (multi-character presence): a session's
+ * currently-FOCUSED character (PlayerStateType) and one of its
+ * placed-but-unfocused `otherCharacters` entries (OtherCharacterStateType)
+ * share this exact field shape (bars + body size), just on two
+ * different Schema types -- this is the structural interface both
+ * `applyBarsToCharacterTarget`/`applyBodySizeToCharacterTarget` below
+ * (and the focus-swap helpers further down) operate against, so the
+ * same logic works for either without duplicating it per-type.
+ */
+interface CharacterSheetTarget {
+  bars: { clear(): void; push(bar: BarStateType): void };
+  bodyWidth: number;
+  bodyHeight: number;
+  bodyDepth: number;
+}
+
+/** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues and replaces the target's whole `bars` Schema array -- used at join, after any setCharacterVariableValue edit, and for a placed otherCharacters entry, so every connected session always sees a freshly-derived list rather than a stale one, regardless of focus state. */
+function applyBarsToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord): void {
+  target.bars.clear();
   for (const resolved of resolveCharacterBars(character.customSheet, character.variableValues)) {
     const bar = new BarState();
     bar.variableId = resolved.variableId;
@@ -67,7 +102,7 @@ function applyBarsToPlayer(player: PlayerStateType, character: CharacterRecord):
     bar.colorR = resolved.color[0];
     bar.colorG = resolved.color[1];
     bar.colorB = resolved.color[2];
-    player.bars.push(bar);
+    target.bars.push(bar);
   }
 }
 
@@ -75,12 +110,86 @@ const DEFAULT_BODY_WIDTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bo
 const DEFAULT_BODY_HEIGHT = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyHeight")!.default as number;
 const DEFAULT_BODY_DEPTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyDepth")!.default as number;
 
-/** Real bug found live ("I tried adjusting the character width/height/depth and that did nothing"): `RESERVED_BODY_SIZE_VARIABLES` existed as editable sheet data but nothing read it onto anything real. Mirrors applyBarsToPlayer's own shape -- used both at join and after any sheet edit (notifyCharacterSheetChanged below), so every connected session always sees the character's CURRENT body size rather than a stale/default one. */
-function applyBodySizeToPlayer(player: PlayerStateType, character: CharacterRecord): void {
+/** Real bug found live ("I tried adjusting the character width/height/depth and that did nothing"): `RESERVED_BODY_SIZE_VARIABLES` existed as editable sheet data but nothing read it onto anything real. Mirrors applyBarsToCharacterTarget's own shape -- used at join, after any sheet edit (notifyCharacterSheetChanged below), and for a placed otherCharacters entry, so every connected session always sees the character's CURRENT body size rather than a stale/default one. */
+function applyBodySizeToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord): void {
   const values = character.variableValues;
-  player.bodyWidth = typeof values.bodyWidth === "number" ? values.bodyWidth : DEFAULT_BODY_WIDTH;
-  player.bodyHeight = typeof values.bodyHeight === "number" ? values.bodyHeight : DEFAULT_BODY_HEIGHT;
-  player.bodyDepth = typeof values.bodyDepth === "number" ? values.bodyDepth : DEFAULT_BODY_DEPTH;
+  target.bodyWidth = typeof values.bodyWidth === "number" ? values.bodyWidth : DEFAULT_BODY_WIDTH;
+  target.bodyHeight = typeof values.bodyHeight === "number" ? values.bodyHeight : DEFAULT_BODY_HEIGHT;
+  target.bodyDepth = typeof values.bodyDepth === "number" ? values.bodyDepth : DEFAULT_BODY_DEPTH;
+}
+
+/** Shared by both directions of a focus-swap (WorldRoom.ts's "focusCharacter" handler) -- copies bars + status effects from one character slot (focused OR an otherCharacters entry) onto another, since both are plain Schema arrays of the exact same element types regardless of which side they live on. */
+function copyBarsAndStatusEffects(
+  from: { bars: Iterable<BarStateType>; statusEffects: Iterable<StatusEffectStateType> },
+  to: { bars: { clear(): void; push(bar: BarStateType): void }; statusEffects: { clear(): void; push(effect: StatusEffectStateType): void } },
+): void {
+  to.bars.clear();
+  for (const bar of from.bars) {
+    const copy = new BarState();
+    copy.variableId = bar.variableId;
+    copy.label = bar.label;
+    copy.value = bar.value;
+    copy.max = bar.max;
+    copy.colorR = bar.colorR;
+    copy.colorG = bar.colorG;
+    copy.colorB = bar.colorB;
+    to.bars.push(copy);
+  }
+  to.statusEffects.clear();
+  for (const effect of from.statusEffects) {
+    const copy = new StatusEffectState();
+    copy.icon = effect.icon;
+    copy.label = effect.label;
+    to.statusEffects.push(copy);
+  }
+}
+
+/** Snapshots a session's CURRENTLY-focused character into a brand-new `OtherCharacterState` -- the first half of a Tab/Shift+Tab focus swap (the player's top-level fields are about to be overwritten by the target character's data, so this has to happen first). */
+function snapshotFocusedCharacter(player: PlayerStateType): OtherCharacterStateType {
+  const snapshot = new OtherCharacterState();
+  snapshot.characterId = player.characterId;
+  snapshot.characterName = player.characterName;
+  snapshot.x = player.x;
+  snapshot.y = player.y;
+  snapshot.z = player.z;
+  snapshot.yaw = player.yaw;
+  snapshot.tokenColorR = player.tokenColorR;
+  snapshot.tokenColorG = player.tokenColorG;
+  snapshot.tokenColorB = player.tokenColorB;
+  snapshot.bodyWidth = player.bodyWidth;
+  snapshot.bodyHeight = player.bodyHeight;
+  snapshot.bodyDepth = player.bodyDepth;
+  copyBarsAndStatusEffects(player, snapshot);
+  return snapshot;
+}
+
+/** Either the player's own focused slot (if `characterId` matches it) or the matching `otherCharacters` entry, whichever currently holds this character -- used anywhere a message names a characterId and needs to update "wherever that character currently lives" rather than assuming it's always the focused one. */
+type CharacterSlot = PlayerStateType | OtherCharacterStateType;
+function resolveCharacterSlot(player: PlayerStateType, characterId: string): CharacterSlot | undefined {
+  if (player.characterId === characterId) return player;
+  return player.otherCharacters.find((o) => o.characterId === characterId);
+}
+
+/** True if `characterId` is one of THIS session's own characters -- its focused one, or any placed otherCharacters entry -- used for the same self-edit allowance setCharacterVariableValue/setStatusEffects/setCharacterToken already had, generalized now that a session can own more than one live character at once. */
+function isSendersOwnCharacter(sender: PlayerStateType | undefined, characterId: string): boolean {
+  return !!sender && resolveCharacterSlot(sender, characterId) !== undefined;
+}
+
+/** The second half of a focus swap -- pulls a (previously-placed) otherCharacters entry's data onto the player's top-level focused fields. Position/yaw included: the newly-focused character should appear where it was last placed/left, same spirit as a fresh join using the respawn anchor. */
+function applyOtherCharacterAsFocused(player: PlayerStateType, other: OtherCharacterStateType): void {
+  player.characterId = other.characterId;
+  player.characterName = other.characterName;
+  player.x = other.x;
+  player.y = other.y;
+  player.z = other.z;
+  player.yaw = other.yaw;
+  player.tokenColorR = other.tokenColorR;
+  player.tokenColorG = other.tokenColorG;
+  player.tokenColorB = other.tokenColorB;
+  player.bodyWidth = other.bodyWidth;
+  player.bodyHeight = other.bodyHeight;
+  player.bodyDepth = other.bodyDepth;
+  copyBarsAndStatusEffects(other, player);
 }
 
 /**
@@ -102,10 +211,17 @@ function applyBodySizeToPlayer(player: PlayerStateType, character: CharacterReco
  * message/poll loop, just a same-process function call. Keyed by
  * characterId since a character can in principle be active in more
  * than one room at once (two tabs/sessions); cleaned up in onLeave.
+ *
+ * MVP goal item 4 follow-up (multi-character presence): a session can
+ * now be responsible for MORE than one characterId at once -- its
+ * currently-focused one, plus any placed-but-unfocused
+ * `otherCharacters` entries -- so a single characterId can map to
+ * EITHER slot depending on current focus state. `notifyCharacterSheetChanged`
+ * below checks both.
  */
 const activeCharacterSessions = new Map<string, Set<{ room: WorldRoom; sessionId: string }>>();
 
-/** Called by server.ts's putCharacterSheet, after persisting, to refresh bars for every live session currently playing this character -- across every WorldRoom that has one, not just the current room (same reason setCharacterVariableValue's own handler now also calls this instead of looping its own room only). No-op (not an error) if the character isn't currently played anywhere. */
+/** Called by server.ts's putCharacterSheet, after persisting, to refresh bars for every live session currently playing this character -- across every WorldRoom that has one, not just the current room (same reason setCharacterVariableValue's own handler now also calls this instead of looping its own room only). Checks both the focused slot and any otherCharacters entry, since the character may currently be either. No-op (not an error) if the character isn't currently played anywhere. */
 export function notifyCharacterSheetChanged(characterId: string): void {
   const sessions = activeCharacterSessions.get(characterId);
   if (!sessions || sessions.size === 0) return;
@@ -114,8 +230,16 @@ export function notifyCharacterSheetChanged(characterId: string): void {
   for (const { room, sessionId } of sessions) {
     const player = room.state.players.get(sessionId);
     if (!player) continue;
-    applyBarsToPlayer(player, character);
-    applyBodySizeToPlayer(player, character);
+    if (player.characterId === characterId) {
+      applyBarsToCharacterTarget(player, character);
+      applyBodySizeToCharacterTarget(player, character);
+      continue;
+    }
+    const other = player.otherCharacters.find((o) => o.characterId === characterId);
+    if (other) {
+      applyBarsToCharacterTarget(other, character);
+      applyBodySizeToCharacterTarget(other, character);
+    }
   }
 }
 
@@ -149,8 +273,36 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // tracked server-side rather than trusting a client-sent flag (checked
   // once at join via store.isWorldAdmin, not re-derived per message).
   private adminSessionIds = new Set<string>();
-  /** This room's own half of the activeCharacterSessions registry above -- which characterId (if any) each currently-connected session is playing, so onLeave can find and remove the right entry. */
-  private sessionCharacterIds = new Map<string, string>();
+  /**
+   * This room's own half of the activeCharacterSessions registry above
+   * -- which characterId(s) each currently-connected session is
+   * responsible for, so onLeave can find and remove the right entries.
+   * MVP goal item 4 follow-up: a Set, not a single id, now that a
+   * session can be responsible for its focused character PLUS any
+   * placed `otherCharacters` entries at once.
+   */
+  private sessionCharacterIds = new Map<string, Set<string>>();
+
+  /** Registers (room, sessionId) as responsible for characterId in BOTH the per-room and the cross-room registries -- used at join (the focused character) and placeCharacter (a newly-placed otherCharacters entry). A characterId already registered for this session is a no-op (Set-backed). */
+  private registerActiveCharacter(sessionId: string, characterId: string): void {
+    const ids = this.sessionCharacterIds.get(sessionId) ?? new Set<string>();
+    ids.add(characterId);
+    this.sessionCharacterIds.set(sessionId, ids);
+    const sessions = activeCharacterSessions.get(characterId) ?? new Set();
+    sessions.add({ room: this, sessionId });
+    activeCharacterSessions.set(characterId, sessions);
+  }
+
+  /** The inverse of registerActiveCharacter -- used by onLeave (every characterId the session held) and removeCharacterInstance (just the one deleted entry). */
+  private unregisterActiveCharacter(sessionId: string, characterId: string): void {
+    this.sessionCharacterIds.get(sessionId)?.delete(characterId);
+    const sessions = activeCharacterSessions.get(characterId);
+    if (!sessions) return;
+    for (const entry of sessions) {
+      if (entry.room === this && entry.sessionId === sessionId) sessions.delete(entry);
+    }
+    if (sessions.size === 0) activeCharacterSessions.delete(characterId);
+  }
 
   // Respawn anchor: real bug found live ("the respawn anchor doesn't seem
   // to persist when switching pages") -- it used to live ONLY in this
@@ -308,29 +460,31 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // per-character value a player edits on their own token.
     this.onMessage<SetCharacterVariableValueMessage>("setCharacterVariableValue", (client, { characterId, variableId, value }) => {
       const sender = this.state.players.get(client.sessionId);
-      const isSelf = sender?.characterId === characterId;
-      if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
+      if (!isSendersOwnCharacter(sender, characterId) && !this.adminSessionIds.has(client.sessionId)) return;
 
       store.updateCharacterVariableValue(characterId, variableId, value);
       notifyCharacterSheetChanged(characterId);
     });
 
     // Backs the "Select status effects" context-menu item -- same gating
-    // as setCharacterVariableValue above.
+    // as setCharacterVariableValue above. MVP goal item 4 follow-up:
+    // resolves to WHICHEVER slot (focused or otherCharacters) currently
+    // holds this character, per player, rather than assuming it's
+    // always the focused one.
     this.onMessage<SetStatusEffectsMessage>("setStatusEffects", (client, { characterId, statusEffects }) => {
       const sender = this.state.players.get(client.sessionId);
-      const isSelf = sender?.characterId === characterId;
-      if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
+      if (!isSendersOwnCharacter(sender, characterId) && !this.adminSessionIds.has(client.sessionId)) return;
 
       store.setCharacterStatusEffects(characterId, statusEffects);
       for (const player of this.state.players.values()) {
-        if (player.characterId !== characterId) continue;
-        player.statusEffects.clear();
+        const target = resolveCharacterSlot(player, characterId);
+        if (!target) continue;
+        target.statusEffects.clear();
         for (const effect of statusEffects) {
           const effectState = new StatusEffectState();
           effectState.icon = effect.icon;
           effectState.label = effect.label;
-          player.statusEffects.push(effectState);
+          target.statusEffects.push(effectState);
         }
       }
     });
@@ -339,16 +493,103 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // as setCharacterVariableValue/setStatusEffects above.
     this.onMessage<SetCharacterTokenMessage>("setCharacterToken", (client, { characterId, color }) => {
       const sender = this.state.players.get(client.sessionId);
-      const isSelf = sender?.characterId === characterId;
-      if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
+      if (!isSendersOwnCharacter(sender, characterId) && !this.adminSessionIds.has(client.sessionId)) return;
 
       store.setCharacterToken(characterId, color);
       for (const player of this.state.players.values()) {
-        if (player.characterId !== characterId) continue;
-        player.tokenColorR = color[0];
-        player.tokenColorG = color[1];
-        player.tokenColorB = color[2];
+        const target = resolveCharacterSlot(player, characterId);
+        if (!target) continue;
+        target.tokenColorR = color[0];
+        target.tokenColorG = color[1];
+        target.tokenColorB = color[2];
       }
+    });
+
+    // MVP goal item 4 follow-up (drag-and-drop character placement):
+    // drops one of the SENDER'S OWN characters (never someone else's --
+    // no admin override, matching linkCharacterToGame's own self-
+    // service shape) at a world position. The sender's live `x/y/z` is
+    // always their FOCUSED character's position (PlayerState's own
+    // meaning, unchanged) -- distance is re-validated server-side
+    // against that, never trusting the client's own pre-check, same
+    // "light validation on meaningful actions" spirit as
+    // setRespawnAnchor's not-underground check. Placing a character
+    // that's already placed just moves its existing entry; placing the
+    // currently-focused character itself makes no sense (it already
+    // has a live position -- wherever you are) and is rejected.
+    this.onMessage<PlaceCharacterMessage>("placeCharacter", (client, { characterId, x, y, z }) => {
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender || characterId === sender.characterId) return;
+      const character = store.getCharacter(characterId);
+      if (!character || character.ownerAccountId !== sender.accountId) return;
+
+      const dx = x - sender.x;
+      const dy = y - sender.y;
+      const dz = z - sender.z;
+      if (Math.sqrt(dx * dx + dy * dy + dz * dz) > MAX_CHARACTER_PLACEMENT_DISTANCE) return;
+
+      let other = sender.otherCharacters.find((o) => o.characterId === characterId);
+      if (!other) {
+        other = new OtherCharacterState();
+        other.characterId = character.id;
+        other.characterName = character.name;
+        other.tokenColorR = character.token.color[0];
+        other.tokenColorG = character.token.color[1];
+        other.tokenColorB = character.token.color[2];
+        for (const effect of character.statusEffects) {
+          const effectState = new StatusEffectState();
+          effectState.icon = effect.icon;
+          effectState.label = effect.label;
+          other.statusEffects.push(effectState);
+        }
+        sender.otherCharacters.push(other);
+        this.registerActiveCharacter(client.sessionId, characterId);
+      }
+      other.x = x;
+      other.y = y;
+      other.z = z;
+      applyBarsToCharacterTarget(other, character);
+      applyBodySizeToCharacterTarget(other, character);
+    });
+
+    // MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling): self-only
+    // (must be one of the SENDER'S OWN placed otherCharacters entries --
+    // no-op, not an error, if it's already focused or isn't one of
+    // theirs at all). Swaps the currently-focused character's live data
+    // into a fresh otherCharacters entry, and the target's stored data
+    // onto the top-level focused fields -- never a different physics
+    // entity (noa.playerEntity stays the one and only), purely a
+    // client-side teleport+relabel in response to this.
+    this.onMessage<FocusCharacterMessage>("focusCharacter", (client, { characterId }) => {
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender || characterId === sender.characterId) return;
+      const targetIndex = sender.otherCharacters.findIndex((o) => o.characterId === characterId);
+      if (targetIndex === -1) return;
+
+      const target = sender.otherCharacters[targetIndex];
+      const previouslyFocused = snapshotFocusedCharacter(sender);
+      applyOtherCharacterAsFocused(sender, target);
+      sender.otherCharacters.splice(targetIndex, 1);
+      sender.otherCharacters.push(previouslyFocused);
+    });
+
+    // MVP goal item 4 follow-up (right-click context menu "Delete
+    // instance"): removes the LIVE 3D instance only -- never the
+    // character record or its game link (those are PR A's REST-backed
+    // deleteCharacter/unlinkCharacterFromGame, a completely separate
+    // action). Self-only. Real request: "make it so that the player
+    // cannot delete the character instance they're controlling, since
+    // that keeps at least one controllable instance" -- re-enforced
+    // here server-side, never trusting the client-side menu's own
+    // disabled state.
+    this.onMessage<RemoveCharacterInstanceMessage>("removeCharacterInstance", (client, { characterId }) => {
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender || characterId === sender.characterId) return;
+      const index = sender.otherCharacters.findIndex((o) => o.characterId === characterId);
+      if (index === -1) return;
+
+      sender.otherCharacters.splice(index, 1);
+      this.unregisterActiveCharacter(client.sessionId, characterId);
     });
   }
 
@@ -374,6 +615,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     const isAdmin = store.isWorldAdmin(this.worldId, options?.accountId);
     if (isAdmin) this.adminSessionIds.add(client.sessionId);
     player.isAdmin = isAdmin;
+    // Mirrors GameState.ts's own presence.accountId (GameRoom.ts) -- MVP goal item 4 follow-up: needed so placeCharacter can verify ownership.
+    player.accountId = options?.accountId ?? "";
 
     // MVP goal items 1-2: flattened once at join, same precedent as isAdmin
     // above. Real request found live: a characterless join used to leave
@@ -392,12 +635,9 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.tokenColorR = character.token.color[0];
       player.tokenColorG = character.token.color[1];
       player.tokenColorB = character.token.color[2];
-      applyBarsToPlayer(player, character);
-      applyBodySizeToPlayer(player, character);
-      this.sessionCharacterIds.set(client.sessionId, character.id);
-      const sessions = activeCharacterSessions.get(character.id) ?? new Set();
-      sessions.add({ room: this, sessionId: client.sessionId });
-      activeCharacterSessions.set(character.id, sessions);
+      applyBarsToCharacterTarget(player, character);
+      applyBodySizeToCharacterTarget(player, character);
+      this.registerActiveCharacter(client.sessionId, character.id);
       for (const effect of character.statusEffects) {
         const effectState = new StatusEffectState();
         effectState.icon = effect.icon;
@@ -412,15 +652,12 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.adminSessionIds.delete(client.sessionId);
-    const characterId = this.sessionCharacterIds.get(client.sessionId);
-    if (characterId) {
-      const sessions = activeCharacterSessions.get(characterId);
-      if (sessions) {
-        for (const entry of sessions) {
-          if (entry.room === this && entry.sessionId === client.sessionId) sessions.delete(entry);
-        }
-        if (sessions.size === 0) activeCharacterSessions.delete(characterId);
-      }
+    // MVP goal item 4 follow-up: a session can now hold more than one
+    // characterId (focused + any placed otherCharacters) -- unregister
+    // all of them, not just one.
+    const characterIds = this.sessionCharacterIds.get(client.sessionId);
+    if (characterIds) {
+      for (const characterId of characterIds) this.unregisterActiveCharacter(client.sessionId, characterId);
       this.sessionCharacterIds.delete(client.sessionId);
     }
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);

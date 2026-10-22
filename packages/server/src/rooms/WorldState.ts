@@ -75,6 +75,36 @@ export const BarState = schema(
   "BarState",
 );
 
+/**
+ * MVP goal item 4 follow-up (drag-and-drop placement + Tab/Shift+Tab
+ * focus cycling): one of a session's OWN characters that's present in
+ * the world but not the one currently being controlled. Deliberately
+ * mirrors PlayerState's own per-character fields (bars/body size/token
+ * color/status effects) rather than reusing PlayerState itself --
+ * there's no live "pos" input for one of these (placement/cycling are
+ * the only things that ever move it), so it has no isAdmin/accountId/
+ * otherCharacters of its own.
+ */
+export const OtherCharacterState = schema(
+  {
+    characterId: t.string().default(""),
+    characterName: t.string().default(""),
+    x: t.number().default(0),
+    y: t.number().default(0),
+    z: t.number().default(0),
+    yaw: t.number().default(0),
+    tokenColorR: t.number().default(0),
+    tokenColorG: t.number().default(0),
+    tokenColorB: t.number().default(0),
+    bars: t.array(BarState),
+    bodyWidth: t.number().default(0.6),
+    bodyHeight: t.number().default(1.8),
+    bodyDepth: t.number().default(0.6),
+    statusEffects: t.array(StatusEffectState),
+  },
+  "OtherCharacterState",
+);
+
 export const PlayerState = schema(
   {
     name: t.string().default("Player"),
@@ -84,6 +114,8 @@ export const PlayerState = schema(
     yaw: t.number().default(0),
     /** GM admin-override escape hatch (core/mod-boundary plan) -- set once in WorldRoom.onJoin from store.isWorldAdmin, never re-derived from anything the client sends. */
     isAdmin: t.boolean().default(false),
+    /** Mirrors GameState.ts's own presence.accountId (GameRoom.ts) -- same "never trusted for anything auth-related beyond a fresh store check" rule. MVP goal item 4 follow-up: needed so `placeCharacter` can verify the sender actually owns the character they're placing. */
+    accountId: t.string().default(""),
     /**
      * MVP goal items 1-2 (docs/ROADMAP.md): flattened from store.ts's
      * CharacterRecord once at join (same precedent as isAdmin/respawn-anchor
@@ -114,6 +146,8 @@ export const PlayerState = schema(
     bodyHeight: t.number().default(1.8),
     bodyDepth: t.number().default(0.6),
     statusEffects: t.array(StatusEffectState),
+    /** MVP goal item 4 follow-up -- this session's own characters present in the world but not currently focused/controlled. See OtherCharacterState's own doc above. */
+    otherCharacters: t.array(OtherCharacterState),
   },
   "PlayerState",
 );
@@ -138,3 +172,4 @@ export type PlayerStateType = InstanceType<typeof PlayerState>;
 export type PlayerMap = MapSchema<PlayerStateType>;
 export type StatusEffectStateType = InstanceType<typeof StatusEffectState>;
 export type BarStateType = InstanceType<typeof BarState>;
+export type OtherCharacterStateType = InstanceType<typeof OtherCharacterState>;

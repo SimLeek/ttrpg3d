@@ -371,6 +371,133 @@ describe("WorldRoom", () => {
     });
   });
 
+  describe("multi-character presence: placement, focus cycling, instance delete (MVP goal item 4 follow-up)", () => {
+    const owner = trackedAccount(`WorldRoom-test-multi-owner-${Date.now()}`);
+    const game = trackedGame(`WorldRoom-test-multi-game-${Date.now()}`, owner.id);
+    const world = trackedWorld(game.id, "Multi-Character Test World", "limestone_slab", SLAB_PARAMS);
+
+    it("placeCharacter adds a new otherCharacters entry for one of the sender's OWN other characters, within range of their focused position", async () => {
+      const focused = store.createCharacter(owner.id, "Focused", [1, 0, 0]);
+      const placed = store.createCharacter(owner.id, "Placed", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: placed.id, x: player.x + 2, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(1);
+      expect(player.otherCharacters[0]).toMatchObject({ characterId: placed.id, characterName: "Placed", x: player.x + 2 });
+    });
+
+    it("placeCharacter rejects a drop farther than MAX_CHARACTER_PLACEMENT_DISTANCE from the sender's own live position (never trusts a client-side distance check)", async () => {
+      const focused = store.createCharacter(owner.id, "FarFocused", [1, 0, 0]);
+      const placed = store.createCharacter(owner.id, "FarPlaced", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: placed.id, x: player.x + 9999, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(0);
+    });
+
+    it("placeCharacter rejects a character owned by someone else -- you can only ever place your OWN characters", async () => {
+      const focused = store.createCharacter(owner.id, "SelfFocused", [1, 0, 0]);
+      const otherOwner = trackedAccount(`WorldRoom-test-multi-otherowner-${Date.now()}`);
+      const notMine = store.createCharacter(otherOwner.id, "NotMine", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: notMine.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(0);
+    });
+
+    it("focusCharacter swaps the focused character and a placed otherCharacters entry's data (position, body size, bars all move with it)", async () => {
+      const focused = store.createCharacter(owner.id, "WasFocused", [1, 0, 0]);
+      const toFocus = store.createCharacter(owner.id, "WillBeFocused", [0, 1, 0]);
+      store.updateCharacterSheet(toFocus.id, null, null, { bodyWidth: 1.0, bodyHeight: 2.0, bodyDepth: 1.0 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      const placedAt = { x: player.x + 1, y: player.y, z: player.z + 1 };
+      client.send("placeCharacter", { characterId: toFocus.id, ...placedAt });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      client.send("focusCharacter", { characterId: toFocus.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(toFocus.id);
+      expect([player.x, player.y, player.z]).toEqual([placedAt.x, placedAt.y, placedAt.z]);
+      expect(player.bodyHeight).toBe(2.0);
+      expect(player.otherCharacters).toHaveLength(1);
+      expect(player.otherCharacters[0].characterId).toBe(focused.id); // the previously-focused one, snapshotted
+    });
+
+    it("focusCharacter is a no-op for a characterId that isn't one of the sender's own placed characters", async () => {
+      const focused = store.createCharacter(owner.id, "StaysFocused", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("focusCharacter", { characterId: "not-a-real-character" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(focused.id);
+    });
+
+    it("removeCharacterInstance deletes a placed otherCharacters entry but never the character record itself (right-click 'Delete instance' -- not deleteCharacter/unlinkCharacterFromGame)", async () => {
+      const focused = store.createCharacter(owner.id, "KeepsFocus", [1, 0, 0]);
+      const toRemove = store.createCharacter(owner.id, "ToRemove", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: toRemove.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.otherCharacters).toHaveLength(1);
+
+      client.send("removeCharacterInstance", { characterId: toRemove.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.otherCharacters).toHaveLength(0);
+      expect(store.getCharacter(toRemove.id)).toBeDefined();
+    });
+
+    it("removeCharacterInstance refuses to delete the character the sender is currently controlling -- real request: keep at least one controllable instance", async () => {
+      const focused = store.createCharacter(owner.id, "CannotSelfDelete", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("removeCharacterInstance", { characterId: focused.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(focused.id); // unchanged -- still connected and playing as this character
+    });
+
+    it("notifyCharacterSheetChanged refreshes a placed otherCharacters entry's bars too, not just the focused character", async () => {
+      const focused = store.createCharacter(owner.id, "FocusedForRefresh", [1, 0, 0]);
+      const placedChar = store.createCharacter(owner.id, "PlacedForRefresh", [0, 1, 0]);
+      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
+      store.updateCharacterSheet(placedChar.id, null, customSheet, { hp: 10 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: placedChar.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.otherCharacters[0].bars[0].value).toBe(10);
+
+      store.updateCharacterSheet(placedChar.id, null, customSheet, { hp: 2 });
+      notifyCharacterSheetChanged(placedChar.id);
+
+      expect(player.otherCharacters[0].bars[0].value).toBe(2);
+    });
+  });
+
   describe("mod load mechanism (MVP goal item 3, docs/ROADMAP.md)", () => {
     it("a world whose PARENT GAME has the example-noop mod enabled has it actually registered when the world's room is created (per-GAME scope, not per-world -- real correction, 2026-10-17)", async () => {
       const owner = trackedAccount(`WorldRoom-test-mod-owner-${Date.now()}`);
