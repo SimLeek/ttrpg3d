@@ -44,6 +44,24 @@ interface BarLike {
   colorB: number;
 }
 
+/** Mirrors WorldState.ts's OtherCharacterState -- one of a session's OWN characters present in the world but not currently focused/controlled (MVP goal item 4 follow-up: drag-and-drop placement + Tab/Shift+Tab focus cycling). Same per-character fields RemotePlayerLike has, minus `name` (the session's own display name has no bearing on a specific OTHER character) and `isAdmin`/`accountId`/`otherCharacters` (irrelevant to a non-focused entry). */
+interface OtherCharacterLike {
+  characterId: string;
+  characterName: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  tokenColorR: number;
+  tokenColorG: number;
+  tokenColorB: number;
+  bars: BarLike[];
+  bodyWidth: number;
+  bodyHeight: number;
+  bodyDepth: number;
+  statusEffects: StatusEffectLike[];
+}
+
 interface RemotePlayerLike {
   name: string;
   x: number;
@@ -61,6 +79,8 @@ interface RemotePlayerLike {
   bodyWidth: number;
   bodyHeight: number;
   bodyDepth: number;
+  /** MVP goal item 4 follow-up (multi-character presence) -- this session's OWN placed-but-unfocused characters. See OtherCharacterLike's own doc. */
+  otherCharacters: OtherCharacterLike[];
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -241,6 +261,18 @@ export async function connectAndStreamWorld(
     return players?.get(room!.sessionId)?.characterId ?? "";
   }
 
+  /** MVP goal item 4 follow-up (multi-character presence): the stat-value/color/status-effect editors below used to only ever find a characterId among players' FOCUSED slots -- a real gap now that a session's otherCharacters entries are also pickable/editable (right-click an un-focused placed character, same as any other owned token). Checks both. */
+  function findCharacterLike(characterId: string): RemotePlayerLike | OtherCharacterLike | undefined {
+    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
+    if (!players) return undefined;
+    for (const p of players.values()) {
+      if (p.characterId === characterId) return p;
+      const other = p.otherCharacters.find((o) => o.characterId === characterId);
+      if (other) return other;
+    }
+    return undefined;
+  }
+
   const contextMenuContainer = document.createElement("div");
   document.body.appendChild(contextMenuContainer);
   const contextMenu = mountCharacterContextMenu(contextMenuContainer, {
@@ -254,6 +286,15 @@ export async function connectAndStreamWorld(
     onSelectStatusEffects: (characterId) => {
       openStatusEffectsEditor(characterId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
     },
+    // MVP goal item 4 follow-up: real request -- "add a 'delete' to the
+    // right click character menu, which will delete the instance in 3d
+    // in the game but not the link or character." This button only
+    // ever gets enabled for one of OUR OWN otherCharacters entries (see
+    // the `canDelete` passed to contextMenu.open below), so no extra
+    // gating needed here.
+    onDeleteInstance: (characterId) => {
+      room!.send("removeCharacterInstance", { characterId });
+    },
   });
   let lastMenuOpenScreen = { x: 0, y: 0 };
 
@@ -266,8 +307,7 @@ export async function connectAndStreamWorld(
     const input = document.createElement("input");
     input.type = "number";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; width:60px; font-size:14px; z-index:1001;`;
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    const current = Array.from(players?.values() ?? []).find((p) => p.characterId === characterIdToEdit);
+    const current = findCharacterLike(characterIdToEdit);
     const currentBar = current?.bars.find((b) => b.variableId === variableId);
     input.value = String(currentBar?.value ?? 0);
     statInputContainer.innerHTML = "";
@@ -320,8 +360,7 @@ export async function connectAndStreamWorld(
       { icon: "stun", label: "Stunned" },
       { icon: "blessed", label: "Blessed" },
     ];
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    const current = Array.from(players?.values() ?? []).find((p) => p.characterId === characterIdToEdit);
+    const current = findCharacterLike(characterIdToEdit);
     const activeLabels = new Set((current?.statusEffects ?? []).map((e) => e.label));
 
     const panel = document.createElement("div");
@@ -413,8 +452,8 @@ export async function connectAndStreamWorld(
     return changed;
   }
   const trackedTokens: TrackedToken[] = [];
-  let hoveredSessionId: string | undefined;
-  let hoveredBarSessionId: string | undefined;
+  let hoveredTokenKey: string | undefined;
+  let hoveredBarTokenKey: string | undefined;
 
   /**
    * Real bug found live, confirmed via direct debug logging (not guessed):
@@ -456,20 +495,41 @@ export async function connectAndStreamWorld(
     const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
     if (!players) return;
     for (const [sessionId, p] of players) {
+      const owned = sessionId === room!.sessionId;
       const token = remoteTokens.get(sessionId);
-      if (!token) continue;
-      // The body box (local: playerBodyMesh.mesh; remote: remoteBodyMeshes)
-      // is an EXTRA, coarser pick target for the same token -- see
-      // tokenPicking.ts's TrackedToken doc for the real "the player should
-      // be easier [to pick than the thin billboard]" request this answers.
-      const bodyMesh = sessionId === room!.sessionId ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
-      trackedTokens.push({
-        sessionId,
-        characterId: p.characterId,
-        owned: !!p.characterId && p.characterId === myResolvedCharacterId(),
-        planeMesh: token.mesh,
-        extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
-      });
+      if (token) {
+        // The body box (local: playerBodyMesh.mesh; remote: remoteBodyMeshes)
+        // is an EXTRA, coarser pick target for the same token -- see
+        // tokenPicking.ts's TrackedToken doc for the real "the player should
+        // be easier [to pick than the thin billboard]" request this answers.
+        const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
+        trackedTokens.push({
+          sessionId,
+          characterId: p.characterId,
+          tokenKey: sessionId,
+          owned: !!p.characterId && owned,
+          planeMesh: token.mesh,
+          extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
+        });
+      }
+      // MVP goal item 4 follow-up (multi-character presence): each
+      // placed-but-unfocused otherCharacters entry is its own separate
+      // pickable token, keyed by characterId (see the matching render
+      // loop below) -- owned by the SAME session that holds it, never
+      // by characterId identity (one session can own several at once).
+      for (const other of p.otherCharacters) {
+        const otherToken = remoteTokens.get(other.characterId);
+        if (!otherToken) continue;
+        const otherBodyMesh = remoteBodyMeshes.get(other.characterId);
+        trackedTokens.push({
+          sessionId,
+          characterId: other.characterId,
+          tokenKey: other.characterId,
+          owned,
+          planeMesh: otherToken.mesh,
+          extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
+        });
+      }
     }
   }
 
@@ -481,15 +541,15 @@ export async function connectAndStreamWorld(
    * the exact same "which owned token's bar, if any, is at this screen
    * point" answer, just at different moments (continuously vs. on click).
    */
-  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; sessionId: string; variableId: string } | undefined {
+  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; variableId: string } | undefined {
     const result = pickToken(scene, trackedTokens, screenPoint);
     if (!result?.owned) return undefined;
-    const token = remoteTokens.get(result.sessionId);
+    const token = remoteTokens.get(result.tokenKey);
     if (!token) return undefined;
     if (result.pickedMesh !== token.mesh) return undefined; // hit the body box (the coarser extraHitboxMeshes target), not the billboard plane -- not precise enough for bar editing
     const localPoint = BABYLON.Vector3.TransformCoordinates(result.worldPoint, token.mesh.getWorldMatrix().clone().invert());
     const variableId = token.hitTestLocalPoint(localPoint.x, localPoint.y);
-    return variableId ? { characterId: result.characterId, sessionId: result.sessionId, variableId } : undefined;
+    return variableId ? { characterId: result.characterId, tokenKey: result.tokenKey, variableId } : undefined;
   }
 
   // ---- voxel edits: apply locally immediately (installVoxelEditor already
@@ -517,7 +577,14 @@ export async function connectAndStreamWorld(
       },
       openContextMenu: (characterIdToOpen, x, y) => {
         lastMenuOpenScreen = { x, y };
-        contextMenu.open(x, y, characterIdToOpen);
+        // Only ever reached for an OWNED token (pickOwnedToken's own
+        // gate, voxelEditor.ts) -- so "not the one I'm currently
+        // focused on" here can only mean one of MY OWN otherCharacters
+        // entries, never someone else's character. Real request: "make
+        // it so that the player cannot delete the character instance
+        // they're controlling."
+        const canDelete = characterIdToOpen !== myResolvedCharacterId();
+        contextMenu.open(x, y, characterIdToOpen, canDelete);
       },
       openStatEditor,
     },
@@ -648,41 +715,107 @@ export async function connectAndStreamWorld(
         statusEffects: Array.from(p.statusEffects ?? []),
       });
     }
-    for (const [sessionId, eid] of remoteEntities) {
-      if (!seen.has(sessionId)) {
+
+    // MVP goal item 4 follow-up (multi-character presence): every
+    // player's placed-but-unfocused otherCharacters entries each get
+    // their own static box+token, built/updated/resized exactly like a
+    // remote player's focused slot above -- just keyed by characterId
+    // instead of sessionId (a character belongs to exactly one
+    // account, so this can't collide across sessions in practice, same
+    // accepted-edge-case precedent as WorldRoom.ts's own
+    // activeCharacterSessions registry). Never physics-driven
+    // (doPhysics=false, same as any ordinary remote player) -- these
+    // only ever move via an explicit placeCharacter/focusCharacter
+    // message, never on their own.
+    for (const [, p] of players) {
+      for (const other of p.otherCharacters) {
+        const key = other.characterId;
+        seen.add(key);
+
+        let eid = remoteEntities.get(key);
+        let material = remoteMaterials.get(key);
+        let token = remoteTokens.get(key);
+        if (eid === undefined || !material || !token) {
+          material = new BABYLON.StandardMaterial(`otherCharacterMat-${key}`, scene);
+          material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+          remoteMaterials.set(key, material);
+
+          const mesh = BABYLON.MeshBuilder.CreateBox(`other-${key}`, { width: other.bodyWidth, height: other.bodyHeight, depth: other.bodyDepth }, scene);
+          mesh.material = material;
+          eid = noa.entities.add([other.x, other.y, other.z], other.bodyWidth, other.bodyHeight, mesh, [0, other.bodyHeight / 2, 0], false, false);
+          remoteEntities.set(key, eid);
+          remoteBodyMeshes.set(key, mesh);
+          appliedBodySizes.set(key, [other.bodyWidth, other.bodyHeight, other.bodyDepth]);
+          const anchor = createBodyAnchor(mesh);
+          remoteTokenAnchors.set(key, anchor);
+
+          token = createCharacterToken(scene, other.characterName);
+          token.mesh.parent = anchor;
+          token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(other.bodyHeight), 0);
+          token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+          noa.rendering.addMeshToScene(token.mesh, false);
+          remoteTokens.set(key, token);
+        } else {
+          noa.entities.setPosition(eid, [other.x, other.y, other.z]);
+          material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+          if (bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth)) {
+            resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth);
+            token.mesh.position.y = tokenYOffsetFor(other.bodyHeight);
+            token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+          }
+        }
+
+        token.update({
+          name: other.characterName,
+          bars: toTokenBars(other.bars),
+          statusEffects: Array.from(other.statusEffects ?? []),
+        });
+      }
+    }
+
+    // MVP goal item 4 follow-up: `key` here is either a sessionId (a
+    // focused slot) or a characterId (an otherCharacters entry) -- both
+    // namespaces share these same Maps (see the render loops above),
+    // and this cleanup is identity-agnostic: anything no longer in
+    // `seen` this tick gets disposed, regardless of which kind of key
+    // it is. This is what cleans up a focus-swapped-out or
+    // removeCharacterInstance-deleted otherCharacters entry, with no
+    // separate cleanup code needed for either.
+    for (const [key, eid] of remoteEntities) {
+      if (!seen.has(key)) {
         // deleteEntity is inherited from ent-comp's ECS base class -- see
         // the same cast rationale in movement/PlayerController.ts.
         (noa.entities as unknown as { deleteEntity(id: number): void }).deleteEntity(eid);
-        remoteEntities.delete(sessionId);
-        remoteBodyMeshes.delete(sessionId); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
-        appliedBodySizes.delete(sessionId);
-        remoteTokenAnchors.get(sessionId)?.dispose();
-        remoteTokenAnchors.delete(sessionId);
-        remoteTokens.get(sessionId)?.dispose();
-        remoteTokens.delete(sessionId);
-        remoteMaterials.get(sessionId)?.dispose();
-        remoteMaterials.delete(sessionId);
+        remoteEntities.delete(key);
+        remoteBodyMeshes.delete(key); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
+        appliedBodySizes.delete(key);
+        remoteTokenAnchors.get(key)?.dispose();
+        remoteTokenAnchors.delete(key);
+        remoteTokens.get(key)?.dispose();
+        remoteTokens.delete(key);
+        remoteMaterials.get(key)?.dispose();
+        remoteMaterials.delete(key);
       }
     }
 
     rebuildTrackedTokens();
     const screenPoint = currentPickScreenPoint();
     const picked = pickToken(scene, trackedTokens, screenPoint);
-    const nextHovered = picked?.owned ? picked.sessionId : undefined;
-    if (nextHovered !== hoveredSessionId) {
-      if (hoveredSessionId) setHighlight(hoveredSessionId, false);
+    const nextHovered = picked?.owned ? picked.tokenKey : undefined;
+    if (nextHovered !== hoveredTokenKey) {
+      if (hoveredTokenKey) setHighlight(hoveredTokenKey, false);
       if (nextHovered) setHighlight(nextHovered, true);
-      hoveredSessionId = nextHovered;
+      hoveredTokenKey = nextHovered;
     }
 
     // Real request: the bar itself should show feedback for whichever one
     // is specifically under the cursor, same spirit as the coarser token/
     // body-box outline above.
     const hoveredBar = resolveHoveredBar(screenPoint);
-    if (hoveredBar?.sessionId !== hoveredBarSessionId) {
-      if (hoveredBarSessionId) remoteTokens.get(hoveredBarSessionId)?.setHoveredBar(undefined);
-      if (hoveredBar) remoteTokens.get(hoveredBar.sessionId)?.setHoveredBar(hoveredBar.variableId);
-      hoveredBarSessionId = hoveredBar?.sessionId;
+    if (hoveredBar?.tokenKey !== hoveredBarTokenKey) {
+      if (hoveredBarTokenKey) remoteTokens.get(hoveredBarTokenKey)?.setHoveredBar(undefined);
+      if (hoveredBar) remoteTokens.get(hoveredBar.tokenKey)?.setHoveredBar(hoveredBar.variableId);
+      hoveredBarTokenKey = hoveredBar?.tokenKey;
     }
   });
 
@@ -696,9 +829,9 @@ export async function connectAndStreamWorld(
   // feature -- not hand-rolled) is a much more visible "this is
   // interactable" indicator, applied to BOTH meshes so whichever one the
   // cursor is actually over still shows the SAME obvious feedback.
-  function setHighlight(sessionId: string, on: boolean): void {
-    const bodyMesh = sessionId === room!.sessionId ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
-    const planeMesh = remoteTokens.get(sessionId)?.mesh;
+  function setHighlight(tokenKey: string, on: boolean): void {
+    const bodyMesh = tokenKey === room!.sessionId ? playerBodyMesh.mesh : remoteBodyMeshes.get(tokenKey);
+    const planeMesh = remoteTokens.get(tokenKey)?.mesh;
     for (const mesh of [bodyMesh, planeMesh]) {
       if (!mesh) continue;
       mesh.renderOutline = on;

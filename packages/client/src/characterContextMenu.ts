@@ -21,11 +21,20 @@ export interface CharacterContextMenuCallbacks {
   onOpenCharacterSheet(characterId: string): void;
   onEditTokenProperties(characterId: string): void;
   onSelectStatusEffects(characterId: string): void;
+  /** MVP goal item 4 follow-up -- real request: "add a 'delete' to the right click character menu, which will delete the instance in 3d in the game but not the link or character." Only ever invoked when `open()`'s own `canDelete` was true for this character (see its own doc) -- never trust that alone, though; net.ts's own "removeCharacterInstance" handler re-enforces the same rule server-side (WorldRoom.ts). */
+  onDeleteInstance(characterId: string): void;
 }
 
 export interface CharacterContextMenuController {
-  /** Opens the menu at the given viewport coordinates (e.g. the pointer-lock-exited click position) for the given character. */
-  open(x: number, y: number, characterId: string): void;
+  /**
+   * Opens the menu at the given viewport coordinates (e.g. the
+   * pointer-lock-exited click position) for the given character.
+   * `canDelete` enables/disables the "Delete instance" button --
+   * real request: "make it so that the player cannot delete the
+   * character instance they're controlling" -- net.ts passes false
+   * for the character you're currently focused on/controlling.
+   */
+  open(x: number, y: number, characterId: string, canDelete: boolean): void;
   close(): void;
   isOpen(): boolean;
   destroy(): void;
@@ -43,6 +52,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
       <button type="button" id="ctx-open-sheet" disabled title="Full character sheets aren't built yet (MVP goal item 3)">Open character sheet</button>
       <button type="button" id="ctx-edit-token">Edit token properties</button>
       <button type="button" id="ctx-status-effects">Select status effects</button>
+      <button type="button" id="ctx-delete-instance">Delete instance</button>
     </div>
   `;
 
@@ -50,6 +60,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
   const openSheetBtn = container.querySelector<HTMLButtonElement>("#ctx-open-sheet")!;
   const editTokenBtn = container.querySelector<HTMLButtonElement>("#ctx-edit-token")!;
   const statusEffectsBtn = container.querySelector<HTMLButtonElement>("#ctx-status-effects")!;
+  const deleteInstanceBtn = container.querySelector<HTMLButtonElement>("#ctx-delete-instance")!;
 
   let open = false;
   let activeCharacterId: string | null = null;
@@ -99,14 +110,20 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
     if (activeCharacterId) callbacks.onSelectStatusEffects(activeCharacterId);
     close();
   });
+  deleteInstanceBtn.addEventListener("click", () => {
+    if (activeCharacterId && !deleteInstanceBtn.disabled) callbacks.onDeleteInstance(activeCharacterId);
+    close();
+  });
 
   return {
-    open(x: number, y: number, characterId: string): void {
+    open(x: number, y: number, characterId: string, canDelete: boolean): void {
       open = true;
       activeCharacterId = characterId;
       menu.style.left = `${x}px`;
       menu.style.top = `${y}px`;
       menu.style.display = "block";
+      deleteInstanceBtn.disabled = !canDelete;
+      deleteInstanceBtn.title = canDelete ? "" : "Can't delete the character you're currently controlling";
       requestCapture(CAPTURE_REASON);
       justOpenedThisTick = true;
       setTimeout(() => (justOpenedThisTick = false), 0);
