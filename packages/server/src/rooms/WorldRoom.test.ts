@@ -419,6 +419,21 @@ describe("WorldRoom", () => {
       expect(placedGoblins.map((o) => o.x)).toEqual([player.x + 1, player.x + 2, player.x + 3]); // independent positions, not all moved to the last drop
     });
 
+    it("placeCharacter allows placing ANOTHER instance of the character you're currently focused on -- real correction: \"if you're controlling an instance of 'bob' and you drag in another 'bob', that should still work\"", async () => {
+      const bob = store.createCharacter(owner.id, "Bob", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: bob.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("placeCharacter", { characterId: bob.id, x: player.x + 1, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const placedBobs = room.state.otherCharacters.filter((o) => o.characterId === bob.id);
+      expect(placedBobs).toHaveLength(1);
+      expect(placedBobs[0].placedByAccountId).toBe(owner.id);
+      expect(player.characterId).toBe(bob.id); // the one you're controlling is untouched -- this placed a SEPARATE instance
+    });
+
     it("placeCharacter rejects a drop farther than MAX_CHARACTER_PLACEMENT_DISTANCE from the sender's own live position (never trusts a client-side distance check)", async () => {
       const focused = store.createCharacter(owner.id, "FarFocused", [1, 0, 0]);
       const placed = store.createCharacter(owner.id, "FarPlaced", [0, 1, 0]);
@@ -505,9 +520,14 @@ describe("WorldRoom", () => {
       expect(player.characterId).toBe(a.id);
       expect(myRing().map((o) => o.characterId)).toEqual([b.id, c.id]); // back to the exact starting arrangement
 
-      // The other account's own character never moved or got caught up in any of this.
+      // The other account's own character never moved or got caught up
+      // in any of this -- their placed instance of their OWN focused
+      // character (allowed: "if you're controlling an instance of
+      // 'bob' and you drag in another 'bob', that should still work")
+      // exists, but was never part of MY ring at any point above.
       expect(otherPlayer.characterId).toBe(notMine.id);
-      expect(room.state.otherCharacters.some((o) => o.characterId === notMine.id)).toBe(false); // still focused by its own owner, not placed
+      const notMinePlaced = room.state.otherCharacters.find((o) => o.characterId === notMine.id);
+      expect(notMinePlaced?.placedByAccountId).toBe(otherAccount.id);
     });
 
     it("focusCharacter's 'previous' direction (Shift+Tab) is the true inverse of 'next' (Tab) -- one of each returns to the exact original state", async () => {

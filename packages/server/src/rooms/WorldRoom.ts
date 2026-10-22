@@ -767,15 +767,23 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // want to do that for monsters for example." The old
     // find-an-existing-entry-by-characterId-and-move-it behavior is
     // gone; dragging the same character onto the world twice now
-    // places TWO independent instances, not one moved entry. Placing
-    // the currently-focused character itself still makes no sense (it
-    // already has a live position -- wherever you are) and is
-    // rejected. Pushed to the WORLD-level `otherCharacters` now (real
-    // feedback: placed instances need to survive the placing session
-    // disconnecting, not just exist for as long as it's connected).
+    // places TWO independent instances, not one moved entry. Pushed to
+    // the WORLD-level `otherCharacters` now (real feedback: placed
+    // instances need to survive the placing session disconnecting, not
+    // just exist for as long as it's connected).
+    //
+    // Real correction: a previous round rejected placing the character
+    // you're CURRENTLY focused on ("it already has a live position,
+    // wherever you are") -- that made sense back when characterId alone
+    // was an instance's identity (there was only ever "one Bob" to
+    // place), but it's wrong now: "if you're controlling an instance of
+    // 'bob' and you drag in another 'bob', that should still work."
+    // Placing another instance of your own focused character is just
+    // as valid as placing any other character you own -- no special
+    // case needed any more.
     this.onMessage<PlaceCharacterMessage>("placeCharacter", (client, { characterId, x, y, z }) => {
       const sender = this.state.players.get(client.sessionId);
-      if (!sender || characterId === sender.characterId) return;
+      if (!sender) return;
       const character = store.getCharacter(characterId);
       if (!character || character.ownerAccountId !== sender.accountId) return;
 
