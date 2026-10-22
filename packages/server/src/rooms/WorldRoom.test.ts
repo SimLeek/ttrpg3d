@@ -226,7 +226,7 @@ describe("WorldRoom", () => {
     it("a join with a real characterId populates the flattened character fields plus the resolved bars from its sheet; a missing/unknown one leaves them at defaults and doesn't crash", async () => {
       const character = store.createCharacter(owner.id, "Aria", [0.5, 0.25, 0.75]);
       const customSheet = { name: "Aria's Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [0.75, 0.22, 0.17] as [number, number, number] }] };
-      store.updateCharacterSheet(character.id, null, customSheet, { hp: 7 });
+      store.updateCharacterSheet(character.id, null, customSheet, { hp: 7, bodyWidth: 1.0, bodyHeight: 2.2, bodyDepth: 0.8 });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
 
       const withCharacter = await colyseus.connectTo(room, { characterId: character.id });
@@ -236,15 +236,33 @@ describe("WorldRoom", () => {
       expect([joined.tokenColorR, joined.tokenColorG, joined.tokenColorB]).toEqual([0.5, 0.25, 0.75]);
       expect(joined.bars).toHaveLength(1);
       expect(joined.bars[0]).toMatchObject({ variableId: "hp", label: "HP", value: 7, max: 10, colorR: 0.75, colorG: 0.22, colorB: 0.17 });
+      // MVP goal item 4 follow-up ("I tried adjusting the character width/height/depth and that did nothing") -- real bug fix.
+      expect([joined.bodyWidth, joined.bodyHeight, joined.bodyDepth]).toEqual([1.0, 2.2, 0.8]);
 
       const withoutCharacter = await colyseus.connectTo(room);
       const joinedBare = room.state.players.get(withoutCharacter.sessionId)!;
       expect(joinedBare.characterId).toBe("");
       expect(joinedBare.bars).toHaveLength(0);
+      expect([joinedBare.bodyWidth, joinedBare.bodyHeight, joinedBare.bodyDepth]).toEqual([0.6, 1.8, 0.6]); // RESERVED_BODY_SIZE_VARIABLES' own shared defaults
 
       const withUnknownCharacter = await colyseus.connectTo(room, { characterId: "not-a-real-character" });
       const joinedUnknown = room.state.players.get(withUnknownCharacter.sessionId)!;
       expect(joinedUnknown.characterId).toBe("");
+    });
+
+    it("notifyCharacterSheetChanged also refreshes a connected session's body size after a plain REST-style sheet update, same mechanism as the bars fix", async () => {
+      const character = store.createCharacter(owner.id, "ResizedViaRest", [1, 0, 0]);
+      store.updateCharacterSheet(character.id, null, null, { bodyWidth: 0.6, bodyHeight: 1.8, bodyDepth: 0.6 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { characterId: character.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.players.get(client.sessionId)!.bodyHeight).toBe(1.8);
+
+      store.updateCharacterSheet(character.id, null, null, { bodyWidth: 1.2, bodyHeight: 2.4, bodyDepth: 1.2 });
+      expect(room.state.players.get(client.sessionId)!.bodyHeight).toBe(1.8); // not yet -- the room doesn't know
+
+      notifyCharacterSheetChanged(character.id);
+      expect([room.state.players.get(client.sessionId)!.bodyWidth, room.state.players.get(client.sessionId)!.bodyHeight, room.state.players.get(client.sessionId)!.bodyDepth]).toEqual([1.2, 2.4, 1.2]);
     });
 
     it("a join with an accountId but no (or an unknown) characterId falls back to that account's default character instead of staying blank", async () => {

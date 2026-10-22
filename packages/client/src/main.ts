@@ -28,6 +28,7 @@ import {
   linkCharacterToGame,
   updateGameCharacterLink,
   unlinkCharacterFromGame,
+  deleteCharacter,
   ACCOUNT_STORAGE_KEY,
   CHARACTER_STORAGE_KEY,
   type CharacterRecord,
@@ -222,6 +223,14 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
         onUpdateCharacterLink: (characterId, patch) => {
           if (!runningChat) return;
           void updateGameCharacterLink(httpUrl, runningChat.gameId, runningChat.accountId, characterId, patch).then(() => refreshGameCharacters());
+        },
+        // MVP goal item 4 follow-up ("deleting a character") -- the
+        // confirm step already happened in chatPanel.ts; this just
+        // deletes (owner-gated server-side) and refetches, same shape
+        // as the other three.
+        onDeleteCharacter: (characterId) => {
+          if (!runningChat) return;
+          void deleteCharacter(httpUrl, characterId, runningChat.accountId).then(() => refreshGameCharacters());
         },
       });
       chatPanel.setModsState(availableMods, enabledModIds);

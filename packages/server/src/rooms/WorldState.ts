@@ -98,6 +98,21 @@ export const PlayerState = schema(
     tokenColorG: t.number().default(0),
     tokenColorB: t.number().default(0),
     bars: t.array(BarState),
+    /**
+     * MVP goal item 4 follow-up ("finish item 4's MVP scope," real bug
+     * found live: "I tried adjusting the character width/height/depth
+     * and that did nothing") -- flattened once at join from
+     * `character.variableValues.bodyWidth/Height/Depth` (same
+     * "flatten once at join" precedent every other character field
+     * here already uses), re-flattened by `notifyCharacterSheetChanged`
+     * on a live sheet edit. Defaults match `RESERVED_BODY_SIZE_VARIABLES`'
+     * own shared defaults (and noa's own Engine constructor defaults --
+     * a numeric coincidence this migration finally makes a real,
+     * wired connection instead of two unrelated fixed values).
+     */
+    bodyWidth: t.number().default(0.6),
+    bodyHeight: t.number().default(1.8),
+    bodyDepth: t.number().default(0.6),
     statusEffects: t.array(StatusEffectState),
   },
   "PlayerState",

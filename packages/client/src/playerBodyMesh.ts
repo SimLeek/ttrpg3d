@@ -43,6 +43,37 @@ export interface PlayerBodyMesh {
   isThirdPerson(): boolean;
 }
 
+/**
+ * MVP goal item 4 follow-up -- real bug found live: "I tried adjusting
+ * the character width/height/depth and that did nothing." Resizes ANY
+ * entity's body in place -- scales the SAME mesh object (never
+ * replaces it, so a caller's own `mesh.parent = ...`/hit-testing
+ * references keep working unchanged), re-anchors the mesh ECS
+ * component's vertical offset for the new height via
+ * `addComponentAgain` (noa's own "remove if present, then add" helper
+ * -- confirmed directly in noa-engine's source, exactly what's needed
+ * here, no unsafe cast required since it's in noa's own .d.ts unlike
+ * the plain `addComponent`/`removeComponent` this file used before),
+ * and resizes the REAL collision box via noa's `entities.setEntitySize`
+ * (confirmed directly in noa's own source: mutates the live physics
+ * body's AABB in place -- a no-op for an entity with no physics
+ * component at all, like net.ts's remote players, confirmed via
+ * `_updateDerivedPositionData`'s own `if (physDat) ...` guard, so this
+ * is equally safe to call for local (physics) and remote (no physics)
+ * entities). Used both for the local player (via `resizeLocalPlayerBody`
+ * below) and remote players (net.ts, directly).
+ */
+export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Mesh, width: number, height: number, depth: number): void {
+  mesh.scaling.set(width / PLAYER_BODY_WIDTH, height / PLAYER_BODY_HEIGHT, depth / PLAYER_BODY_DEPTH);
+  noa.entities.addComponentAgain(entityId, noa.entities.names.mesh, { mesh, offset: [0, height / 2, 0] });
+  noa.entities.setEntitySize(entityId, width, height, depth);
+}
+
+/** The local player's own half of resizeEntityBody -- `noa.playerEntity` is noa's single built-in entity id, always the local player's. */
+export function resizeLocalPlayerBody(noa: Engine, body: PlayerBodyMesh, width: number, height: number, depth: number): void {
+  resizeEntityBody(noa, noa.playerEntity, body.mesh, width, height, depth);
+}
+
 export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
   const scene = noa.rendering.getScene();
 

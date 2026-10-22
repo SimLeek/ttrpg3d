@@ -19,7 +19,7 @@ import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type Cha
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
 import type { PlayerController } from "./movement/PlayerController.js";
-import { PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT, PLAYER_BODY_DEPTH, type PlayerBodyMesh } from "./playerBodyMesh.js";
+import { resizeLocalPlayerBody, resizeEntityBody, type PlayerBodyMesh } from "./playerBodyMesh.js";
 
 interface EditBlockMessage {
   x: number;
@@ -57,6 +57,10 @@ interface RemotePlayerLike {
   tokenColorB: number;
   bars: BarLike[];
   statusEffects: StatusEffectLike[];
+  /** MVP goal item 4 follow-up -- flattened server-side from the character's own bodyWidth/Height/Depth sheet variables (WorldRoom.ts's applyBodySizeToPlayer), defaulting to the same values as PLAYER_BODY_WIDTH/HEIGHT/DEPTH below. */
+  bodyWidth: number;
+  bodyHeight: number;
+  bodyDepth: number;
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -349,30 +353,46 @@ export async function connectAndStreamWorld(
   // Real feedback: "the hp/mp bars... intersecting with the character" --
   // and "ref the player's height and add to it... instead of setting a
   // fixed position." Desired distance from the player's FEET to the
-  // billboard's own CENTER: the body-height constant the box itself is
-  // built from (PLAYER_BODY_HEIGHT), plus a small clearance gap, plus
-  // half the billboard's own height (TOKEN_PLANE_HEIGHT -- now sized to
+  // billboard's own CENTER: the body's own current height (per-player
+  // now, see tokenYOffsetFor below -- MVP goal item 4 follow-up), plus
+  // a small clearance gap, plus half the billboard's own height
+  // (TOKEN_PLANE_HEIGHT -- now sized to
   // the GUI content's real extent, not an arbitrary square, see that
   // constant's own doc in characterToken.ts) so its BOTTOM edge -- not
   // its center -- is what actually clears the box's top.
   const TOKEN_CLEARANCE_ABOVE_HEAD = 0.1;
-  const TOKEN_HEIGHT_ABOVE_FEET = PLAYER_BODY_HEIGHT + TOKEN_CLEARANCE_ABOVE_HEAD + TOKEN_PLANE_HEIGHT / 2;
   // Real bug found live ("still a fair bit above the player... instead of
   // just above their head"): the billboard is PARENTED to the body box
   // (below), and noa's own entity->mesh positioning already places that
   // box's own local origin at the box's CENTER in world space (feet +
-  // PLAYER_BODY_HEIGHT/2 -- confirmed directly in noa's mesh.js component
-  // and this exact [0, PLAYER_BODY_HEIGHT/2, 0] offset, used for both the
-  // local and every remote box below). A child's own `position` is an
-  // offset from THAT already-elevated origin, not from the feet -- so
-  // setting it directly to TOKEN_HEIGHT_ABOVE_FEET double-counted the
-  // box's own half-height, landing the billboard PLAYER_BODY_HEIGHT/2 too
-  // high. Subtracting it back out here is what actually fixes that.
-  const TOKEN_Y_OFFSET = TOKEN_HEIGHT_ABOVE_FEET - PLAYER_BODY_HEIGHT / 2;
+  // bodyHeight/2 -- confirmed directly in noa's mesh.js component and
+  // this exact [0, bodyHeight/2, 0] offset, used for both the local and
+  // every remote box below). A child's own `position` is an offset from
+  // THAT already-elevated origin, not from the feet -- so setting it
+  // directly to the height-above-feet value double-counts the box's own
+  // half-height. Subtracting it back out here is what actually fixes
+  // that. MVP goal item 4 follow-up: body height is now per-CHARACTER
+  // (bodyWidth/Height/Depth sheet variables), not the one shared
+  // PLAYER_BODY_HEIGHT constant everyone used to have -- this is now a
+  // function of each player's own current height instead of a module-
+  // level constant.
+  function tokenYOffsetFor(bodyHeight: number): number {
+    const heightAboveFeet = bodyHeight + TOKEN_CLEARANCE_ABOVE_HEAD + TOKEN_PLANE_HEIGHT / 2;
+    return heightAboveFeet - bodyHeight / 2;
+  }
   const remoteEntities = new Map<string, number>(); // sessionId -> noa entity id
   const remoteMaterials = new Map<string, BABYLON.StandardMaterial>();
   const remoteBodyMeshes = new Map<string, BABYLON.Mesh>(); // sessionId -> body box mesh, for tokenPicking.ts's extraHitboxMeshes
   const remoteTokens = new Map<string, CharacterToken>();
+  // MVP goal item 4 follow-up -- last-applied body size per session (local uses the fixed "local" key), so resize only happens on an ACTUAL change rather than every tick.
+  const appliedBodySizes = new Map<string, [number, number, number]>();
+  const LOCAL_BODY_SIZE_KEY = "__local__";
+  function bodySizeChanged(key: string, width: number, height: number, depth: number): boolean {
+    const prev = appliedBodySizes.get(key);
+    const changed = !prev || prev[0] !== width || prev[1] !== height || prev[2] !== depth;
+    if (changed) appliedBodySizes.set(key, [width, height, depth]);
+    return changed;
+  }
   const trackedTokens: TrackedToken[] = [];
   let hoveredSessionId: string | undefined;
   let hoveredBarSessionId: string | undefined;
@@ -517,7 +537,7 @@ export async function connectAndStreamWorld(
         if (!localToken) {
           localToken = createCharacterToken(scene, p.characterName || p.name);
           localToken.mesh.parent = playerBodyMesh.mesh;
-          localToken.mesh.position = new BABYLON.Vector3(0, TOKEN_Y_OFFSET, 0);
+          localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
           // Real bug found live: a mesh built via plain MeshBuilder and
           // just parented, without ever going through noa's own rendering
           // API, is NEVER added to noa's custom octree-based active-mesh
@@ -537,6 +557,11 @@ export async function connectAndStreamWorld(
         const thirdPerson = playerBodyMesh.isThirdPerson();
         localToken.mesh.isVisible = thirdPerson;
         localToken.mesh.isPickable = thirdPerson;
+
+        if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
+          resizeLocalPlayerBody(noa, playerBodyMesh, p.bodyWidth, p.bodyHeight, p.bodyDepth);
+          localToken.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
+        }
         localToken.update({
           name: p.characterName || p.name,
           bars: toTokenBars(p.bars),
@@ -558,20 +583,30 @@ export async function connectAndStreamWorld(
         material.diffuseColor = hasCharacter ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
         remoteMaterials.set(sessionId, material);
 
-        const mesh = BABYLON.MeshBuilder.CreateBox(`remote-${sessionId}`, { width: PLAYER_BODY_WIDTH, height: PLAYER_BODY_HEIGHT, depth: PLAYER_BODY_DEPTH }, scene);
+        // MVP goal item 4 follow-up: built at THIS player's own current
+        // body size (not the shared PLAYER_BODY_WIDTH/HEIGHT/DEPTH
+        // constants) -- a brand-new remote entity always starts sized
+        // correctly, same spirit as the resize-on-change branch below
+        // for one already seen before.
+        const mesh = BABYLON.MeshBuilder.CreateBox(`remote-${sessionId}`, { width: p.bodyWidth, height: p.bodyHeight, depth: p.bodyDepth }, scene);
         mesh.material = material;
-        eid = noa.entities.add([p.x, p.y, p.z], PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT, mesh, [0, PLAYER_BODY_HEIGHT / 2, 0], false, false);
+        eid = noa.entities.add([p.x, p.y, p.z], p.bodyWidth, p.bodyHeight, mesh, [0, p.bodyHeight / 2, 0], false, false);
         remoteEntities.set(sessionId, eid);
         remoteBodyMeshes.set(sessionId, mesh);
+        appliedBodySizes.set(sessionId, [p.bodyWidth, p.bodyHeight, p.bodyDepth]);
 
         token = createCharacterToken(scene, p.characterName || p.name);
         token.mesh.parent = mesh; // follows the box's own noa-driven position for free, see characterToken.ts's header
-        token.mesh.position = new BABYLON.Vector3(0, TOKEN_Y_OFFSET, 0);
+        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
         noa.rendering.addMeshToScene(token.mesh, false); // see the matching comment on the local-token branch above -- same real bug, same fix
         remoteTokens.set(sessionId, token);
       } else {
         noa.entities.setPosition(eid, [p.x, p.y, p.z]);
         material.diffuseColor = p.characterId ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
+        if (bodySizeChanged(sessionId, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
+          resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, p.bodyWidth, p.bodyHeight, p.bodyDepth);
+          token.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
+        }
       }
 
       token.update({
@@ -587,6 +622,7 @@ export async function connectAndStreamWorld(
         (noa.entities as unknown as { deleteEntity(id: number): void }).deleteEntity(eid);
         remoteEntities.delete(sessionId);
         remoteBodyMeshes.delete(sessionId); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
+        appliedBodySizes.delete(sessionId);
         remoteTokens.get(sessionId)?.dispose();
         remoteTokens.delete(sessionId);
         remoteMaterials.get(sessionId)?.dispose();

@@ -87,6 +87,8 @@ export interface ChatPanelOptions {
   onLinkCharacter: (characterId: string, folder: string | null) => void;
   onUnlinkCharacter: (characterId: string) => void;
   onUpdateCharacterLink: (characterId: string, patch: { folder?: string | null; visibility?: "all" | string[] }) => void;
+  /** Fired by the "Delete" button (owner-only, confirmed first) -- deletes the character record itself, not just this game's link to it. */
+  onDeleteCharacter: (characterId: string) => void;
 }
 
 export interface ChatPanelController {
@@ -297,7 +299,8 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       .map(([folder, entries]) => {
         const rows = entries
           .map(({ link, character }) => {
-            const canManage = isAdmin || character.ownerAccountId === viewerAccountId;
+            const isOwner = character.ownerAccountId === viewerAccountId;
+            const canManage = isAdmin || isOwner;
             const visibilityIsAll = link.visibility === "all";
             return `
           <li data-character-id="${character.id}">
@@ -309,6 +312,15 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
                   <label><input type="checkbox" class="link-visibility-all" data-character-id="${character.id}" ${visibilityIsAll ? "checked" : ""} /> All players</label>
                   ${!visibilityIsAll ? `<select class="link-visibility-list" data-character-id="${character.id}" multiple>${participantAccounts.filter((a) => a.id !== character.ownerAccountId).map((a) => `<option value="${a.id}"${Array.isArray(link.visibility) && link.visibility.includes(a.id) ? " selected" : ""}>${a.displayName}</option>`).join("")}</select>` : ""}
                   <button type="button" class="unlink-btn" data-character-id="${character.id}">Unlink</button>
+                  ${
+                    // MVP goal item 4 follow-up ("deleting a character"):
+                    // deliberately OWNER-ONLY, not canManage/isAdmin -- an
+                    // admin can already unlink (above); deleting destroys
+                    // the character record itself, not just this game's
+                    // link to it, so it's never an admin's call to make on
+                    // someone else's character.
+                    isOwner ? `<button type="button" class="delete-char-btn" data-character-id="${character.id}">Delete</button>` : ""
+                  }
                 </div>`
                 : ""
             }
@@ -328,7 +340,16 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       return;
     }
     const unlinkBtn = target.closest<HTMLButtonElement>(".unlink-btn");
-    if (unlinkBtn) options.onUnlinkCharacter(unlinkBtn.dataset.characterId!);
+    if (unlinkBtn) {
+      options.onUnlinkCharacter(unlinkBtn.dataset.characterId!);
+      return;
+    }
+    const deleteBtn = target.closest<HTMLButtonElement>(".delete-char-btn");
+    if (deleteBtn) {
+      const characterId = deleteBtn.dataset.characterId!;
+      const name = visibleLinks.find((l) => l.character.id === characterId)?.character.name ?? "this character";
+      if (window.confirm(`Delete "${name}"? This can't be undone.`)) options.onDeleteCharacter(characterId);
+    }
   });
 
   characterGroupsEl.addEventListener("change", (event) => {

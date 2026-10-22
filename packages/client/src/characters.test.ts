@@ -43,6 +43,8 @@ function mockFetch(url: string, init?: { method?: string; body?: string }): Prom
 
   if (url.endsWith("/characters")) return Promise.resolve(jsonResponse([character]));
 
+  if (/\/characters\/[^/?]+\?accountId=/.test(url) && method === "DELETE") return Promise.resolve(jsonResponse({ ok: true }));
+
   if (url.includes("/sheet") && method === "PUT") {
     const body = JSON.parse(init!.body!) as { templateId: string | null; customSheet: CharacterRecord["customSheet"]; variableValues: Record<string, number | string> };
     character = { ...character, ...body };
@@ -114,7 +116,25 @@ describe("mountCharactersPage", () => {
     expect(modItems.length).toBe(1);
     expect(modItems[0].textContent).toContain("Default Character Sheet");
     expect(container.querySelector(".mod-list")!.textContent).not.toContain("Example");
-    expect(container.querySelectorAll("#char-list button").length).toBe(1);
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1);
+  });
+
+  it("MVP goal item 4 follow-up: the delete button asks for confirmation first -- declining leaves the character untouched, confirming deletes it and clears the empty sheet section", async () => {
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    container.querySelector<HTMLButtonElement>(".delete-char-btn")!.click();
+    await flush();
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("Aria"));
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1); // declined -- still there
+
+    confirmSpy.mockReturnValue(true);
+    container.querySelector<HTMLButtonElement>(".delete-char-btn")!.click();
+    await flush();
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(0);
+    expect(container.querySelector("#sheet-section")!.innerHTML).toBe(""); // no character left selected
+    confirmSpy.mockRestore();
   });
 
   it("importing a mod flips only that button in place, without rebuilding the whole list", async () => {

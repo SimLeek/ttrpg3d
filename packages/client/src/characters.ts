@@ -30,6 +30,7 @@ import {
   fetchCharactersForAccount,
   fetchCharacterSheetTemplates,
   fetchCharacterSheetLibraries,
+  deleteCharacter,
   type ModManifest,
   type CharacterRecord,
   type CharacterSheetTemplateCatalogEntry,
@@ -52,8 +53,10 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       .characters-page .mod-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; margin-bottom: 4px; background: #2a2a2a; border-radius: 6px; }
       .characters-page .mod-list .mod-meta { color: #999; font-size: 0.85em; margin-left: 6px; }
       .characters-page .char-list { list-style: none; padding: 0; margin: 0 0 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+      .characters-page .char-item { display: flex; align-items: center; gap: 2px; }
       .characters-page .char-list button { cursor: pointer; }
       .characters-page .char-list button.selected { border-color: rgb(255,217,51); color: rgb(255,217,51); }
+      .characters-page .delete-char-btn { padding: 6px 8px; color: #e66; }
       .characters-page .dependency-warning { background: rgba(200,80,40,0.25); border: 1px solid rgb(200,80,40); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; }
       .characters-page .sheet-page { background: #222; border-radius: 6px; padding: 12px 16px; margin-bottom: 12px; }
       .characters-page .variable-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
@@ -149,11 +152,33 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
   // ---- character list ----------------------------------------------
 
   function renderCharList(): void {
-    charListEl.innerHTML = characters.map((c) => `<button type="button" class="${c.id === selectedCharacterId ? "selected" : ""}" data-character-id="${c.id}">${c.name}</button>`).join("");
+    charListEl.innerHTML = characters
+      .map(
+        (c) => `
+      <span class="char-item">
+        <button type="button" class="select-char-btn ${c.id === selectedCharacterId ? "selected" : ""}" data-character-id="${c.id}">${c.name}</button>
+        <button type="button" class="delete-char-btn" data-character-id="${c.id}" title="Delete this character">✕</button>
+      </span>`,
+      )
+      .join("");
   }
 
   charListEl.addEventListener("click", (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-character-id]");
+    const target = event.target as HTMLElement;
+    const deleteBtn = target.closest<HTMLButtonElement>(".delete-char-btn");
+    if (deleteBtn) {
+      const characterId = deleteBtn.dataset.characterId!;
+      const character = characters.find((c) => c.id === characterId);
+      if (!character || !window.confirm(`Delete "${character.name}"? This can't be undone.`)) return;
+      void deleteCharacter(httpUrl, characterId, accountId).then(() => {
+        characters = characters.filter((c) => c.id !== characterId);
+        if (selectedCharacterId === characterId) selectedCharacterId = characters[0]?.id ?? null;
+        renderCharList();
+        renderSheetSection();
+      });
+      return;
+    }
+    const button = target.closest<HTMLButtonElement>("button[data-character-id]");
     if (!button) return;
     selectedCharacterId = button.dataset.characterId!;
     renderCharList();
