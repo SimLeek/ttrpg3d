@@ -84,13 +84,6 @@ export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: 
 
   const value = values[def.id] ?? def.default;
 
-  if (def.type === "range") {
-    const current = asNumber(value, 0);
-    const minAttr = def.min !== undefined ? ` min="${def.min}"` : "";
-    const maxAttr = def.max !== undefined ? ` max="${def.max}"` : "";
-    return `<input type="range" class="sheet-widget-range" data-var-key="${escapeAttr(def.id)}"${minAttr}${maxAttr} value="${current}" /><span class="sheet-widget-range-value">${current}</span>`;
-  }
-
   if (def.type === "text") {
     return `<input type="text" class="sheet-widget-text" data-var-key="${escapeAttr(def.id)}" value="${escapeAttr(typeof value === "string" ? value : String(value))}" />`;
   }
@@ -139,13 +132,7 @@ export function buildVariableChipHtml(def: CharacterSheetVariableDef, values: Va
 export function wireVariableWidgets(root: ParentNode, onChange: (key: string, next: number | string) => void): void {
   root.querySelectorAll<HTMLInputElement>("[data-var-key]").forEach((input) => {
     const key = input.dataset.varKey!;
-    if (input.classList.contains("sheet-widget-range")) {
-      const valueLabel = input.nextElementSibling;
-      input.addEventListener("input", () => {
-        if (valueLabel) valueLabel.textContent = input.value;
-      });
-      input.addEventListener("change", () => onChange(key, Number(input.value) || 0));
-    } else if (input.type === "text") {
+    if (input.type === "text") {
       input.addEventListener("change", () => onChange(key, input.value));
     } else {
       input.addEventListener("change", () => onChange(key, Number(input.value) || 0));

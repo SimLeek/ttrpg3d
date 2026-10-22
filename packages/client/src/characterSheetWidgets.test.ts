@@ -26,24 +26,6 @@ describe("renderVariableWidget", () => {
     expect(changes).toEqual([["str", 15]]);
   });
 
-  it("renders a slider for 'range', with min/max applied and a live-updating value label", () => {
-    const def: CharacterSheetVariableDef = { id: "luck", label: "Luck", type: "range", min: 0, max: 20, default: 5 };
-    let changed: [string, number | string] | undefined;
-    renderVariableWidget(container, def, { luck: 5 }, (key, value) => (changed = [key, value]));
-
-    const slider = container.querySelector<HTMLInputElement>(".sheet-widget-range")!;
-    expect(slider.min).toBe("0");
-    expect(slider.max).toBe("20");
-    expect(slider.value).toBe("5");
-
-    slider.value = "18";
-    slider.dispatchEvent(new Event("input"));
-    expect(container.querySelector(".sheet-widget-range-value")!.textContent).toBe("18"); // label updates live, before "change" commits
-
-    slider.dispatchEvent(new Event("change"));
-    expect(changed).toEqual(["luck", 18]);
-  });
-
   it("renders TWO editable boxes for 'xOfY' -- current and max both real inputs, max defaulting from def.max until the character has its own stored value (round 4)", () => {
     const def: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 };
     const changes: [string, number | string][] = [];

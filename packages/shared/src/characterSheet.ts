@@ -9,18 +9,23 @@
 // implementation works unmodified in both places."
 
 /**
- * Widget choice follows the type directly, per the roadmap's own
- * wording: a plain single value gets one box (`number`/`text`), a
- * wide numeric range gets a slider (`range`), a fractional/x-of-y
- * value (e.g. current/max HP) gets two boxes (`xOfY`).
+ * Widget choice follows the type directly: a plain single value gets
+ * one box (`number`/`text`), a fractional/x-of-y value (e.g.
+ * current/max HP) gets two boxes (`xOfY`).
+ *
+ * A "range" (slider) type existed briefly but was removed before it
+ * ever had a real use case -- it had no UI for setting its own
+ * min/max, so it always fell back to the browser's native 0-100
+ * default, which is meaningless for most stats. Revisit if/when a
+ * concrete need for a slider-style variable actually comes up.
  */
-export type CharacterSheetVariableType = "number" | "range" | "xOfY" | "text";
+export type CharacterSheetVariableType = "number" | "xOfY" | "text";
 
 export interface CharacterSheetVariableDef {
   id: string;
   label: string;
   type: CharacterSheetVariableType;
-  /** Only meaningful for "range" (slider bounds) and "xOfY" (the "y" side's own bounds, if any). */
+  /** Only meaningful for "xOfY" (the "y" side's own bounds, if any). */
   min?: number;
   max?: number;
   default: number | string;

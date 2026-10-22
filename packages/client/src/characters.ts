@@ -57,7 +57,7 @@ import {
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 
-const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "range", "xOfY", "text"];
+const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "xOfY", "text"];
 const SAVE_DEBOUNCE_MS = 500;
 
 function escapeHtml(s: string): string {
@@ -386,7 +386,6 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
           <input class="var-id" data-field="id" value="${v.id}" placeholder="id" />
           <input class="var-label" data-field="label" value="${v.label}" placeholder="label" />
           <select class="var-type" data-field="type">${VARIABLE_TYPES.map((t) => `<option value="${t}"${t === v.type ? " selected" : ""}>${t}</option>`).join("")}</select>
-          <input class="var-default" data-field="default" value="${v.default}" placeholder="default" />
           <select class="var-pages" multiple title="Which page(s) show this variable">${sheet.pages.map((p, pi) => `<option value="${pi}"${p.variableIds.includes(v.id) ? " selected" : ""}>${p.title}</option>`).join("")}</select>
           <span class="var-value-label">Value:</span> <span class="var-value-host" data-index="${i}"></span>
           <button type="button" class="delete-var-btn" data-index="${i}">Delete</button>
@@ -443,16 +442,13 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
         variable.type = value as CharacterSheetVariableType;
         saveSheet(character);
         // The value widget's own SHAPE depends on type (one box vs.
-        // xOfY's two) -- unlike id/label/default below, this has to
-        // rebuild the row, not just re-save, or the old widget just
-        // sits there showing the wrong type's boxes forever (real bug
+        // xOfY's two) -- unlike id/label above, this has to rebuild
+        // the row, not just re-save, or the old widget just sits
+        // there showing the wrong type's boxes forever (real bug
         // found live: switching xOfY -> number left both the old
         // xOfY boxes AND a number box on screen at once).
         renderList();
         return;
-      } else if (field === "default") {
-        const asNumber = Number(value);
-        variable.default = value !== "" && !Number.isNaN(asNumber) ? asNumber : value;
       }
       saveSheet(character);
     });
