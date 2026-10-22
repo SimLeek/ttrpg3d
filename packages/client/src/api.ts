@@ -220,6 +220,19 @@ export async function fetchCharacterSheetTemplates(httpUrl: string, accountId: s
   return res.json();
 }
 
+export interface CharacterSheetLibraryCatalogEntry {
+  modId: string;
+  manifest: ModManifest;
+  /** Just the function NAMES -- the actual functions are server-side Node code and can't cross JSON. */
+  functionNames: string[];
+}
+
+/** MVP goal item 4, round 5 -- "gotta make it so we actually know what the mod library names are." Same scope as fetchCharacterSheetTemplates. */
+export async function fetchCharacterSheetLibraries(httpUrl: string, accountId: string): Promise<CharacterSheetLibraryCatalogEntry[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/character-sheet-libraries`);
+  return res.json();
+}
+
 /** Ownership-gated server-side (must be the character's own ownerAccountId) -- accountId is the caller's own, not trusted blindly, just checked fresh. Replaces templateId/customSheet/variableValues wholesale. Returns the updated CharacterRecord. */
 export async function updateCharacterSheet(httpUrl: string, characterId: string, accountId: string, templateId: string | null, customSheet: CharacterSheetTemplate | null, variableValues: Record<string, number | string>): Promise<CharacterRecord> {
   const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}/sheet`, {

@@ -10,7 +10,7 @@ import { WorldRoom } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
-import { listAvailableMods, listCharacterSheetTemplates, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
+import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
 import { findLibraryCalls } from "@ttrpg3d/shared";
 import { join } from "node:path";
 
@@ -94,6 +94,19 @@ const getAccountCharacterSheetTemplates = createEndpoint("/accounts/:id/characte
   const account = store.getAccount(ctx.params.id);
   if (!account) return [];
   return listCharacterSheetTemplates(join(process.cwd(), "mods"), account.importedModIds);
+});
+
+// MVP goal item 4, round 5 -- "gotta make it so we actually know what
+// the mod library names are, because right now there's no way to
+// tell." Same scope/trust level as getAccountCharacterSheetTemplates
+// above. A library's actual FUNCTIONS can't cross JSON (they'd just
+// silently vanish from the response) -- only their NAMES are useful
+// to a "what can I call" listing anyway, so that's all this maps to.
+const getAccountCharacterSheetLibraries = createEndpoint("/accounts/:id/character-sheet-libraries", { method: "GET", scope: "http" }, async (ctx) => {
+  const account = store.getAccount(ctx.params.id);
+  if (!account) return [];
+  const libraries = await listCharacterSheetLibraries(join(process.cwd(), "mods"), account.importedModIds);
+  return libraries.map(({ modId, manifest, library }) => ({ modId, manifest, functionNames: Object.keys(library) }));
 });
 
 // Sets a character's template + variable values wholesale. Ownership-
@@ -239,6 +252,7 @@ const routes = createRouter({
   postAccountMod,
   deleteAccountMod,
   getAccountCharacterSheetTemplates,
+  getAccountCharacterSheetLibraries,
   putCharacterSheet,
   postCharacterSheetPreview,
   getGames,

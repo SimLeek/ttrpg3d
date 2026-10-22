@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { renderVariableWidget, buildVariableWidgetHtml, buildVariableChipHtml, wireVariableWidgets, xOfYMaxKey } from "./characterSheetWidgets.js";
+import { renderVariableWidget, buildVariableWidgetHtml, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, xOfYMaxKey } from "./characterSheetWidgets.js";
 import type { CharacterSheetVariableDef } from "@ttrpg3d/shared";
 
 let container: HTMLElement;
@@ -96,7 +96,39 @@ describe("buildVariableWidgetHtml / wireVariableWidgets (round 4 -- inline embed
   });
 });
 
-describe("buildVariableChipHtml (round 4 -- {variableId:button})", () => {
+describe("buildVariableComponentHtml (round 5 -- {variableId.x}/{variableId.y}, one box at a time)", () => {
+  it("for a non-xOfY type, is identical to buildVariableWidgetHtml regardless of component", () => {
+    const def: CharacterSheetVariableDef = { id: "str", label: "Strength", type: "number", default: 10 };
+    expect(buildVariableComponentHtml(def, { str: 14 }, "x")).toBe(buildVariableWidgetHtml(def, { str: 14 }));
+    expect(buildVariableComponentHtml(def, { str: 14 }, "y")).toBe(buildVariableWidgetHtml(def, { str: 14 }));
+  });
+
+  it("for xOfY, 'x' (or the default) renders ONLY the current box, 'y' renders ONLY the max box -- never both", () => {
+    const def: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 };
+    const values = { hp: 6, [xOfYMaxKey("hp")]: 16 };
+
+    const defaultHtml = buildVariableComponentHtml(def, values);
+    expect(defaultHtml).toContain("sheet-widget-xofy-current");
+    expect(defaultHtml).not.toContain("sheet-widget-xofy-max");
+    expect(defaultHtml).toContain('value="6"');
+
+    const yHtml = buildVariableComponentHtml(def, values, "y");
+    expect(yHtml).toContain("sheet-widget-xofy-max");
+    expect(yHtml).not.toContain("sheet-widget-xofy-current");
+    expect(yHtml).toContain('value="16"');
+  });
+
+  it("the single xOfY box still wires up correctly via wireVariableWidgets", () => {
+    const def: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 };
+    container.innerHTML = buildVariableComponentHtml(def, { hp: 6 }, "y");
+    let changed: [string, number | string] | undefined;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+    dispatchChange(container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!, "20");
+    expect(changed).toEqual([xOfYMaxKey("hp"), 20]);
+  });
+});
+
+describe("buildVariableChipHtml (round 4/5 -- {variableId:button}, one value at a time)", () => {
   it("builds a clickable chip showing the current value and label, for a plain variable", () => {
     const def: CharacterSheetVariableDef = { id: "str", label: "Strength", type: "number", default: 10 };
     const html = buildVariableChipHtml(def, { str: 14 });
@@ -105,9 +137,16 @@ describe("buildVariableChipHtml (round 4 -- {variableId:button})", () => {
     expect(html).toContain('data-chip-value="14"');
   });
 
-  it("shows 'current/max' together for an xOfY variable", () => {
+  it("for xOfY, defaults to showing just the current value, not 'current/max' together (round 5 correction)", () => {
     const def: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 };
     const html = buildVariableChipHtml(def, { hp: 7 });
-    expect(html).toContain('data-chip-value="7/10"');
+    expect(html).toContain('data-chip-value="7"');
+    expect(html).not.toContain("7/10");
+  });
+
+  it("for xOfY with component 'y', shows the max value instead", () => {
+    const def: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 };
+    const html = buildVariableChipHtml(def, { hp: 7, [xOfYMaxKey("hp")]: 12 }, "y");
+    expect(html).toContain('data-chip-value="12"');
   });
 });

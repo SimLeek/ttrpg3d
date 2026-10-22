@@ -46,13 +46,15 @@ import {
   removeAccountMod,
   fetchCharactersForAccount,
   fetchCharacterSheetTemplates,
+  fetchCharacterSheetLibraries,
   updateCharacterSheet,
   fetchCharacterSheetPreview,
   type ModManifest,
   type CharacterRecord,
   type CharacterSheetTemplateCatalogEntry,
+  type CharacterSheetLibraryCatalogEntry,
 } from "./api.js";
-import { renderVariableWidget, buildVariableWidgetHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
+import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 
 const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "range", "xOfY", "text"];
@@ -97,6 +99,12 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       .characters-page .variable-def-list li { display: flex; gap: 6px; align-items: center; padding: 6px; margin-bottom: 4px; background: #2a2a2a; border-radius: 6px; flex-wrap: wrap; }
       .characters-page .variable-def-list input { width: 90px; }
       .characters-page .variable-def-list select.var-pages { min-width: 120px; }
+      .characters-page .var-value-label { color: #999; font-size: 0.85em; }
+      .characters-page .library-hint { color: #999; font-size: 0.85em; margin: 0 0 6px; }
+      .characters-page .library-hint code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 3px; }
+      .characters-page .library-list { list-style: none; padding: 0; margin: 0; }
+      .characters-page .library-list li { padding: 6px 8px; margin-bottom: 4px; background: rgba(255,255,255,0.06); border-radius: 4px; }
+      .characters-page .library-list .empty { color: #777; font-style: italic; }
       .test-chat-host { width: 300px; flex: none; }
     </style>
     <div class="characters-layout">
@@ -127,6 +135,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
   let importedModIds: string[] = [];
   let characters: CharacterRecord[] = [];
   let templates: CharacterSheetTemplateCatalogEntry[] = [];
+  let libraries: CharacterSheetLibraryCatalogEntry[] = [];
   let selectedCharacterId: string | null = null;
   /** "core" = the Core & Variables tab; a number = that page's index. Defaults to the first PAGE (not "core") whenever a character becomes selected -- you want to see their sheet, not settings, by default. */
   let selectedSheetTab: "core" | number = 0;
@@ -157,9 +166,14 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       // that caused round 2's double-click bug.
       button.textContent = importing ? "Remove" : "Import";
       button.dataset.imported = String(importing);
-      await refreshTemplates();
+      await Promise.all([refreshTemplates(), refreshLibraries()]);
       const character = selectedCharacter();
       if (character) renderDependencyWarning(character);
+      // The Libraries list (Core & Variables tab) isn't visible from
+      // any other tab, so only re-render when it's actually the one
+      // currently showing -- same "only rebuild what's visible"
+      // discipline the rest of this file already follows.
+      if (character && selectedSheetTab === "core") renderSheetTabContent(character);
     });
   });
 
@@ -181,6 +195,10 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
 
   async function refreshTemplates(): Promise<void> {
     templates = await fetchCharacterSheetTemplates(httpUrl, accountId);
+  }
+
+  async function refreshLibraries(): Promise<void> {
+    libraries = await fetchCharacterSheetLibraries(httpUrl, accountId);
   }
 
   function selectedCharacter(): CharacterRecord | undefined {
@@ -297,11 +315,16 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
               : `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(label)}" data-chip-value="${escapeHtml(segment.value)}">${escapeHtml(segment.value)}</button>`;
         } else {
           const def = findVariableDef(character, segment.variableId);
+          // Round 5 real correction: an inline ref always shows ONE
+          // value (box or chip), never xOfY's two boxes together --
+          // component defaults to "x" (current) when `.x`/`.y` isn't
+          // written, same default buildVariableComponentHtml/
+          // buildVariableChipHtml already apply.
           substituted += !def
             ? `[unknown variable: ${escapeHtml(segment.variableId)}]`
             : segment.display === "button"
-              ? buildVariableChipHtml(def, character.variableValues)
-              : buildVariableWidgetHtml(def, character.variableValues);
+              ? buildVariableChipHtml(def, character.variableValues, segment.component)
+              : buildVariableComponentHtml(def, character.variableValues, segment.component);
         }
         cursor = segment.end;
       }
@@ -365,10 +388,25 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
           <select class="var-type" data-field="type">${VARIABLE_TYPES.map((t) => `<option value="${t}"${t === v.type ? " selected" : ""}>${t}</option>`).join("")}</select>
           <input class="var-default" data-field="default" value="${v.default}" placeholder="default" />
           <select class="var-pages" multiple title="Which page(s) show this variable">${sheet.pages.map((p, pi) => `<option value="${pi}"${p.variableIds.includes(v.id) ? " selected" : ""}>${p.title}</option>`).join("")}</select>
+          <span class="var-value-label">Value:</span> <span class="var-value-host" data-index="${i}"></span>
           <button type="button" class="delete-var-btn" data-index="${i}">Delete</button>
         </li>`,
         )
         .join("");
+      // This character's CURRENT value widget per variable (round 5 --
+      // the full, both-boxes-for-xOfY widget belongs HERE, not inline
+      // on the sheet; see characterSheetWidgets.ts's own header for
+      // the real correction this follows from). Mounted as real DOM
+      // (not a plain HTML string) since renderVariableWidget wires its
+      // own listeners -- same pattern renderVariableRow already uses
+      // for the reserved body-size rows above.
+      listEl.querySelectorAll<HTMLSpanElement>(".var-value-host").forEach((host) => {
+        const variable = sheet.variables[Number(host.dataset.index)];
+        renderVariableWidget(host, variable, character.variableValues, (key, next) => {
+          character.variableValues = { ...character.variableValues, [key]: next };
+          saveSheet(character);
+        });
+      });
     }
     renderList();
 
@@ -429,12 +467,31 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     });
   }
 
+  /** "Gotta make it so we actually know what the mod library names are, because right now there's no way to tell" -- listed last on the Core & Variables tab, per the explicit placement request. Read-only (no mutation here) -- just what's callable via `{{modId.fn(args)}}`. */
+  function renderLibrariesSection(parent: HTMLElement): void {
+    const section = document.createElement("div");
+    section.className = "sheet-page";
+    section.innerHTML = `
+      <h3>Libraries</h3>
+      <p class="library-hint">Call a function from one of these in a page's markdown via <code>{{modId.fn(args)}}</code>.</p>
+      <ul class="library-list">
+        ${
+          libraries.length === 0
+            ? `<li class="empty">No imported mod provides any library functions.</li>`
+            : libraries.map((entry) => `<li><strong>${entry.modId}</strong>: ${entry.functionNames.length > 0 ? entry.functionNames.join(", ") : "(no functions)"}</li>`).join("")
+        }
+      </ul>
+    `;
+    parent.append(section);
+  }
+
   function renderCoreTabContent(character: CharacterRecord): void {
     sheetTabContentEl.innerHTML = `<div class="sheet-page" id="body-size-section"><h3>Body (core, always present)</h3></div><div class="sheet-page" id="variables-host"></div>`;
     const bodySizeSection = sheetTabContentEl.querySelector<HTMLDivElement>("#body-size-section")!;
     for (const def of RESERVED_BODY_SIZE_VARIABLES) renderVariableRow(bodySizeSection, def, character);
     variablesSectionEl = sheetTabContentEl.querySelector<HTMLDivElement>("#variables-host")!;
     renderVariablesSection(character);
+    renderLibrariesSection(sheetTabContentEl);
   }
 
   // ---- sheet tab bar: "Core & Variables" + one per page ---------------
@@ -559,7 +616,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     [availableMods, importedModIds, characters] = await Promise.all([fetchAvailableMods(httpUrl), fetchAccountMods(httpUrl, accountId), fetchCharactersForAccount(httpUrl, accountId)]);
     renderModsList();
     renderCharList();
-    await refreshTemplates();
+    await Promise.all([refreshTemplates(), refreshLibraries()]);
     selectedCharacterId = characters[0]?.id ?? null;
     renderCharList();
     renderSheetSection();

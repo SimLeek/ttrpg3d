@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mountCharactersPage } from "./characters.js";
-import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry, CharacterSheetPreviewResult } from "./api.js";
+import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry, CharacterSheetLibraryCatalogEntry, CharacterSheetPreviewResult } from "./api.js";
 
 let container: HTMLElement;
 
@@ -11,6 +11,7 @@ const availableMods: ModManifest[] = [
 let importedModIds: string[];
 let character: CharacterRecord;
 let templates: CharacterSheetTemplateCatalogEntry[];
+let libraries: CharacterSheetLibraryCatalogEntry[];
 let previewResponse: CharacterSheetPreviewResult;
 
 function jsonResponse(body: unknown): Response {
@@ -21,6 +22,7 @@ function mockFetch(url: string, init?: { method?: string; body?: string }): Prom
   const method = init?.method ?? "GET";
 
   if (url.endsWith("/mods") && !url.includes("/accounts/")) return Promise.resolve(jsonResponse(availableMods));
+  if (url.includes("/character-sheet-libraries")) return Promise.resolve(jsonResponse(libraries));
   if (url.includes("/character-sheet-templates")) return Promise.resolve(jsonResponse(templates));
   if (url.includes("/character-sheet-preview") && method === "POST") return Promise.resolve(jsonResponse(previewResponse));
 
@@ -81,6 +83,7 @@ beforeEach(() => {
       },
     },
   ];
+  libraries = [];
   vi.stubGlobal("fetch", vi.fn(mockFetch));
 });
 
@@ -217,22 +220,64 @@ describe("mountCharactersPage", () => {
     expect(testChatMessages.textContent).toContain("7");
   });
 
-  it("an xOfY variable's inline widget has TWO real, independently editable boxes (current and max, round 4 -- not a read-only max label)", async () => {
-    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "HP: {hp}", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }] };
+  it("round 5 real correction: an inline xOfY reference shows exactly ONE box (not both together) -- {hp} is current, {hp.y} is max, each independently editable", async () => {
+    character.customSheet = {
+      name: "Sheet",
+      pages: [{ title: "Overview", markdown: "Current: {hp}, Max: {hp.y}", variableIds: ["hp"] }],
+      variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }],
+    };
     character.variableValues = { hp: 6 };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
 
-    const current = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-current")!;
-    const max = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!;
+    const boxes = container.querySelectorAll<HTMLInputElement>(".page-preview input");
+    expect(boxes.length).toBe(2); // exactly one box per reference, never two boxes for one reference
+    const current = container.querySelector<HTMLInputElement>(".page-preview .sheet-widget-xofy-current")!;
+    const max = container.querySelector<HTMLInputElement>(".page-preview .sheet-widget-xofy-max")!;
     expect(current.value).toBe("6");
     expect(max.value).toBe("10");
-    expect(max.tagName).toBe("INPUT");
 
     max.value = "14";
     max.dispatchEvent(new Event("change"));
     await flush();
     expect(character.variableValues.hpMax).toBe(14);
+  });
+
+  it("the Core & Variables tab's variable rows now show a REAL value widget (both boxes for xOfY) -- round 5, this is where round 4 mistakenly put the two-box widget inline instead", async () => {
+    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }] };
+    character.variableValues = { hp: 6 };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // "Core & Variables"
+    await flush();
+
+    const current = container.querySelector<HTMLInputElement>("#variable-def-list .sheet-widget-xofy-current")!;
+    const max = container.querySelector<HTMLInputElement>("#variable-def-list .sheet-widget-xofy-max")!;
+    expect(current.value).toBe("6");
+    expect(max.value).toBe("10");
+
+    current.value = "9";
+    current.dispatchEvent(new Event("change"));
+    await flush();
+    expect(character.variableValues.hp).toBe(9);
+  });
+
+  it("the Core & Variables tab lists each imported mod's library function names, updating when mods change (round 5 -- previously no way to tell)", async () => {
+    libraries = [{ modId: "default", manifest: availableMods[0], functionNames: ["modifier"] }];
+    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [] };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // "Core & Variables"
+    await flush();
+
+    const libraryList = container.querySelector(".library-list")!;
+    expect(libraryList.textContent).toContain("default");
+    expect(libraryList.textContent).toContain("modifier");
+
+    libraries = [];
+    container.querySelector<HTMLButtonElement>(".mod-toggle-btn")!.click(); // any mod toggle triggers a refresh
+    await flush();
+    expect(container.querySelector(".library-list")!.textContent).toContain("No imported mod provides any library functions");
   });
 
   it("a {{modId.fn(args):box}} library call renders as a plain, non-clickable value instead of a chat-chip", async () => {

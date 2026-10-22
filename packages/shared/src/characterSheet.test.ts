@@ -72,6 +72,19 @@ describe("findVariableRefs (MVP goal item 4, round 4 -- inline-in-markdown varia
     expect(findVariableRefs("{hp:button}")[0].display).toBe("button");
   });
 
+  it("round 5: .x/.y component selector, with and without a :style suffix", () => {
+    expect(findVariableRefs("{hp}")[0].component).toBeUndefined();
+    expect(findVariableRefs("{hp.x}")[0].component).toBe("x");
+    expect(findVariableRefs("{hp.y}")[0].component).toBe("y");
+    expect(findVariableRefs("{hp.y:button}")[0]).toMatchObject({ component: "y", display: "button" });
+  });
+
+  it("round 5: a real {{modId.x}}/{{modId.x()}} library call (function literally named x or y) never mis-fires as a variable ref's .x/.y component", () => {
+    expect(findVariableRefs("{{default.x}}")).toEqual([]);
+    expect(findVariableRefs("{{default.x()}}")).toEqual([]);
+    expect(findVariableRefs("{{default.y(1)}}")).toEqual([]);
+  });
+
   it("finds multiple segments in order, each with its own start/end", () => {
     const segments = findVariableRefs("HP: {hp}, MP: {mp}");
     expect(segments.map((s) => s.variableId)).toEqual(["hp", "mp"]);

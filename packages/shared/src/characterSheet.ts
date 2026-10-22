@@ -144,34 +144,49 @@ export interface VariableRefSegment {
   /** Index just past the segment's closing `}`. */
   end: number;
   variableId: string;
+  /**
+   * Which half of an `xOfY` variable to show -- `{hp}`/`{hp.x}` is
+   * the current value, `{hp.y}` is the max (round 5 real correction:
+   * "if it's xOfY you should just have to choose .x or .y to show
+   * one in the sheet," not both boxes together inline). Undefined
+   * when omitted (treated as "x"); meaningless and simply ignored for
+   * every other variable type, which only ever has one value anyway.
+   */
+  component?: "x" | "y";
   /** Defaults to "box" when no `:box`/`:button` suffix is written. */
   display: InlineReferenceDisplay;
 }
 
 /**
- * Finds every `{variableId}` (or `{variableId:box}`/`{variableId:button}`)
- * segment in `text` -- a plain reference to one of the character's
- * own `variableValues`, resolved entirely client-side (no mod/server
- * involved at all, unlike findLibraryCalls above). Single curly
- * braces, deliberately distinct from both `{{modId.fn(args)}}`
- * (double) and `[[dice notation]]` (square, reserved for the
- * upcoming dice-in-sheets work) -- see this file's own header on
- * findLibraryCalls for the full three-way reservation. The lookaround
- * guards below make sure this never mis-fires on the braces of a
- * `{{...}}` call sitting in the same text (confirmed directly: a real
- * call's grammar always contains a literal `.` before any `}`, which
- * is outside this function's own identifier charset anyway, so there
- * was never actually a possible collision there -- but a MALFORMED
- * `{{id}}` typo, lacking the required `.functionName`, would
- * otherwise still accidentally match its own inner `{id}` without
- * this guard).
+ * Finds every `{variableId}` (optionally `{variableId.x}`/`{variableId.y}`,
+ * optionally also `:box`/`:button`) segment in `text` -- a plain
+ * reference to one of the character's own `variableValues`, resolved
+ * entirely client-side (no mod/server involved at all, unlike
+ * findLibraryCalls above). Single curly braces, deliberately distinct
+ * from both `{{modId.fn(args)}}` (double) and `[[dice notation]]`
+ * (square, reserved for the upcoming dice-in-sheets work) -- see this
+ * file's own header on findLibraryCalls for the full three-way
+ * reservation. The lookaround guards below make sure this never
+ * mis-fires on the braces of a `{{...}}` call sitting in the same
+ * text, confirmed directly against every real edge case this `.x`/
+ * `.y` addition could plausibly create (a malformed `{{id}}` typo; a
+ * real call to a function literally named `x`/`y`, with or without
+ * `()`) -- none of them produce a false match, because a genuine
+ * `{{...}}` call's own closing `}}` always trips the trailing
+ * `(?!\})` guard below.
  */
 export function findVariableRefs(text: string): VariableRefSegment[] {
   const segments: VariableRefSegment[] = [];
-  const pattern = /(?<!\{)\{([a-zA-Z0-9_-]+)(?::(box|button))?\}(?!\})/g;
+  const pattern = /(?<!\{)\{([a-zA-Z0-9_-]+)(?:\.(x|y))?(?::(box|button))?\}(?!\})/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
-    segments.push({ start: match.index, end: match.index + match[0].length, variableId: match[1], display: (match[2] as InlineReferenceDisplay) ?? "box" });
+    segments.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      variableId: match[1],
+      component: match[2] as "x" | "y" | undefined,
+      display: (match[3] as InlineReferenceDisplay) ?? "box",
+    });
   }
   return segments;
 }
