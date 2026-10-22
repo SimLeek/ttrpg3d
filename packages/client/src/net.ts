@@ -48,6 +48,8 @@ interface BarLike {
 
 /** Mirrors WorldState.ts's OtherCharacterState -- one of a session's OWN characters present in the world but not currently focused/controlled (MVP goal item 4 follow-up: drag-and-drop placement + Tab/Shift+Tab focus cycling). Same per-character fields RemotePlayerLike has, minus `name` (the session's own display name has no bearing on a specific OTHER character) and `isAdmin`/`accountId`/`otherCharacters` (irrelevant to a non-focused entry). */
 interface OtherCharacterLike {
+  /** MVP goal item 4 follow-up ("multiple instances of the same character... for monsters") -- the REAL identity of a placed instance; characterId alone is no longer unique among a session's otherCharacters, since several instances of the same character can coexist. */
+  instanceId: string;
   characterId: string;
   characterName: string;
   x: number;
@@ -249,29 +251,26 @@ export async function connectAndStreamWorld(
   // left-click-to-edit bar-value overlay, both DOM overlays mounted up front
   // so voxelEditor.ts's hooks (installed just below) always have
   // somewhere real to open into.
-  //
-  // Real bug found live: the "owned" predicate used to compare against
-  // the characterId THIS CLIENT ORIGINALLY SENT (the `characterId`
-  // parameter) -- but WorldRoom.ts's onJoin can resolve a DIFFERENT one
-  // server-side (the default-character fallback, when none was
-  // explicitly picked), and the client never learns about that via the
-  // parameter it passed in. Reading the LOCAL SESSION's own resolved
-  // characterId fresh off synced Schema state instead -- room.state's
-  // own player entry for `room.sessionId` is already the authoritative,
-  // live-updated answer to "which character am I actually playing," so
-  // there's no reason to track a separate, potentially-stale local copy.
-  function myResolvedCharacterId(): string {
-    const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
-    return players?.get(room!.sessionId)?.characterId ?? "";
-  }
 
-  /** MVP goal item 4 follow-up (multi-character presence): the stat-value/color/status-effect editors below used to only ever find a characterId among players' FOCUSED slots -- a real gap now that a session's otherCharacters entries are also pickable/editable (right-click an un-focused placed character, same as any other owned token). Checks both. */
-  function findCharacterLike(characterId: string): RemotePlayerLike | OtherCharacterLike | undefined {
+  /**
+   * MVP goal item 4 follow-up (multi-character presence, then
+   * "multiple instances... for monsters"): the stat-value/color/
+   * status-effect editors below need to read the CURRENT value of
+   * whichever specific thing is being edited. `instanceId` undefined
+   * means "the focused slot" (characterId must match a player's own
+   * `characterId`); defined means ONE SPECIFIC placed otherCharacters
+   * entry -- now required to disambiguate, since several instances can
+   * share a characterId.
+   */
+  function findCharacterLike(characterId: string, instanceId: string | undefined): RemotePlayerLike | OtherCharacterLike | undefined {
     const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
     if (!players) return undefined;
     for (const p of players.values()) {
-      if (p.characterId === characterId) return p;
-      const other = p.otherCharacters.find((o) => o.characterId === characterId);
+      if (instanceId === undefined) {
+        if (p.characterId === characterId) return p;
+        continue;
+      }
+      const other = p.otherCharacters.find((o) => o.instanceId === instanceId);
       if (other) return other;
     }
     return undefined;
@@ -284,20 +283,19 @@ export async function connectAndStreamWorld(
       // Stub -- full character sheets are MVP goal item 3, not built yet.
       // The menu item itself is disabled client-side too (characterContextMenu.ts).
     },
-    onEditTokenProperties: (characterId) => {
-      openColorEditor(characterId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
+    onEditTokenProperties: (characterId, instanceId) => {
+      openColorEditor(characterId, instanceId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
     },
-    onSelectStatusEffects: (characterId) => {
-      openStatusEffectsEditor(characterId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
+    onSelectStatusEffects: (characterId, instanceId) => {
+      openStatusEffectsEditor(characterId, instanceId, lastMenuOpenScreen.x, lastMenuOpenScreen.y);
     },
     // MVP goal item 4 follow-up: real request -- "add a 'delete' to the
     // right click character menu, which will delete the instance in 3d
-    // in the game but not the link or character." This button only
-    // ever gets enabled for one of OUR OWN otherCharacters entries (see
-    // the `canDelete` passed to contextMenu.open below), so no extra
-    // gating needed here.
-    onDeleteInstance: (characterId) => {
-      room!.send("removeCharacterInstance", { characterId });
+    // in the game but not the link or character." Only ever invoked
+    // with a real instanceId (characterContextMenu.ts's own `canDelete`
+    // gate), so no extra check needed here.
+    onDeleteInstance: (instanceId) => {
+      room!.send("removeCharacterInstance", { instanceId });
     },
   });
   let lastMenuOpenScreen = { x: 0, y: 0 };
@@ -306,12 +304,12 @@ export async function connectAndStreamWorld(
   statInputContainer.style.cssText = "position:fixed;z-index:1001;";
   document.body.appendChild(statInputContainer);
 
-  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). */
-  function openStatEditor(characterIdToEdit: string, variableId: string, x: number, y: number): void {
+  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). `instanceId` (MVP goal item 4 follow-up, independent per-instance stats): when set, this edit is an EPHEMERAL override on just that one placed instance (WorldRoom.ts's instanceVariableOverrides) -- never the shared character record. */
+  function openStatEditor(characterIdToEdit: string, instanceId: string | undefined, variableId: string, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "number";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; width:60px; font-size:14px; z-index:1001;`;
-    const current = findCharacterLike(characterIdToEdit);
+    const current = findCharacterLike(characterIdToEdit, instanceId);
     const currentBar = current?.bars.find((b) => b.variableId === variableId);
     input.value = String(currentBar?.value ?? 0);
     statInputContainer.innerHTML = "";
@@ -331,7 +329,7 @@ export async function connectAndStreamWorld(
 
     function commit(): void {
       const value = Number(input.value);
-      if (Number.isFinite(value)) room!.send("setCharacterVariableValue", { characterId: characterIdToEdit, variableId, value });
+      if (Number.isFinite(value)) room!.send("setCharacterVariableValue", { characterId: characterIdToEdit, instanceId, variableId, value });
       statInputContainer.innerHTML = "";
     }
     input.addEventListener("keydown", (e) => {
@@ -341,8 +339,8 @@ export async function connectAndStreamWorld(
     input.addEventListener("blur", commit);
   }
 
-  /** Minimal color-picker overlay backing "Edit token properties" -- full token-property authoring is downstream of MVP goal item 3, this is just the color this project's rendering can actually use today (characterToken.ts's generalization of the existing fixed-color-box convention). */
-  function openColorEditor(characterIdToEdit: string, x: number, y: number): void {
+  /** Minimal color-picker overlay backing "Edit token properties" -- full token-property authoring is downstream of MVP goal item 3, this is just the color this project's rendering can actually use today (characterToken.ts's generalization of the existing fixed-color-box convention). `instanceId`: see openStatEditor's own doc -- same ephemeral, per-instance-only semantics when set. */
+  function openColorEditor(characterIdToEdit: string, instanceId: string | undefined, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "color";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; z-index:1001;`;
@@ -352,19 +350,19 @@ export async function connectAndStreamWorld(
     input.addEventListener("change", () => {
       const hex = input.value;
       const color: [number, number, number] = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255];
-      room!.send("setCharacterToken", { characterId: characterIdToEdit, color });
+      room!.send("setCharacterToken", { characterId: characterIdToEdit, instanceId, color });
       statInputContainer.innerHTML = "";
     });
   }
 
-  /** Minimal status-effect toggle overlay -- a flat, fixed small catalog (no mod-based status-effect catalog/definitions system yet, that's downstream of MVP goal item 3). */
-  function openStatusEffectsEditor(characterIdToEdit: string, x: number, y: number): void {
+  /** Minimal status-effect toggle overlay -- a flat, fixed small catalog (no mod-based status-effect catalog/definitions system yet, that's downstream of MVP goal item 3). `instanceId`: see openStatEditor's own doc -- same ephemeral, per-instance-only semantics when set. */
+  function openStatusEffectsEditor(characterIdToEdit: string, instanceId: string | undefined, x: number, y: number): void {
     const CATALOG: StatusEffectLike[] = [
       { icon: "poison", label: "Poisoned" },
       { icon: "stun", label: "Stunned" },
       { icon: "blessed", label: "Blessed" },
     ];
-    const current = findCharacterLike(characterIdToEdit);
+    const current = findCharacterLike(characterIdToEdit, instanceId);
     const activeLabels = new Set((current?.statusEffects ?? []).map((e) => e.label));
 
     const panel = document.createElement("div");
@@ -379,7 +377,7 @@ export async function connectAndStreamWorld(
         if (checkbox.checked) activeLabels.add(effect.label);
         else activeLabels.delete(effect.label);
         const statusEffects = CATALOG.filter((e) => activeLabels.has(e.label));
-        room!.send("setStatusEffects", { characterId: characterIdToEdit, statusEffects });
+        room!.send("setStatusEffects", { characterId: characterIdToEdit, instanceId, statusEffects });
       });
       label.appendChild(checkbox);
       label.appendChild(document.createTextNode(` ${effect.label}`));
@@ -516,19 +514,23 @@ export async function connectAndStreamWorld(
           extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
         });
       }
-      // MVP goal item 4 follow-up (multi-character presence): each
-      // placed-but-unfocused otherCharacters entry is its own separate
-      // pickable token, keyed by characterId (see the matching render
-      // loop below) -- owned by the SAME session that holds it, never
-      // by characterId identity (one session can own several at once).
+      // MVP goal item 4 follow-up (multi-character presence, then
+      // "multiple instances... for monsters"): each placed-but-
+      // unfocused otherCharacters entry is its own separate pickable
+      // token, keyed by instanceId (see the matching render loop below
+      // -- characterId alone is no longer unique among a session's
+      // otherCharacters, several instances of the same character can
+      // coexist) -- owned by the SAME session that holds it, never by
+      // characterId identity (one session can own several at once).
       for (const other of p.otherCharacters) {
-        const otherToken = remoteTokens.get(other.characterId);
+        const otherToken = remoteTokens.get(other.instanceId);
         if (!otherToken) continue;
-        const otherBodyMesh = remoteBodyMeshes.get(other.characterId);
+        const otherBodyMesh = remoteBodyMeshes.get(other.instanceId);
         trackedTokens.push({
           sessionId,
           characterId: other.characterId,
-          tokenKey: other.characterId,
+          tokenKey: other.instanceId,
+          instanceId: other.instanceId,
           owned,
           planeMesh: otherToken.mesh,
           extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
@@ -545,7 +547,7 @@ export async function connectAndStreamWorld(
    * the exact same "which owned token's bar, if any, is at this screen
    * point" answer, just at different moments (continuously vs. on click).
    */
-  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; variableId: string } | undefined {
+  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; instanceId?: string; variableId: string } | undefined {
     const result = pickToken(scene, trackedTokens, screenPoint);
     if (!result?.owned) return undefined;
     const token = remoteTokens.get(result.tokenKey);
@@ -553,7 +555,7 @@ export async function connectAndStreamWorld(
     if (result.pickedMesh !== token.mesh) return undefined; // hit the body box (the coarser extraHitboxMeshes target), not the billboard plane -- not precise enough for bar editing
     const localPoint = BABYLON.Vector3.TransformCoordinates(result.worldPoint, token.mesh.getWorldMatrix().clone().invert());
     const variableId = token.hitTestLocalPoint(localPoint.x, localPoint.y);
-    return variableId ? { characterId: result.characterId, tokenKey: result.tokenKey, variableId } : undefined;
+    return variableId ? { characterId: result.characterId, tokenKey: result.tokenKey, instanceId: result.instanceId, variableId } : undefined;
   }
 
   // ---- voxel edits: apply locally immediately (installVoxelEditor already
@@ -573,22 +575,15 @@ export async function connectAndStreamWorld(
     {
       pickOwnedToken: () => {
         const result = pickToken(scene, trackedTokens, currentPickScreenPoint());
-        return result?.owned ? { characterId: result.characterId } : undefined;
+        return result?.owned ? { characterId: result.characterId, instanceId: result.instanceId } : undefined;
       },
       pickHoveredStatBar: () => {
         const resolved = resolveHoveredBar(currentPickScreenPoint());
-        return resolved ? { characterId: resolved.characterId, variableId: resolved.variableId } : undefined;
+        return resolved ? { characterId: resolved.characterId, instanceId: resolved.instanceId, variableId: resolved.variableId } : undefined;
       },
-      openContextMenu: (characterIdToOpen, x, y) => {
+      openContextMenu: (characterIdToOpen, instanceId, x, y) => {
         lastMenuOpenScreen = { x, y };
-        // Only ever reached for an OWNED token (pickOwnedToken's own
-        // gate, voxelEditor.ts) -- so "not the one I'm currently
-        // focused on" here can only mean one of MY OWN otherCharacters
-        // entries, never someone else's character. Real request: "make
-        // it so that the player cannot delete the character instance
-        // they're controlling."
-        const canDelete = characterIdToOpen !== myResolvedCharacterId();
-        contextMenu.open(x, y, characterIdToOpen, canDelete);
+        contextMenu.open(x, y, characterIdToOpen, instanceId);
       },
       openStatEditor,
     },
@@ -720,20 +715,20 @@ export async function connectAndStreamWorld(
       });
     }
 
-    // MVP goal item 4 follow-up (multi-character presence): every
-    // player's placed-but-unfocused otherCharacters entries each get
-    // their own static box+token, built/updated/resized exactly like a
-    // remote player's focused slot above -- just keyed by characterId
-    // instead of sessionId (a character belongs to exactly one
-    // account, so this can't collide across sessions in practice, same
-    // accepted-edge-case precedent as WorldRoom.ts's own
-    // activeCharacterSessions registry). Never physics-driven
-    // (doPhysics=false, same as any ordinary remote player) -- these
-    // only ever move via an explicit placeCharacter/focusCharacter
-    // message, never on their own.
+    // MVP goal item 4 follow-up (multi-character presence, then
+    // "multiple instances... for monsters"): every player's placed-
+    // but-unfocused otherCharacters entries each get their own static
+    // box+token, built/updated/resized exactly like a remote player's
+    // focused slot above -- keyed by instanceId, NOT characterId
+    // (several independent instances of the same character can
+    // coexist now, so characterId alone can no longer identify "this
+    // one specific box+token"). Never physics-driven (doPhysics=false,
+    // same as any ordinary remote player) -- these only ever move via
+    // an explicit placeCharacter/focusCharacter message, never on
+    // their own.
     for (const [, p] of players) {
       for (const other of p.otherCharacters) {
-        const key = other.characterId;
+        const key = other.instanceId;
         seen.add(key);
 
         let eid = remoteEntities.get(key);

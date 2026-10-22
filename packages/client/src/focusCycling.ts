@@ -28,7 +28,8 @@ import type { PlayerController } from "./movement/PlayerController.js";
 import { isCaptured } from "./inputCapture.js";
 
 interface OtherCharacterLike {
-  characterId: string;
+  /** MVP goal item 4 follow-up ("multiple instances of the same character... for monsters") -- the real identity to target; characterId alone can no longer address one specific placed instance. */
+  instanceId: string;
   x: number;
   y: number;
   z: number;
@@ -52,7 +53,7 @@ export function installFocusCycling(room: Room, playerController: PlayerControll
     // same selection WorldRoom.test.ts's own ring tests exercise.
     const target = direction === "next" ? player.otherCharacters[0] : player.otherCharacters[player.otherCharacters.length - 1];
     playerController.teleportTo([target.x, target.y, target.z]);
-    room.send("focusCharacter", { characterId: target.characterId, direction });
+    room.send("focusCharacter", { instanceId: target.instanceId, direction });
   }
 
   window.addEventListener("keydown", (event) => {

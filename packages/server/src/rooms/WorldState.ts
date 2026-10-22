@@ -84,9 +84,22 @@ export const BarState = schema(
  * there's no live "pos" input for one of these (placement/cycling are
  * the only things that ever move it), so it has no isAdmin/accountId/
  * otherCharacters of its own.
+ *
+ * Real request: "I can't add multiple instances of the same character.
+ * I would want to do that for monsters for example." `characterId`
+ * alone used to be this entry's identity, which meant placing the same
+ * character twice just moved/updated one shared entry -- `instanceId`
+ * (server-generated, WorldRoom.ts's own placeCharacter/focusCharacter
+ * handlers) is the REAL identity now, unique per placed instance, so
+ * five goblins from one "Goblin" character sheet are five independent
+ * entries. Independent stats too, not just independent position/looks
+ * -- see WorldRoom.ts's `instanceVariableOverrides` doc for why bars/
+ * body size are resolved per-instance rather than shared off the one
+ * character record.
  */
 export const OtherCharacterState = schema(
   {
+    instanceId: t.string().default(""),
     characterId: t.string().default(""),
     characterName: t.string().default(""),
     x: t.number().default(0),

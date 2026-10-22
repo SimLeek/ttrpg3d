@@ -17,24 +17,32 @@ import { requestCapture, releaseCapture } from "./inputCapture.js";
 
 const CAPTURE_REASON = "characterContextMenu";
 
+/**
+ * `instanceId` (MVP goal item 4 follow-up, "multiple instances of the
+ * same character... for monsters"): undefined when the menu was
+ * opened for the player's own FOCUSED character; the specific placed
+ * OtherCharacterState's own id otherwise -- needed so an edit/delete
+ * targets the exact instance the menu was opened for, not just "some
+ * representation of this characterId" (several can coexist now).
+ */
 export interface CharacterContextMenuCallbacks {
-  onOpenCharacterSheet(characterId: string): void;
-  onEditTokenProperties(characterId: string): void;
-  onSelectStatusEffects(characterId: string): void;
-  /** MVP goal item 4 follow-up -- real request: "add a 'delete' to the right click character menu, which will delete the instance in 3d in the game but not the link or character." Only ever invoked when `open()`'s own `canDelete` was true for this character (see its own doc) -- never trust that alone, though; net.ts's own "removeCharacterInstance" handler re-enforces the same rule server-side (WorldRoom.ts). */
-  onDeleteInstance(characterId: string): void;
+  onOpenCharacterSheet(characterId: string, instanceId: string | undefined): void;
+  onEditTokenProperties(characterId: string, instanceId: string | undefined): void;
+  onSelectStatusEffects(characterId: string, instanceId: string | undefined): void;
+  /** MVP goal item 4 follow-up -- real request: "add a 'delete' to the right click character menu, which will delete the instance in 3d in the game but not the link or character." Only ever invoked when `open()`'s own `instanceId` was defined (see its own doc) -- never trust that alone, though; net.ts's own "removeCharacterInstance" handler re-enforces the same rule server-side (WorldRoom.ts). */
+  onDeleteInstance(instanceId: string): void;
 }
 
 export interface CharacterContextMenuController {
   /**
    * Opens the menu at the given viewport coordinates (e.g. the
-   * pointer-lock-exited click position) for the given character.
-   * `canDelete` enables/disables the "Delete instance" button --
-   * real request: "make it so that the player cannot delete the
-   * character instance they're controlling" -- net.ts passes false
-   * for the character you're currently focused on/controlling.
+   * pointer-lock-exited click position) for the given character/
+   * instance. `instanceId` ALSO enables/disables the "Delete instance"
+   * button: undefined (the focused character -- it structurally has
+   * no instanceId) disables it -- real request: "make it so that the
+   * player cannot delete the character instance they're controlling."
    */
-  open(x: number, y: number, characterId: string, canDelete: boolean): void;
+  open(x: number, y: number, characterId: string, instanceId: string | undefined): void;
   close(): void;
   isOpen(): boolean;
   destroy(): void;
@@ -64,6 +72,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
 
   let open = false;
   let activeCharacterId: string | null = null;
+  let activeInstanceId: string | undefined;
   // Real bug found live, confirmed via direct source reading, not guessed:
   // the SAME right-click mousedown that opens this menu (via net.ts's
   // voxelEditor.ts alt-fire handler, itself synchronously emitted by
@@ -84,6 +93,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
     if (!open) return;
     open = false;
     activeCharacterId = null;
+    activeInstanceId = undefined;
     menu.style.display = "none";
     releaseCapture(CAPTURE_REASON);
   }
@@ -99,29 +109,31 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
   document.addEventListener("keydown", onKeyDown);
 
   openSheetBtn.addEventListener("click", () => {
-    if (activeCharacterId) callbacks.onOpenCharacterSheet(activeCharacterId);
+    if (activeCharacterId) callbacks.onOpenCharacterSheet(activeCharacterId, activeInstanceId);
     close();
   });
   editTokenBtn.addEventListener("click", () => {
-    if (activeCharacterId) callbacks.onEditTokenProperties(activeCharacterId);
+    if (activeCharacterId) callbacks.onEditTokenProperties(activeCharacterId, activeInstanceId);
     close();
   });
   statusEffectsBtn.addEventListener("click", () => {
-    if (activeCharacterId) callbacks.onSelectStatusEffects(activeCharacterId);
+    if (activeCharacterId) callbacks.onSelectStatusEffects(activeCharacterId, activeInstanceId);
     close();
   });
   deleteInstanceBtn.addEventListener("click", () => {
-    if (activeCharacterId && !deleteInstanceBtn.disabled) callbacks.onDeleteInstance(activeCharacterId);
+    if (activeInstanceId && !deleteInstanceBtn.disabled) callbacks.onDeleteInstance(activeInstanceId);
     close();
   });
 
   return {
-    open(x: number, y: number, characterId: string, canDelete: boolean): void {
+    open(x: number, y: number, characterId: string, instanceId: string | undefined): void {
       open = true;
       activeCharacterId = characterId;
+      activeInstanceId = instanceId;
       menu.style.left = `${x}px`;
       menu.style.top = `${y}px`;
       menu.style.display = "block";
+      const canDelete = instanceId !== undefined;
       deleteInstanceBtn.disabled = !canDelete;
       deleteInstanceBtn.title = canDelete ? "" : "Can't delete the character you're currently controlling";
       requestCapture(CAPTURE_REASON);
