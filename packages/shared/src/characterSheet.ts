@@ -91,8 +91,13 @@ export const RESERVED_BODY_SIZE_VARIABLES: CharacterSheetVariableDef[] = [
  * preview (valid/invalid color while dragging) and the server's own
  * re-validation of a "placeCharacter" message (never trust the
  * client's own check) agree on the exact same number.
+ *
+ * Real feedback after the first playtest: "I should be able to zoom
+ * out more and still place characters" -- 16 was too tight for
+ * placing something while zoomed/scouted out. Bumped to 256 ("160 or
+ * 320 or so").
  */
-export const MAX_CHARACTER_PLACEMENT_DISTANCE = 16;
+export const MAX_CHARACTER_PLACEMENT_DISTANCE = 256;
 
 /**
  * x-of-y values store BOTH halves in `variableValues` -- the "current"
