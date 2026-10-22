@@ -179,6 +179,45 @@ describe("GameRoom", () => {
     }
   });
 
+  it("chatSend's asCharacterId attributes the message to that character's name instead of the account's, when the sender's account is permitted to view it (MVP goal item 4 follow-up -- 'characters' tab)", async () => {
+    const owner = store.createAccount(`GameRoom-test-ascharacter-owner-${Date.now()}`);
+    const character = store.createCharacter(owner.id, "Thrain", [0.1, 0.2, 0.3]);
+    try {
+      const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+      const sender = await colyseus.connectTo(room, { name: "Alice", accountId: owner.id });
+      const observer = await colyseus.connectTo(room, { name: "Bob" });
+
+      const received = new Promise<{ text: string; senderName: string }>((resolve) => observer.onMessage("chatMessage", resolve));
+      sender.send("chatSend", { text: "I attack!", asCharacterId: character.id });
+
+      const message = await received;
+      expect(message.senderName).toBe("Thrain");
+      expect(message.text).toBe("I attack!");
+    } finally {
+      store.deleteAccount(owner.id);
+    }
+  });
+
+  it("chatSend's asCharacterId falls back to the account's own name, not an error, when the sender isn't permitted to view that character (or the id is unknown/missing)", async () => {
+    const owner = store.createAccount(`GameRoom-test-ascharacter-denied-owner-${Date.now()}`);
+    const character = store.createCharacter(owner.id, "NotYours", [0.1, 0.2, 0.3]);
+    try {
+      const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+      const stranger = store.createAccount(`GameRoom-test-ascharacter-denied-stranger-${Date.now()}`);
+      const sender = await colyseus.connectTo(room, { name: "Stranger", accountId: stranger.id });
+      const observer = await colyseus.connectTo(room, { name: "Bob" });
+
+      const received = new Promise<{ senderName: string }>((resolve) => observer.onMessage("chatMessage", resolve));
+      sender.send("chatSend", { text: "sneaky", asCharacterId: character.id });
+
+      const message = await received;
+      expect(message.senderName).toBe("Stranger");
+      store.deleteAccount(stranger.id);
+    } finally {
+      store.deleteAccount(owner.id);
+    }
+  });
+
   it("a blank message is silently ignored -- no broadcast, no error", async () => {
     const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
     const sender = await colyseus.connectTo(room, { name: "Alice" });

@@ -119,12 +119,30 @@ const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT
   const character = store.getCharacter(characterId);
   if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
   const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
-  if (accountId !== character.ownerAccountId) throw new APIError("UNAUTHORIZED", { message: "not this character's owner" });
+  // Real correction (MVP goal item 4 follow-up, "characters" tab): a
+  // game admin can now edit a character they don't own too, once it's
+  // linked into one of their games -- not just the character's own
+  // owner.
+  if (accountId !== character.ownerAccountId && !store.canAccountEditCharacter(accountId, characterId)) throw new APIError("UNAUTHORIZED", { message: "not this character's owner or an admin of a game it's linked to" });
   const templateId = typeof ctx.body?.templateId === "string" ? ctx.body.templateId : null;
   const customSheet = typeof ctx.body?.customSheet === "object" && ctx.body.customSheet !== null ? ctx.body.customSheet : null;
   const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
   store.updateCharacterSheet(characterId, templateId, customSheet, variableValues);
   return store.getCharacter(characterId);
+});
+
+// Fetches a single character by id for a viewer who doesn't necessarily
+// own it (fetchCharactersForAccount is scoped to one account's OWN
+// characters only) -- backs the in-game character-sheet popup/popout.
+// `canEdit` is computed server-side (store.canAccountEditCharacter) so
+// the client never has to re-implement the admin/ownership check.
+const getCharacter = createEndpoint("/characters/:id", { method: "GET", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const viewerAccountId = typeof ctx.query?.viewerAccountId === "string" ? ctx.query.viewerAccountId : "";
+  if (!store.canAccountViewCharacter(viewerAccountId, characterId)) throw new APIError("UNAUTHORIZED", { message: "not permitted to view this character" });
+  return { character, canEdit: viewerAccountId === character.ownerAccountId || store.canAccountEditCharacter(viewerAccountId, characterId) };
 });
 
 // Live-preview resolution of a sheet page's `{{modId.fn(args)}}` calls
@@ -243,6 +261,44 @@ const deleteGameMod = createEndpoint("/games/:id/mods/:modId", { method: "DELETE
   return store.getGame(gameId)?.modIds ?? [];
 });
 
+// ---- game<->character links ("Characters" tab) -- many-to-many, with
+// optional folders. Self-service by design: an account can link its
+// OWN character to any game it knows the id of; only a game admin can
+// manage (folder/visibility/unlink) a link for a character it doesn't
+// own -- gating lives in store.ts (same shape every linking method
+// shares), this file just surfaces it over HTTP.
+
+const getGameCharacters = createEndpoint("/games/:id/characters", { method: "GET", scope: "http" }, async (ctx) => {
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  return store.listVisibleCharactersForGameAndAccount(ctx.params.id, accountId);
+});
+
+const postGameCharacter = createEndpoint("/games/:id/characters", { method: "POST", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  const characterId = typeof ctx.body?.characterId === "string" ? ctx.body.characterId : "";
+  if (!characterId) throw new APIError("BAD_REQUEST", { message: "characterId is required" });
+  const folder = typeof ctx.body?.folder === "string" ? ctx.body.folder : null;
+  store.linkCharacterToGame(gameId, characterId, accountId, folder);
+  return store.listVisibleCharactersForGameAndAccount(gameId, accountId);
+});
+
+const patchGameCharacter = createEndpoint("/games/:id/characters/:characterId", { method: "PATCH", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  const folder = typeof ctx.body?.folder === "string" || ctx.body?.folder === null ? ctx.body.folder : undefined;
+  const visibility = ctx.body?.visibility === "all" || Array.isArray(ctx.body?.visibility) ? ctx.body.visibility : undefined;
+  store.updateGameCharacterLink(gameId, ctx.params.characterId, accountId, { folder, visibility });
+  return store.listVisibleCharactersForGameAndAccount(gameId, accountId);
+});
+
+const deleteGameCharacter = createEndpoint("/games/:id/characters/:characterId", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  store.unlinkCharacterFromGame(gameId, ctx.params.characterId, accountId);
+  return store.listVisibleCharactersForGameAndAccount(gameId, accountId);
+});
+
 const routes = createRouter({
   getAccounts,
   postAccount,
@@ -254,6 +310,7 @@ const routes = createRouter({
   getAccountCharacterSheetTemplates,
   getAccountCharacterSheetLibraries,
   putCharacterSheet,
+  getCharacter,
   postCharacterSheetPreview,
   getGames,
   postGame,
@@ -264,6 +321,10 @@ const routes = createRouter({
   getGameMods,
   postGameMod,
   deleteGameMod,
+  getGameCharacters,
+  postGameCharacter,
+  patchGameCharacter,
+  deleteGameCharacter,
 });
 
 export const server = defineServer({

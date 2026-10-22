@@ -16,6 +16,8 @@ export const PlayerPresence = schema(
     tokenColorR: t.number().default(0),
     tokenColorG: t.number().default(0),
     tokenColorB: t.number().default(0),
+    /** MVP goal item 4 follow-up ("characters" tab) -- flattened once at join, same "flatten once at join" precedent as every other field here, so GameRoom.ts's chatSend handler can permission-check "is this session's account allowed to post as THIS character" (store.canAccountViewCharacter) without a live store/account lookup keyed off nothing. Never trusted for anything admin-related (this room has no admin concept), only this one chat-attribution check. */
+    accountId: t.string().default(""),
   },
   "PlayerPresence",
 );

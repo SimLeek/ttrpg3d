@@ -50,6 +50,8 @@ interface JoinOptions {
 
 interface ChatSendMessage {
   text: string;
+  /** MVP goal item 4 follow-up ("characters" tab): "a player should be able to drop down and select what character they want to post as out of all the characters they have access to." Optional -- omitted/invalid/unpermitted falls back to the session's own account name, same "stale id, not a crash" spirit used everywhere else, never an error. */
+  asCharacterId?: string;
 }
 
 /** Substitutes every `[[...]]` segment in `text` with its resolved roll result (or an inline error marker for a malformed segment) -- graceful per-segment degradation, never drops the whole message over one bad segment. */
@@ -81,7 +83,12 @@ export class GameRoom extends Room<{ state: GameStateType }> {
     this.onMessage<ChatSendMessage>("chatSend", (client, message) => {
       const text = message.text?.trim();
       if (!text) return;
-      const senderName = this.state.players.get(client.sessionId)?.name ?? "Unknown";
+      const sender = this.state.players.get(client.sessionId);
+      // "Post as" a character instead of the account -- only if this
+      // session's own account is actually permitted to view that
+      // character (owns it, or it's shared/linked visibly to them).
+      const asCharacter = message.asCharacterId && sender?.accountId && store.canAccountViewCharacter(sender.accountId, message.asCharacterId) ? store.getCharacter(message.asCharacterId) : undefined;
+      const senderName = asCharacter?.name ?? sender?.name ?? "Unknown";
 
       const rollArg = parseSlashRoll(text);
       if (rollArg !== null) {
@@ -109,6 +116,7 @@ export class GameRoom extends Room<{ state: GameStateType }> {
     const name = options?.name || `Player-${client.sessionId.slice(0, 4)}`;
     const presence = new PlayerPresence();
     presence.name = name;
+    presence.accountId = options?.accountId ?? "";
     // Same default-character fallback as WorldRoom.ts's onJoin -- a
     // characterless join resolves/auto-creates the account's default
     // character instead of leaving the party-list panel showing a flat

@@ -14,12 +14,32 @@
 import Navigo from "navigo";
 import { mountLobby, type Account, type GameRecord, type WorldRecord } from "./lobby.js";
 import { startGame, type RunningGame } from "./game.js";
-import { fetchAccounts, fetchGames, fetchWorldsForGame, fetchGameChat, fetchAvailableMods, fetchGameMods, enableGameMod, disableGameMod, ACCOUNT_STORAGE_KEY, CHARACTER_STORAGE_KEY } from "./api.js";
+import {
+  fetchAccounts,
+  fetchGames,
+  fetchWorldsForGame,
+  fetchGameChat,
+  fetchAvailableMods,
+  fetchGameMods,
+  enableGameMod,
+  disableGameMod,
+  fetchCharactersForAccount,
+  fetchGameCharacters,
+  linkCharacterToGame,
+  updateGameCharacterLink,
+  unlinkCharacterFromGame,
+  ACCOUNT_STORAGE_KEY,
+  CHARACTER_STORAGE_KEY,
+  type CharacterRecord,
+  type GameCharactersResult,
+} from "./api.js";
 import { connectChat, type ChatConnection } from "./chatNet.js";
 import { mountChatPanel, type ChatPanelController } from "./chatPanel.js";
 import { mountQuickActionsPanel, type QuickActionsPanelController } from "./quickActionsPanel.js";
 import { mountPartyListPanel, type PartyListPanelController } from "./partyListPanel.js";
 import { mountCharactersPage } from "./characters.js";
+import { mountCharacterSheetPopup, type CharacterSheetPopupController } from "./characterSheetPopup.js";
+import { mountCharacterSheetWindow } from "./characterSheetWindow.js";
 
 const wsUrl = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_SERVER_URL ?? "ws://localhost:2567";
 const httpUrl = wsUrl.replace(/^ws/, "http");
@@ -27,6 +47,7 @@ const httpUrl = wsUrl.replace(/^ws/, "http");
 const router = new Navigo("/");
 const lobbyEl = document.getElementById("lobby")!;
 const charactersEl = document.getElementById("characters")!;
+const characterSheetWindowEl = document.getElementById("character-sheet-window")!;
 
 // Navigo resolves routes from the URL alone; the game/world/account the
 // lobby's "Play" click picked travels through this instead of being
@@ -62,12 +83,19 @@ function stopRunningGameIfAny(): void {
 // is a no-op and this one is what actually wires it up).
 let unsubscribeGmTab: (() => void) | null = null;
 
+/** MVP goal item 4 follow-up ("characters" tab): reused from this SAME gmOverride signal -- "is this account an admin of this game" is exactly what controls whether the Characters tab's folder/visibility/unlink controls show on every row, not just the viewer's own. No second permission round-trip. */
+let isCurrentAccountGameAdmin = false;
+
 function wireGmTabToCurrentRunningGame(): void {
   unsubscribeGmTab?.();
   unsubscribeGmTab = null;
   if (!runningGame || !runningChat) return;
   const chatPanel = runningChat.chatPanel;
-  const unsubActive = runningGame.onGmActiveChange((active) => chatPanel.setGmTabVisible(active));
+  const unsubActive = runningGame.onGmActiveChange((active) => {
+    chatPanel.setGmTabVisible(active);
+    isCurrentAccountGameAdmin = active;
+    pushCharactersState();
+  });
   const unsubSeeThroughWalls = runningGame.onSeeThroughWallsChange((enabled) => chatPanel.setSeeThroughWallsState(enabled));
   unsubscribeGmTab = () => {
     unsubActive();
@@ -105,15 +133,37 @@ let runningChat: {
   chatPanel: ChatPanelController;
   quickActionsPanel: QuickActionsPanelController;
   partyListPanel: PartyListPanelController;
+  characterSheetPopup: CharacterSheetPopupController;
   containers: HTMLDivElement[];
   gameId: string;
+  accountId: string;
 } | null = null;
+
+/** MVP goal item 4 follow-up ("characters" tab) -- the account's own characters plus whichever OTHER characters are currently visible to it in this game; pushed into chatPanel.ts's Characters tab AND its compose-row "post as" dropdown (same underlying list, two places it's used there). Refetched after every link/unlink/visibility change. */
+let myCharacters: CharacterRecord[] = [];
+let visibleCharactersResult: GameCharactersResult = { links: [], participantAccounts: [] };
+
+function pushCharactersState(): void {
+  if (!runningChat) return;
+  runningChat.chatPanel.setCharactersState(visibleCharactersResult.links, visibleCharactersResult.participantAccounts, myCharacters.map((c) => ({ id: c.id, name: c.name })), runningChat.accountId, isCurrentAccountGameAdmin);
+}
+
+async function refreshGameCharacters(): Promise<void> {
+  if (!runningChat) return;
+  const { gameId, accountId } = runningChat;
+  const [chars, mine] = await Promise.all([fetchGameCharacters(httpUrl, gameId, accountId), fetchCharactersForAccount(httpUrl, accountId)]);
+  if (!runningChat || runningChat.gameId !== gameId) return; // left/switched games while this was in flight
+  visibleCharactersResult = chars;
+  myCharacters = mine;
+  pushCharactersState();
+}
 
 function stopRunningChatIfAny(): void {
   if (runningChat) {
     runningChat.chatPanel.destroy();
     runningChat.quickActionsPanel.destroy();
     runningChat.partyListPanel.destroy();
+    runningChat.characterSheetPopup.destroy();
     for (const container of runningChat.containers) container.remove();
     runningChat.connection.leave();
     runningChat = null;
@@ -127,9 +177,11 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
     const chatContainer = document.createElement("div");
     const quickActionsContainer = document.createElement("div");
     const partyListContainer = document.createElement("div");
+    const characterSheetPopupContainer = document.createElement("div");
     document.body.appendChild(chatContainer);
     document.body.appendChild(quickActionsContainer);
     document.body.appendChild(partyListContainer);
+    document.body.appendChild(characterSheetPopupContainer);
     void (async () => {
       const [connection, history, availableMods, enabledModIds] = await Promise.all([
         connectChat(wsUrl, game.id, account.displayName, account.id, characterId),
@@ -139,7 +191,7 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
       ]);
       const chatPanel = mountChatPanel(chatContainer, {
         initialMessages: history,
-        onSend: (text) => connection.send(text),
+        onSend: (text, asCharacterId) => connection.send(text, asCharacterId ?? undefined),
         onFocusChange: (focused) => runningGame?.setPointerLock(!focused),
         // Pure REST, per-GAME -- doesn't need the current RunningGame at
         // all, unlike onReloadWorld/onSetSeeThroughWalls below.
@@ -152,6 +204,25 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
         // onFocusChange's setPointerLock call above already relies on.
         onReloadWorld: () => runningGame?.reloadWorld(),
         onSetSeeThroughWalls: (enabled) => runningGame?.setSeeThroughWalls(enabled),
+        // MVP goal item 4 follow-up ("characters" tab) -- all four read
+        // `runningChat` LAZILY for the same reason as onReloadWorld
+        // above (reassigned on every game switch), then refetch the
+        // whole visible-characters list rather than hand-patching it
+        // client-side, same "await the REST response then push the
+        // fresh state back in" shape onToggleMod already uses.
+        onOpenCharacter: (characterId) => runningChat?.characterSheetPopup.open(characterId),
+        onLinkCharacter: (characterId, folder) => {
+          if (!runningChat) return;
+          void linkCharacterToGame(httpUrl, runningChat.gameId, runningChat.accountId, characterId, folder).then(() => refreshGameCharacters());
+        },
+        onUnlinkCharacter: (characterId) => {
+          if (!runningChat) return;
+          void unlinkCharacterFromGame(httpUrl, runningChat.gameId, runningChat.accountId, characterId).then(() => refreshGameCharacters());
+        },
+        onUpdateCharacterLink: (characterId, patch) => {
+          if (!runningChat) return;
+          void updateGameCharacterLink(httpUrl, runningChat.gameId, runningChat.accountId, characterId, patch).then(() => refreshGameCharacters());
+        },
       });
       chatPanel.setModsState(availableMods, enabledModIds);
       connection.onMessage((message) => chatPanel.addMessage(message));
@@ -162,8 +233,23 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
         initialPlayers: [],
         onPresenceChange: connection.onPresenceChange,
       });
+      const characterSheetPopup = mountCharacterSheetPopup(characterSheetPopupContainer, {
+        httpUrl,
+        gameId: game.id,
+        viewerAccountId: account.id,
+        onPostToChat: (characterId, text) => connection.send(text, characterId),
+      });
 
-      runningChat = { connection, chatPanel, quickActionsPanel, partyListPanel, containers: [chatContainer, quickActionsContainer, partyListContainer], gameId: game.id };
+      runningChat = {
+        connection,
+        chatPanel,
+        quickActionsPanel,
+        partyListPanel,
+        characterSheetPopup,
+        containers: [chatContainer, quickActionsContainer, partyListContainer, characterSheetPopupContainer],
+        gameId: game.id,
+        accountId: account.id,
+      };
       // First-entry case: launchGame below already ran synchronously
       // (runningGame is set), but this is the moment runningChat FIRST
       // becomes available -- the launchGame-end call for THIS entry
@@ -171,6 +257,7 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
       // wireGmTabToCurrentRunningGame's own comment for the full
       // two-call-site reasoning.
       wireGmTabToCurrentRunningGame();
+      void refreshGameCharacters();
     })();
   }
   launchGame(game, worldId, worldName, account, characterId);
@@ -186,6 +273,7 @@ router.on("/", () => {
   stopRunningChatIfAny();
   lobbyEl.hidden = false;
   charactersEl.hidden = true;
+  characterSheetWindowEl.hidden = true;
   mountLobby(
     lobbyEl,
     httpUrl,
@@ -209,6 +297,7 @@ router.on("/characters", () => {
   stopRunningChatIfAny();
   lobbyEl.hidden = true;
   charactersEl.hidden = false;
+  characterSheetWindowEl.hidden = true;
   void (async () => {
     const storedAccountId = localStorage.getItem(ACCOUNT_STORAGE_KEY);
     if (!storedAccountId) {
@@ -227,6 +316,7 @@ router.on("/characters", () => {
 
 router.on("/game/:id", (match) => {
   charactersEl.hidden = true;
+  characterSheetWindowEl.hidden = true;
   const gameId = match?.data?.id;
   if (!gameId) {
     router.navigate("/");
@@ -278,6 +368,28 @@ router.on("/game/:id", (match) => {
     pendingPlay = { game, world, account, characterId };
     enterGame(game, world.id, world.name, account, characterId);
   })();
+});
+
+// MVP goal item 4 follow-up ("characters" tab) -- the "pop out into a
+// new separate browser window" destination (characterSheetPopup.ts's
+// window.open target). A genuinely separate browser window hitting
+// this route directly has no runningGame/runningChat of its own to
+// tear down, but defensively does so anyway in case someone navigates
+// here in the SAME tab as an active game (same discipline every other
+// route already follows).
+router.on("/game/:gameId/character/:characterId", (match) => {
+  stopRunningGameIfAny();
+  stopRunningChatIfAny();
+  lobbyEl.hidden = true;
+  charactersEl.hidden = true;
+  characterSheetWindowEl.hidden = false;
+  const gameId = match?.data?.gameId;
+  const characterId = match?.data?.characterId;
+  if (!gameId || !characterId) {
+    router.navigate("/");
+    return;
+  }
+  void mountCharacterSheetWindow(characterSheetWindowEl, httpUrl, wsUrl, gameId, characterId);
 });
 
 router.resolve();

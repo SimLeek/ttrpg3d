@@ -18,7 +18,8 @@ export interface PresenceEntry {
 }
 
 export interface ChatConnection {
-  send(text: string): void;
+  /** `asCharacterId` posts attributed to that character's name instead of this session's own account name -- server-validated (store.canAccountViewCharacter); silently falls back to the account name if omitted/invalid/unpermitted, never an error. */
+  send(text: string, asCharacterId?: string): void;
   /** Subscribes to live new messages (NOT history -- fetch that via api.ts's fetchGameChat). Returns an unsubscribe function. */
   onMessage(cb: (msg: ChatMessage) => void): () => void;
   onError(cb: (reason: string) => void): () => void;
@@ -40,8 +41,8 @@ export async function connectChat(url: string, gameId: string, playerName: strin
   const room: Room = await client.joinOrCreate("game", { gameId, name: playerName, accountId, characterId: characterId ?? undefined });
 
   return {
-    send(text) {
-      room.send("chatSend", { text });
+    send(text, asCharacterId) {
+      room.send("chatSend", { text, asCharacterId });
     },
     onMessage(cb) {
       // room.onMessage itself already returns the unsubscribe function

@@ -21,7 +21,16 @@ let activePanel: ChatPanelController | null = null;
 // doesn't need to pass them explicitly -- tests that actually exercise
 // the tab override them.
 function mount(options: Partial<ChatPanelOptions> & Pick<ChatPanelOptions, "initialMessages" | "onSend">): ChatPanelController {
-  activePanel = mountChatPanel(container, { onToggleMod: vi.fn(), onReloadWorld: vi.fn(), onSetSeeThroughWalls: vi.fn(), ...options });
+  activePanel = mountChatPanel(container, {
+    onToggleMod: vi.fn(),
+    onReloadWorld: vi.fn(),
+    onSetSeeThroughWalls: vi.fn(),
+    onOpenCharacter: vi.fn(),
+    onLinkCharacter: vi.fn(),
+    onUnlinkCharacter: vi.fn(),
+    onUpdateCharacterLink: vi.fn(),
+    ...options,
+  });
   return activePanel;
 }
 
@@ -55,14 +64,14 @@ describe("mountChatPanel", () => {
     expect(container.querySelector(".chat-messages")!.textContent).toContain("invalid dice notation: garbage");
   });
 
-  it("typing a message and pressing Enter sends the trimmed text and clears the input", () => {
+  it("typing a message and pressing Enter sends the trimmed text (as the default 'my username', null) and clears the input", () => {
     const onSend = vi.fn();
     mount({ initialMessages: [], onSend });
     const input = container.querySelector<HTMLInputElement>("#chat-input")!;
     input.focus();
     input.value = "  hello world  ";
     dispatchKeyOn(input, "Enter");
-    expect(onSend).toHaveBeenCalledWith("hello world");
+    expect(onSend).toHaveBeenCalledWith("hello world", null);
     expect(input.value).toBe("");
   });
 
@@ -170,19 +179,19 @@ describe("mountChatPanel", () => {
 });
 
 describe("mountChatPanel's GM tab (MVP goal item 3, docs/ROADMAP.md)", () => {
-  it("the tab bar is hidden until setGmTabVisible(true); becoming visible switches straight to the GM tab, becoming hidden again snaps back to Chat", () => {
+  it("the tab bar itself is always visible (Chat + Characters are always real tabs); the GM button is hidden until setGmTabVisible(true), becoming visible switches straight to the GM tab, becoming hidden again snaps back to Chat", () => {
     const panel = mount({ initialMessages: [], onSend: vi.fn() });
-    const tabs = container.querySelector<HTMLDivElement>("#chat-tabs")!;
-    expect(tabs.classList.contains("show")).toBe(false);
+    const gmTabBtn = container.querySelector<HTMLButtonElement>("#chat-tab-gm-btn")!;
+    expect(gmTabBtn.classList.contains("hidden")).toBe(true);
     expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
 
     panel.setGmTabVisible(true);
-    expect(tabs.classList.contains("show")).toBe(true);
+    expect(gmTabBtn.classList.contains("hidden")).toBe(false);
     expect(container.querySelector("#chat-tab-gm")!.classList.contains("active")).toBe(true);
     expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(false);
 
     panel.setGmTabVisible(false);
-    expect(tabs.classList.contains("show")).toBe(false);
+    expect(gmTabBtn.classList.contains("hidden")).toBe(true);
     expect(container.querySelector("#chat-tab-chat")!.classList.contains("active")).toBe(true);
   });
 
@@ -251,5 +260,84 @@ describe("mountChatPanel's GM tab (MVP goal item 3, docs/ROADMAP.md)", () => {
     checkbox.checked = true;
     checkbox.dispatchEvent(new Event("change"));
     expect(onSetSeeThroughWalls).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP goal item 4 follow-up)", () => {
+  const link = (characterId: string, name: string, ownerAccountId: string, visibility: "all" | string[] = "all", folder: string | null = null) => ({
+    link: { id: `link-${characterId}`, gameId: "g1", characterId, folder, visibility },
+    character: { id: characterId, name, token: { color: [1, 0, 0] as [number, number, number] }, ownerAccountId },
+  });
+
+  it("the compose dropdown offers every visible character plus the default 'My username', and onSend carries whichever is selected", () => {
+    const onSend = vi.fn();
+    const panel = mount({ initialMessages: [], onSend });
+    panel.setCharactersState([link("c1", "Thrain", "me")], [], [{ id: "c1", name: "Thrain" }], "me", false);
+
+    const select = container.querySelector<HTMLSelectElement>("#chat-send-as")!;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["My username", "Thrain"]);
+
+    select.value = "c1";
+    const input = container.querySelector<HTMLInputElement>("#chat-input")!;
+    input.focus();
+    input.value = "I attack!";
+    dispatchKeyOn(input, "Enter");
+    expect(onSend).toHaveBeenCalledWith("I attack!", "c1");
+  });
+
+  it("renders characters grouped by folder, with an '(no folder)' bucket for null, and clicking a row calls onOpenCharacter", () => {
+    const onOpenCharacter = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onOpenCharacter });
+    panel.setCharactersState([link("c1", "Thrain", "me", "all", "NPCs"), link("c2", "Bram", "me", "all", null)], [], [], "me", false);
+
+    const groups = container.querySelectorAll(".character-folder-group h4");
+    expect(Array.from(groups).map((g) => g.textContent)).toEqual(["NPCs", "(no folder)"]);
+
+    container.querySelector<HTMLButtonElement>(".open-character-btn[data-character-id='c1']")!.click();
+    expect(onOpenCharacter).toHaveBeenCalledWith("c1");
+  });
+
+  it("shows folder/visibility/unlink controls on the viewer's OWN character, but not on someone else's, unless isAdmin", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", false);
+
+    expect(container.querySelector(".character-link-manage[data-character-id='mine']")).not.toBeNull();
+    expect(container.querySelector(".character-link-manage[data-character-id='theirs']")).toBeNull();
+
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", true);
+    expect(container.querySelector(".character-link-manage[data-character-id='theirs']")).not.toBeNull();
+  });
+
+  it("toggling 'All players' off/on calls onUpdateCharacterLink with the right visibility shape", () => {
+    const onUpdateCharacterLink = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onUpdateCharacterLink });
+    panel.setCharactersState([link("c1", "Thrain", "me", "all")], [{ id: "other", displayName: "Other" }], [], "me", false);
+
+    const allCheckbox = container.querySelector<HTMLInputElement>(".link-visibility-all")!;
+    allCheckbox.checked = false;
+    allCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onUpdateCharacterLink).toHaveBeenCalledWith("c1", { visibility: [] });
+  });
+
+  it("the link form only offers the viewer's own NOT-yet-linked characters, and clicking Link calls onLinkCharacter", () => {
+    const onLinkCharacter = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onLinkCharacter });
+    panel.setCharactersState([link("c1", "AlreadyLinked", "me")], [], [{ id: "c1", name: "AlreadyLinked" }, { id: "c2", name: "NotYetLinked" }], "me", false);
+
+    const select = container.querySelector<HTMLSelectElement>("#link-character-select")!;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["c2"]);
+
+    container.querySelector<HTMLInputElement>("#link-character-folder")!.value = "Allies";
+    container.querySelector<HTMLButtonElement>("#link-character-btn")!.click();
+    expect(onLinkCharacter).toHaveBeenCalledWith("c2", "Allies");
+  });
+
+  it("clicking Unlink calls onUnlinkCharacter", () => {
+    const onUnlinkCharacter = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onUnlinkCharacter });
+    panel.setCharactersState([link("c1", "Thrain", "me")], [], [], "me", false);
+
+    container.querySelector<HTMLButtonElement>(".unlink-btn")!.click();
+    expect(onUnlinkCharacter).toHaveBeenCalledWith("c1");
   });
 });

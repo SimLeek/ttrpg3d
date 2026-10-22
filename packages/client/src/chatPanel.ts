@@ -31,22 +31,34 @@
 // gmPanel.ts; explicitly rejected: "don't just make everything a
 // window... this should be a gm-only panel in the same space as chat,
 // so it should be another tab... GM on means the tab appears, GM off
-// means the tab disappears"). So: a SECOND tab, "GM", exists in the DOM
-// (and the tab bar itself is shown) ONLY while GM mode is active
-// (gmOverride.ts's own toggle, forwarded through game.ts's RunningGame.
-// onGmActiveChange -- see main.ts's wiring) -- `setGmTabVisible(false)`
-// removes the tab bar entirely and snaps back to the plain Chat view,
-// not just disables/hides it. Content: the per-game mods list (enable/
+// means the tab disappears"). Content: the per-game mods list (enable/
 // disable + a dirty-flagged "Reload this page" button, since no hot-
 // reload exists) and the seeThroughWalls checkbox (blockShaders.ts's
 // xray-cutout shader + cameraZoom.ts's real wall-collision clamp, both
-// toggled together -- see game.ts's own wiring for why). Stays "noa-
-// free, pure presentational" like the rest of this file -- data/actions
-// are props and setXState() push-methods (mirrors addMessage's "push
-// updated data in after mount" shape); main.ts owns the actual
-// fetching/mutation/room-message sends.
+// toggled together -- see game.ts's own wiring for why).
+//
+// MVP goal item 4 follow-up ("characters" tab): a SECOND real tab,
+// "Characters," always visible (not GM-gated) -- real correction: with
+// 2+ always-real tabs now (Chat, Characters), the WHOLE bar is shown
+// unconditionally; only the GM tab itself is still conditionally
+// added/removed (appended last/rightmost, via `setGmTabVisible`,
+// unchanged in spirit from before -- just no longer also gating the
+// bar's own visibility). Tab order: Chat, Characters, GM.
+//
+// Real correction: "a player should be able to drop down and select
+// what character they want to post as out of all the characters they
+// have access to, or their username by default... right above the
+// chat typing entry area." So the compose row also gets a `<select>`
+// populated from the SAME visible-characters list the Characters tab
+// uses -- `onSend`'s signature carries whichever one is currently
+// selected (null = "my username", the default).
+//
+// Stays "noa-free, pure presentational" like the rest of this file --
+// data/actions are props and setXState() push-methods (mirrors
+// addMessage's "push updated data in after mount" shape); main.ts owns
+// the actual fetching/mutation/room-message sends.
 
-import type { ChatMessage, ModManifest } from "./api.js";
+import type { ChatMessage, ModManifest, VisibleGameCharacterEntry } from "./api.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
 import { PERSISTENT_PANEL_Z_INDEX, SAFE_AREA_RIGHT_VAR, setSafeAreaInset } from "./panelLayout.js";
 
@@ -55,11 +67,12 @@ const MAX_WIDTH = 640;
 const DEFAULT_WIDTH = 320;
 const COLLAPSED_WIDTH = 28;
 
-type ChatPanelTab = "chat" | "gm";
+type ChatPanelTab = "chat" | "characters" | "gm";
 
 export interface ChatPanelOptions {
   initialMessages: ChatMessage[];
-  onSend: (text: string) => void;
+  /** `asCharacterId` is whichever character the compose row's "post as" dropdown currently has selected -- null for the default "my username." */
+  onSend: (text: string, asCharacterId: string | null) => void;
   /** Called right after the compose box gains or loses focus, so the caller can suspend/restore pointer-lock mouse-look (a noa concern, kept out of this file). */
   onFocusChange?: (focused: boolean) => void;
   /** Fired when the GM tab's Enable/Disable button is clicked -- main.ts owns the actual `enableGameMod`/`disableGameMod` REST call and feeds the real result back via `setModsState`. */
@@ -68,17 +81,32 @@ export interface ChatPanelOptions {
   onReloadWorld: () => void;
   /** Fired by the GM tab's seeThroughWalls checkbox -- main.ts sends the admin-gated room message via the current RunningGame. */
   onSetSeeThroughWalls: (enabled: boolean) => void;
+  /** Fired by clicking a character row in the Characters tab -- main.ts opens the character-sheet popup. */
+  onOpenCharacter: (characterId: string) => void;
+  /** Fired by the "Link" button -- main.ts owns the actual REST call and feeds the fresh list back via `setCharactersState`. */
+  onLinkCharacter: (characterId: string, folder: string | null) => void;
+  onUnlinkCharacter: (characterId: string) => void;
+  onUpdateCharacterLink: (characterId: string, patch: { folder?: string | null; visibility?: "all" | string[] }) => void;
 }
 
 export interface ChatPanelController {
   addMessage(message: ChatMessage): void;
   showError(reason: string): void;
-  /** Shows/hides the GM tab (and its whole tab bar) -- driven by gmOverride.ts's own toggle (GM on = true), not a separate hotkey. Hiding while the GM tab is the active one snaps back to Chat. */
+  /** Shows/hides JUST the GM tab button+pane -- driven by gmOverride.ts's own toggle (GM on = true), not a separate hotkey. The outer tab bar itself is always visible now (Chat + Characters are always real tabs). Hiding while the GM tab is the active one snaps back to Chat. */
   setGmTabVisible(visible: boolean): void;
   /** Pushes fresh mod data into the GM tab (initial fetch, and after every toggle's REST response) -- same "data arrives after mount" shape as addMessage. */
   setModsState(availableMods: ModManifest[], enabledModIds: string[]): void;
   /** Reflects the room's current seeThroughWalls value in the GM tab's checkbox (initial value, and any live change -- e.g. another admin toggled it). */
   setSeeThroughWallsState(enabled: boolean): void;
+  /**
+   * Pushes fresh data into the Characters tab AND the compose row's
+   * "post as" dropdown (same underlying list, two places it's used).
+   * `isAdmin` governs whether folder/visibility/unlink controls show
+   * on EVERY row (an admin can manage any linked character) or only
+   * the viewer's own (reused from the SAME gmOverride signal the GM
+   * tab's own visibility already uses, not a second permission system).
+   */
+  setCharactersState(visibleLinks: VisibleGameCharacterEntry[], participantAccounts: { id: string; displayName: string }[], myCharacters: { id: string; name: string }[], viewerAccountId: string, isAdmin: boolean): void;
   /** Removes this panel's window-level key listener and releases its input capture if the compose box was left focused. Mirrors hotbar.ts's destroy() pattern. */
   destroy(): void;
 }
@@ -111,15 +139,26 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       .chat-resize-handle { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; cursor: ew-resize; }
       .chat-toggle { position: absolute; top: 8px; left: -24px; width: 24px; height: 32px; background: rgba(20,20,24,0.85); border: 2px solid rgba(200,200,200,0.4); border-right: none; border-radius: 4px 0 0 4px; cursor: pointer; color: #eee; font-size: 14px; display: flex; align-items: center; justify-content: center; }
       .chat-body { display: flex; flex-direction: column; height: 100%; min-width: 0; }
-      /* Hidden by default -- only shown while the GM tab exists
-         (setGmTabVisible(true)). With just one real tab (Chat), the
-         bar itself is dead chrome, not just an inert second button. */
-      .chat-tabs { display: none; flex: none; border-bottom: 1px solid rgba(200,200,200,0.3); }
-      .chat-tabs.show { display: flex; }
+      /* Always visible now -- Chat + Characters are always 2 real
+         tabs. Only the GM button itself (.hidden) toggles. */
+      .chat-tabs { display: flex; flex: none; border-bottom: 1px solid rgba(200,200,200,0.3); }
       .chat-tab-btn { flex: 1; padding: 6px 4px; font-size: 12px; background: none; border: none; color: #999; cursor: pointer; border-bottom: 2px solid transparent; }
       .chat-tab-btn.active { color: #eee; border-bottom-color: rgb(255,217,51); }
+      .chat-tab-btn.hidden { display: none; }
       .chat-tab-pane { display: none; flex-direction: column; flex: 1 1 auto; min-height: 0; }
       .chat-tab-pane.active { display: flex; }
+      .chat-send-as { flex: none; width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 4px 6px; font-size: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }
+      .chat-characters-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 12px; }
+      .link-character-form { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+      .link-character-form select, .link-character-form input { font-size: 12px; padding: 4px; }
+      .character-folder-group h4 { margin: 10px 0 4px; font-size: 11px; color: #999; text-transform: uppercase; }
+      .character-link-list { list-style: none; padding: 0; margin: 0; }
+      .character-link-list li { padding: 6px 8px; margin-bottom: 4px; background: rgba(255,255,255,0.06); border-radius: 4px; }
+      .character-link-list .open-character-btn { display: block; width: 100%; text-align: left; font-weight: bold; background: none; border: none; color: rgb(255,217,51); cursor: pointer; padding: 2px 0; }
+      .character-link-manage { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 4px; font-size: 11px; }
+      .character-link-manage input[type="text"] { width: 90px; font-size: 11px; padding: 2px 4px; }
+      .character-link-manage select { font-size: 11px; max-width: 120px; }
+      .character-link-list .empty { color: #777; font-style: italic; }
       /* Only the message list scrolls -- NOT the panel or document (the
          exact class of bug lobby.ts's own scroll fix already dealt with:
          index.html's html/body overflow:hidden would otherwise make any
@@ -148,12 +187,26 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       <div class="chat-body">
         <div class="chat-tabs" id="chat-tabs">
           <button class="chat-tab-btn active" id="chat-tab-chat-btn" type="button">Chat</button>
-          <button class="chat-tab-btn" id="chat-tab-gm-btn" type="button">GM</button>
+          <button class="chat-tab-btn" id="chat-tab-characters-btn" type="button">Characters</button>
+          <button class="chat-tab-btn hidden" id="chat-tab-gm-btn" type="button">GM</button>
         </div>
         <div class="chat-tab-pane active" id="chat-tab-chat">
           <div class="chat-messages" id="chat-messages"></div>
           <div class="chat-input-row">
+            <select class="chat-send-as" id="chat-send-as" title="Post as">
+              <option value="">My username</option>
+            </select>
             <input id="chat-input" type="text" placeholder="Press Enter to chat..." />
+          </div>
+        </div>
+        <div class="chat-tab-pane" id="chat-tab-characters">
+          <div class="chat-characters-body" id="chat-characters-body">
+            <div class="link-character-form">
+              <select id="link-character-select"></select>
+              <input id="link-character-folder" type="text" placeholder="Folder (optional)" />
+              <button type="button" id="link-character-btn">Link</button>
+            </div>
+            <div id="character-groups"></div>
           </div>
         </div>
         <div class="chat-tab-pane" id="chat-tab-gm">
@@ -176,30 +229,129 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   const resizeHandle = container.querySelector<HTMLDivElement>("#chat-resize-handle")!;
   const messagesEl = container.querySelector<HTMLDivElement>("#chat-messages")!;
   const input = container.querySelector<HTMLInputElement>("#chat-input")!;
-  const tabsEl = container.querySelector<HTMLDivElement>("#chat-tabs")!;
+  const sendAsSelect = container.querySelector<HTMLSelectElement>("#chat-send-as")!;
   const chatTabBtn = container.querySelector<HTMLButtonElement>("#chat-tab-chat-btn")!;
+  const charactersTabBtn = container.querySelector<HTMLButtonElement>("#chat-tab-characters-btn")!;
   const gmTabBtn = container.querySelector<HTMLButtonElement>("#chat-tab-gm-btn")!;
   const chatTabPane = container.querySelector<HTMLDivElement>("#chat-tab-chat")!;
+  const charactersTabPane = container.querySelector<HTMLDivElement>("#chat-tab-characters")!;
   const gmTabPane = container.querySelector<HTMLDivElement>("#chat-tab-gm")!;
   const seeThroughWallsCheckbox = container.querySelector<HTMLInputElement>("#chat-see-through-walls")!;
   const modListEl = container.querySelector<HTMLUListElement>("#mod-list")!;
   const reloadBtn = container.querySelector<HTMLButtonElement>("#chat-reload-btn")!;
+  const linkSelectEl = container.querySelector<HTMLSelectElement>("#link-character-select")!;
+  const linkFolderInput = container.querySelector<HTMLInputElement>("#link-character-folder")!;
+  const linkBtn = container.querySelector<HTMLButtonElement>("#link-character-btn")!;
+  const characterGroupsEl = container.querySelector<HTMLDivElement>("#character-groups")!;
 
   let collapsed = false;
   let currentWidth = DEFAULT_WIDTH;
   let activeTab: ChatPanelTab = "chat";
   let availableMods: ModManifest[] = [];
   let enabledModIds: string[] = [];
+  let visibleLinks: VisibleGameCharacterEntry[] = [];
+  let participantAccounts: { id: string; displayName: string }[] = [];
+  let myCharacters: { id: string; name: string }[] = [];
+  let viewerAccountId = "";
+  let isAdmin = false;
 
   function setActiveTab(tab: ChatPanelTab): void {
     activeTab = tab;
     chatTabBtn.classList.toggle("active", tab === "chat");
+    charactersTabBtn.classList.toggle("active", tab === "characters");
     gmTabBtn.classList.toggle("active", tab === "gm");
     chatTabPane.classList.toggle("active", tab === "chat");
+    charactersTabPane.classList.toggle("active", tab === "characters");
     gmTabPane.classList.toggle("active", tab === "gm");
   }
   chatTabBtn.addEventListener("click", () => setActiveTab("chat"));
+  charactersTabBtn.addEventListener("click", () => setActiveTab("characters"));
   gmTabBtn.addEventListener("click", () => setActiveTab("gm"));
+
+  function renderSendAsOptions(): void {
+    const previouslySelected = sendAsSelect.value;
+    sendAsSelect.innerHTML = `<option value="">My username</option>${visibleLinks.map((entry) => `<option value="${entry.character.id}">${entry.character.name}</option>`).join("")}`;
+    // Keep the current selection if it's still a valid option (same
+    // character still visible) -- a refresh shouldn't silently reset
+    // "who am I posting as" back to the default mid-conversation.
+    if (Array.from(sendAsSelect.options).some((o) => o.value === previouslySelected)) sendAsSelect.value = previouslySelected;
+  }
+
+  function renderCharacterGroups(): void {
+    const notYetLinked = myCharacters.filter((c) => !visibleLinks.some((l) => l.character.id === c.id));
+    linkSelectEl.innerHTML = notYetLinked.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+    linkBtn.disabled = notYetLinked.length === 0;
+
+    if (visibleLinks.length === 0) {
+      characterGroupsEl.innerHTML = `<p class="character-link-list empty">No characters linked to this game yet.</p>`;
+      return;
+    }
+
+    const groups = new Map<string, VisibleGameCharacterEntry[]>();
+    for (const entry of visibleLinks) {
+      const key = entry.link.folder ?? "(no folder)";
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(entry);
+    }
+
+    characterGroupsEl.innerHTML = Array.from(groups.entries())
+      .map(([folder, entries]) => {
+        const rows = entries
+          .map(({ link, character }) => {
+            const canManage = isAdmin || character.ownerAccountId === viewerAccountId;
+            const visibilityIsAll = link.visibility === "all";
+            return `
+          <li data-character-id="${character.id}">
+            <button type="button" class="open-character-btn" data-character-id="${character.id}">${character.name}</button>
+            ${
+              canManage
+                ? `<div class="character-link-manage" data-character-id="${character.id}">
+                  <input type="text" class="link-folder-input" data-character-id="${character.id}" value="${link.folder ?? ""}" placeholder="Folder" />
+                  <label><input type="checkbox" class="link-visibility-all" data-character-id="${character.id}" ${visibilityIsAll ? "checked" : ""} /> All players</label>
+                  ${!visibilityIsAll ? `<select class="link-visibility-list" data-character-id="${character.id}" multiple>${participantAccounts.filter((a) => a.id !== character.ownerAccountId).map((a) => `<option value="${a.id}"${Array.isArray(link.visibility) && link.visibility.includes(a.id) ? " selected" : ""}>${a.displayName}</option>`).join("")}</select>` : ""}
+                  <button type="button" class="unlink-btn" data-character-id="${character.id}">Unlink</button>
+                </div>`
+                : ""
+            }
+          </li>`;
+          })
+          .join("");
+        return `<div class="character-folder-group"><h4>${folder}</h4><ul class="character-link-list">${rows}</ul></div>`;
+      })
+      .join("");
+  }
+
+  characterGroupsEl.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const openBtn = target.closest<HTMLButtonElement>(".open-character-btn");
+    if (openBtn) {
+      options.onOpenCharacter(openBtn.dataset.characterId!);
+      return;
+    }
+    const unlinkBtn = target.closest<HTMLButtonElement>(".unlink-btn");
+    if (unlinkBtn) options.onUnlinkCharacter(unlinkBtn.dataset.characterId!);
+  });
+
+  characterGroupsEl.addEventListener("change", (event) => {
+    const target = event.target as HTMLElement;
+    const manage = target.closest<HTMLDivElement>(".character-link-manage");
+    if (!manage) return;
+    const characterId = manage.dataset.characterId!;
+    if (target instanceof HTMLInputElement && target.classList.contains("link-folder-input")) {
+      options.onUpdateCharacterLink(characterId, { folder: target.value.trim() === "" ? null : target.value });
+    } else if (target instanceof HTMLInputElement && target.classList.contains("link-visibility-all")) {
+      options.onUpdateCharacterLink(characterId, { visibility: target.checked ? "all" : [] });
+    } else if (target instanceof HTMLSelectElement && target.classList.contains("link-visibility-list")) {
+      options.onUpdateCharacterLink(characterId, { visibility: Array.from(target.selectedOptions).map((o) => o.value) });
+    }
+  });
+
+  linkBtn.addEventListener("click", () => {
+    const characterId = linkSelectEl.value;
+    if (!characterId) return;
+    const folder = linkFolderInput.value.trim();
+    options.onLinkCharacter(characterId, folder === "" ? null : folder);
+    linkFolderInput.value = "";
+  });
 
   function renderModsList(): void {
     modListEl.innerHTML = availableMods
@@ -260,7 +412,7 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   function sendAndBlur(): void {
     const text = input.value.trim();
     input.value = "";
-    if (text) options.onSend(text);
+    if (text) options.onSend(text, sendAsSelect.value || null);
     input.blur();
   }
 
@@ -347,7 +499,7 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       appendLine(reason, "err");
     },
     setGmTabVisible(visible) {
-      tabsEl.classList.toggle("show", visible);
+      gmTabBtn.classList.toggle("hidden", !visible);
       if (visible) {
         // Real request: "GM on means the tab appears" -- jump straight
         // to it rather than leaving the GM to notice a new tab exists.
@@ -360,6 +512,15 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       availableMods = nextAvailableMods;
       enabledModIds = nextEnabledModIds;
       renderModsList();
+    },
+    setCharactersState(nextVisibleLinks, nextParticipantAccounts, nextMyCharacters, nextViewerAccountId, nextIsAdmin) {
+      visibleLinks = nextVisibleLinks;
+      participantAccounts = nextParticipantAccounts;
+      myCharacters = nextMyCharacters;
+      viewerAccountId = nextViewerAccountId;
+      isAdmin = nextIsAdmin;
+      renderSendAsOptions();
+      renderCharacterGroups();
     },
     setSeeThroughWallsState(enabled) {
       seeThroughWallsCheckbox.checked = enabled;

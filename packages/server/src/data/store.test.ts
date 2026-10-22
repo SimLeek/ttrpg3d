@@ -392,4 +392,111 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(reopened.listWorldsForGame(game.id)).toHaveLength(1);
     expect(reopened.listCharactersForAccount(owner.id)).toHaveLength(1);
   });
+
+  describe("game<->character links (MVP goal item 4 follow-up -- 'characters' tab, many-to-many with optional folders)", () => {
+    it("linkCharacterToGame is self-service for your own character, a no-op (not an error) for someone else's unless you're a game admin, and upserts rather than duplicating", () => {
+      const owner = store.createAccount("Owner");
+      const stranger = store.createAccount("Stranger");
+      const game = store.createGame("G", owner.id);
+      const character = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+
+      expect(store.linkCharacterToGame(game.id, character.id, stranger.id)).toEqual([]); // not permitted, not an error
+      const linked = store.linkCharacterToGame(game.id, character.id, owner.id, "NPCs");
+      expect(linked).toHaveLength(1);
+      expect(linked[0]).toMatchObject({ gameId: game.id, characterId: character.id, folder: "NPCs", visibility: "all" });
+
+      // Admin of the game can also link someone else's character.
+      store.grantGameAdmin(game.id, stranger.id);
+      const strangerChar = store.createCharacter(stranger.id, "Bram", [0, 1, 0]);
+      expect(store.linkCharacterToGame(game.id, strangerChar.id, stranger.id)).toHaveLength(2);
+
+      // Re-linking an already-linked character doesn't duplicate or reset its folder.
+      expect(store.linkCharacterToGame(game.id, character.id, owner.id)).toHaveLength(2);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links.find((l) => l.character.id === character.id)?.link.folder).toBe("NPCs");
+    });
+
+    it("listVisibleCharactersForGameAndAccount: an admin sees everything; a non-admin sees their own + 'all'-visibility + anything explicitly listed for them, never anything else", () => {
+      const owner = store.createAccount("Owner");
+      const viewer = store.createAccount("Viewer");
+      const stranger = store.createAccount("Stranger");
+      const game = store.createGame("G", owner.id);
+
+      const visibleToAll = store.createCharacter(owner.id, "Visible", [1, 0, 0]);
+      const visibleToViewer = store.createCharacter(owner.id, "Shared", [0, 1, 0]);
+      const privateChar = store.createCharacter(owner.id, "Private", [0, 0, 1]);
+      store.linkCharacterToGame(game.id, visibleToAll.id, owner.id);
+      store.linkCharacterToGame(game.id, visibleToViewer.id, owner.id);
+      store.updateGameCharacterLink(game.id, visibleToViewer.id, owner.id, { visibility: [viewer.id] });
+      store.linkCharacterToGame(game.id, privateChar.id, owner.id);
+      store.updateGameCharacterLink(game.id, privateChar.id, owner.id, { visibility: [] });
+
+      const viewerSees = store.listVisibleCharactersForGameAndAccount(game.id, viewer.id).links.map((l) => l.character.id);
+      expect(viewerSees.sort()).toEqual([visibleToAll.id, visibleToViewer.id].sort());
+
+      const strangerSees = store.listVisibleCharactersForGameAndAccount(game.id, stranger.id).links.map((l) => l.character.id);
+      expect(strangerSees).toEqual([visibleToAll.id]);
+
+      store.grantGameAdmin(game.id, stranger.id);
+      const adminSees = store.listVisibleCharactersForGameAndAccount(game.id, stranger.id).links.map((l) => l.character.id);
+      expect(adminSees.sort()).toEqual([visibleToAll.id, visibleToViewer.id, privateChar.id].sort());
+
+      // participantAccounts is just "who owns any linked character" -- unaffected by visibility.
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, viewer.id).participantAccounts.map((a) => a.id)).toEqual([owner.id]);
+    });
+
+    it("canAccountViewCharacter / canAccountEditCharacter: owner always true; viewer true only via an 'all' or explicit-list link; editor true only via being an admin of a game it's linked to", () => {
+      const owner = store.createAccount("Owner");
+      const viewer = store.createAccount("Viewer");
+      const admin = store.createAccount("Admin");
+      const game = store.createGame("G", owner.id);
+      const character = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+
+      expect(store.canAccountViewCharacter(owner.id, character.id)).toBe(true);
+      expect(store.canAccountViewCharacter(viewer.id, character.id)).toBe(false); // not linked anywhere yet
+      expect(store.canAccountEditCharacter(admin.id, character.id)).toBe(false);
+
+      store.linkCharacterToGame(game.id, character.id, owner.id);
+      store.updateGameCharacterLink(game.id, character.id, owner.id, { visibility: [viewer.id] });
+      expect(store.canAccountViewCharacter(viewer.id, character.id)).toBe(true);
+
+      store.grantGameAdmin(game.id, admin.id);
+      expect(store.canAccountEditCharacter(admin.id, character.id)).toBe(true);
+      expect(store.canAccountViewCharacter(admin.id, character.id)).toBe(false); // admin's edit bypass is separate from the viewer check
+    });
+
+    it("unlinkCharacterFromGame removes just that link; a no-op (not an error) when not permitted or for an unknown link", () => {
+      const owner = store.createAccount("Owner");
+      const stranger = store.createAccount("Stranger");
+      const game = store.createGame("G", owner.id);
+      const character = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+      store.linkCharacterToGame(game.id, character.id, owner.id);
+
+      store.unlinkCharacterFromGame(game.id, character.id, stranger.id); // not permitted
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links).toHaveLength(1);
+
+      store.unlinkCharacterFromGame(game.id, character.id, owner.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links).toHaveLength(0);
+      expect(() => store.unlinkCharacterFromGame(game.id, "not-a-real-character", owner.id)).not.toThrow();
+    });
+
+    it("deleteCharacter/deleteGame/deleteAccount all cascade to drop that character's/game's links", () => {
+      const owner = store.createAccount("Owner");
+      const game = store.createGame("G", owner.id);
+      const charA = store.createCharacter(owner.id, "A", [1, 0, 0]);
+      const charB = store.createCharacter(owner.id, "B", [0, 1, 0]);
+      store.linkCharacterToGame(game.id, charA.id, owner.id);
+      store.linkCharacterToGame(game.id, charB.id, owner.id);
+
+      store.deleteCharacter(charA.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links.map((l) => l.character.id)).toEqual([charB.id]);
+
+      store.deleteGame(game.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links).toEqual([]);
+
+      const game2 = store.createGame("G2", owner.id);
+      store.linkCharacterToGame(game2.id, charB.id, owner.id);
+      store.deleteAccount(owner.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game2.id, owner.id).links).toEqual([]);
+    });
+  });
 });

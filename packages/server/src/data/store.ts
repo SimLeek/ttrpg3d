@@ -163,6 +163,24 @@ export interface CharacterRecord {
   variableValues: Record<string, number | string>;
 }
 
+/**
+ * Many-to-many game<->character link (real request: "a many to many
+ * game to character table... with optional folders to help
+ * organization"). A character stays owned per-account (CharacterRecord
+ * above, unchanged) -- this is purely "which games is this character
+ * ALSO linked into, and who besides the owner/admins can see it
+ * there." One row per (gameId, characterId) pair.
+ */
+export interface GameCharacterLink {
+  id: string;
+  gameId: string;
+  characterId: string;
+  /** Free text, grouping only -- no separate "folder" entity/rename-as-object, just a string characters are grouped by in the UI. */
+  folder: string | null;
+  /** "all" = every player in the game; otherwise the exact list of account ids permitted to see/open it. An empty array means nobody but the owner/admins -- real correction: "owner/admins just see everything no matter what, so that would be the 'none' special option," i.e. an empty list, not a third enum value. */
+  visibility: "all" | string[];
+}
+
 function newId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -172,6 +190,7 @@ export function createStore(baseDir: string) {
   const gamesFile = join(baseDir, "games.json");
   const worldsFile = join(baseDir, "worlds.json");
   const charactersFile = join(baseDir, "characters.json");
+  const gameCharacterLinksFile = join(baseDir, "gameCharacterLinks.json");
 
   function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
@@ -234,6 +253,14 @@ export function createStore(baseDir: string) {
 
   function saveCharacters(characters: CharacterRecord[]): void {
     writeJson(charactersFile, characters);
+  }
+
+  function loadGameCharacterLinks(): GameCharacterLink[] {
+    return readJson<GameCharacterLink[]>(gameCharacterLinksFile, []);
+  }
+
+  function saveGameCharacterLinks(links: GameCharacterLink[]): void {
+    writeJson(gameCharacterLinksFile, links);
   }
 
   /** Deterministic, no-two-defaults-look-identical color for an auto-created default character -- real request: picking a character shouldn't be required just to see something other than a flat gray/placeholder box. Not cryptographic, just spread across the color space. */
@@ -508,6 +535,95 @@ export function createStore(baseDir: string) {
 
     deleteCharacter(id: string): void {
       saveCharacters(loadCharacters().filter((c) => c.id !== id));
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => l.characterId !== id));
+    },
+
+    // ---- game<->character links (many-to-many, with optional folders) --
+
+    /** Permitted if `requestingAccountId` owns the character OR is an admin of `gameId` -- same "stale id, not a crash" spirit as the rest of this file (an unknown game/character id just makes the permission check false, not a throw). Upserts: linking an already-linked character again just no-ops (doesn't reset folder/visibility). Returns the account's own currently-visible list for this game, same "return the fresh state" shape updateCharacterStats's callers already expect. */
+    linkCharacterToGame(gameId: string, characterId: string, requestingAccountId: string, folder: string | null = null): GameCharacterLink[] {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return [];
+      const permitted = character.ownerAccountId === requestingAccountId || this.isGameAdmin(gameId, requestingAccountId);
+      if (!permitted) return [];
+      const links = loadGameCharacterLinks();
+      if (!links.some((l) => l.gameId === gameId && l.characterId === characterId)) {
+        links.push({ id: newId(), gameId, characterId, folder, visibility: "all" });
+        saveGameCharacterLinks(links);
+      }
+      return links.filter((l) => l.gameId === gameId);
+    },
+
+    unlinkCharacterFromGame(gameId: string, characterId: string, requestingAccountId: string): void {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return;
+      const permitted = character.ownerAccountId === requestingAccountId || this.isGameAdmin(gameId, requestingAccountId);
+      if (!permitted) return;
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => !(l.gameId === gameId && l.characterId === characterId)));
+    },
+
+    updateGameCharacterLink(gameId: string, characterId: string, requestingAccountId: string, patch: { folder?: string | null; visibility?: "all" | string[] }): void {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return;
+      const permitted = character.ownerAccountId === requestingAccountId || this.isGameAdmin(gameId, requestingAccountId);
+      if (!permitted) return;
+      const links = loadGameCharacterLinks();
+      const link = links.find((l) => l.gameId === gameId && l.characterId === characterId);
+      if (!link) return;
+      if (patch.folder !== undefined) link.folder = patch.folder;
+      if (patch.visibility !== undefined) link.visibility = patch.visibility;
+      saveGameCharacterLinks(links);
+    },
+
+    /**
+     * An admin of `gameId` sees every link; anyone else sees links where
+     * `visibility === "all"`, `visibility` includes their own accountId,
+     * or they own the character themselves. `participantAccounts` is
+     * the distinct set of owners of EVERY character linked to this game
+     * regardless of visibility (just "who's playing," not sensitive) --
+     * the candidate roster a visibility-editing UI picks specific
+     * players FROM, since no other game-membership/invite list exists
+     * anywhere in this codebase.
+     */
+    listVisibleCharactersForGameAndAccount(gameId: string, accountId: string): { links: { link: GameCharacterLink; character: Pick<CharacterRecord, "id" | "name" | "token" | "ownerAccountId"> }[]; participantAccounts: { id: string; displayName: string }[] } {
+      const allLinks = loadGameCharacterLinks().filter((l) => l.gameId === gameId);
+      const characters = loadCharacters();
+      const accounts = loadAccounts();
+      const isAdmin = this.isGameAdmin(gameId, accountId);
+
+      const joined = allLinks
+        .map((link) => ({ link, character: characters.find((c) => c.id === link.characterId) }))
+        .filter((entry): entry is { link: GameCharacterLink; character: CharacterRecord } => entry.character !== undefined);
+
+      const visible = joined.filter(({ link, character }) => isAdmin || character.ownerAccountId === accountId || link.visibility === "all" || (Array.isArray(link.visibility) && link.visibility.includes(accountId)));
+
+      const participantIds = new Set(joined.map(({ character }) => character.ownerAccountId));
+      const participantAccounts = accounts.filter((a) => participantIds.has(a.id)).map((a) => ({ id: a.id, displayName: a.displayName }));
+
+      return {
+        links: visible.map(({ link, character }) => ({ link, character: { id: character.id, name: character.name, token: character.token, ownerAccountId: character.ownerAccountId } })),
+        participantAccounts,
+      };
+    },
+
+    /** Owner always; otherwise true if ANY link for this character has `visibility === "all"` or includes `accountId`. Used by the single-character fetch endpoint and chat's "post as this character" attribution. */
+    canAccountViewCharacter(accountId: string, characterId: string): boolean {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return false;
+      if (character.ownerAccountId === accountId) return true;
+      return loadGameCharacterLinks()
+        .filter((l) => l.characterId === characterId)
+        .some((l) => l.visibility === "all" || (Array.isArray(l.visibility) && l.visibility.includes(accountId)));
+    },
+
+    /** Owner always; otherwise true if `accountId` is an admin of ANY game this character is linked to. Used to loosen the sheet-edit endpoint's owner-only gate for a GM editing a shared/linked character. */
+    canAccountEditCharacter(accountId: string, characterId: string): boolean {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return false;
+      if (character.ownerAccountId === accountId) return true;
+      return loadGameCharacterLinks()
+        .filter((l) => l.characterId === characterId)
+        .some((l) => this.isGameAdmin(l.gameId, accountId));
     },
 
     /**
@@ -531,12 +647,15 @@ export function createStore(baseDir: string) {
      */
     deleteAccount(id: string): void {
       saveAccounts(loadAccounts().filter((a) => a.id !== id));
+      const removedCharacterIds = new Set(loadCharacters().filter((c) => c.ownerAccountId === id).map((c) => c.id));
       saveCharacters(loadCharacters().filter((c) => c.ownerAccountId !== id));
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => !removedCharacterIds.has(l.characterId)));
     },
 
     deleteGame(id: string): void {
       saveGames(loadGames().filter((g) => g.id !== id));
       saveWorlds(loadWorlds().filter((w) => w.gameId !== id));
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => l.gameId !== id));
     },
 
     deleteWorld(id: string): void {

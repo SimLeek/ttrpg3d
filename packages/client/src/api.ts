@@ -261,3 +261,65 @@ export async function fetchCharacterSheetPreview(httpUrl: string, accountId: str
   });
   return res.json();
 }
+
+// ---- MVP goal item 4 follow-up (docs/ROADMAP.md) -- the in-game
+// "Characters" tab: a many-to-many game<->character link, with
+// optional folders, mirroring the server's store.ts GameCharacterLink
+// exactly.
+
+export interface GameCharacterLink {
+  id: string;
+  gameId: string;
+  characterId: string;
+  folder: string | null;
+  /** "all" = every player in the game; otherwise the exact list of account ids permitted to see/open it. */
+  visibility: "all" | string[];
+}
+
+export interface VisibleGameCharacterEntry {
+  link: GameCharacterLink;
+  character: Pick<CharacterRecord, "id" | "name" | "token" | "ownerAccountId">;
+}
+
+export interface GameCharactersResult {
+  links: VisibleGameCharacterEntry[];
+  /** Distinct owners of EVERY character linked to this game, regardless of visibility -- the candidate roster a visibility-editing UI picks specific players FROM. */
+  participantAccounts: { id: string; displayName: string }[];
+}
+
+export async function fetchGameCharacters(httpUrl: string, gameId: string, accountId: string): Promise<GameCharactersResult> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/characters?accountId=${encodeURIComponent(accountId)}`);
+  return res.json();
+}
+
+/** Self-service: links the CALLER's own character, or (if `accountId` is a game admin) any character -- gated server-side (store.linkCharacterToGame). Returns the account's own updated visible list. */
+export async function linkCharacterToGame(httpUrl: string, gameId: string, accountId: string, characterId: string, folder?: string | null): Promise<GameCharactersResult> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/characters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, characterId, folder }),
+  });
+  return res.json();
+}
+
+export async function updateGameCharacterLink(httpUrl: string, gameId: string, accountId: string, characterId: string, patch: { folder?: string | null; visibility?: "all" | string[] }): Promise<GameCharactersResult> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/characters/${encodeURIComponent(characterId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, ...patch }),
+  });
+  return res.json();
+}
+
+export async function unlinkCharacterFromGame(httpUrl: string, gameId: string, accountId: string, characterId: string): Promise<GameCharactersResult> {
+  const res = await fetch(`${httpUrl}/games/${encodeURIComponent(gameId)}/characters/${encodeURIComponent(characterId)}?accountId=${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+/** Fetches a single character by id for a viewer who doesn't necessarily own it (fetchCharactersForAccount is scoped to one account's OWN characters only) -- backs the in-game character-sheet popup/popout. `canEdit` is computed server-side so the client never re-implements the admin/ownership check. */
+export async function fetchCharacter(httpUrl: string, characterId: string, viewerAccountId: string): Promise<{ character: CharacterRecord; canEdit: boolean }> {
+  const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}?viewerAccountId=${encodeURIComponent(viewerAccountId)}`);
+  return res.json();
+}

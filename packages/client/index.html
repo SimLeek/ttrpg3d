@@ -14,14 +14,24 @@
         background: #1a1a1a;
       }
       #lobby[hidden],
-      #characters[hidden] {
+      #characters[hidden],
+      #character-sheet-window[hidden] {
         display: none;
+      }
+      /* The popped-out character-sheet window (MVP goal item 4 follow-up)
+         needs its own scroll container -- body's overflow:hidden above
+         is load-bearing for the in-game canvas/lobby, but would otherwise
+         clip a sheet taller than one screen in this plain, 3D-free window. */
+      #character-sheet-window {
+        height: 100%;
+        overflow-y: auto;
       }
     </style>
   </head>
   <body>
     <div id="lobby"></div>
     <div id="characters" hidden></div>
+    <div id="character-sheet-window" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
