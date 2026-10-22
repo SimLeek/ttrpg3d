@@ -39,41 +39,8 @@ export const PLAYER_BODY_DEPTH = 0.6;
 export interface PlayerBodyMesh {
   mesh: BABYLON.Mesh;
   material: BABYLON.StandardMaterial;
-  /**
-   * MVP goal item 4 follow-up -- real bug found live: "the billboard is
-   * now getting squished when character height is shrunk... if you
-   * scale it up the billboard should still be right above the box, not
-   * way above, and not intersecting." Root cause: the character-token
-   * billboard is parented to THIS body mesh so it follows position for
-   * free (noa's own render system repositions the body mesh every
-   * frame) -- but Babylon's parent-child transform means the child also
-   * inherits the parent's SCALE. Once bodies resize non-uniformly
-   * (`resizeEntityBody` below), that scale both distorted the
-   * billboard's own aspect ratio AND double-counted into its vertical
-   * offset (the offset is set in the parent's LOCAL space, which
-   * Babylon then multiplies by the parent's current scale again when
-   * computing world position).
-   *
-   * `tokenAnchor` is an invisible `TransformNode`, parented to `mesh`
-   * (so it still follows position for free), whose OWN scale is kept
-   * as the exact INVERSE of the body mesh's current scale (updated
-   * alongside it in `resizeEntityBody`) -- so its effective WORLD
-   * scale is always (1,1,1) regardless of the body's current size.
-   * Parenting the token to THIS instead of `mesh` directly cancels the
-   * distortion at the source: the token's own local position/scaling
-   * can then be set in true world-equivalent units again, exactly like
-   * before bodies were resizable at all.
-   */
-  tokenAnchor: BABYLON.TransformNode;
   /** Same visibility threshold this file already uses for its own box -- exposed so a child attachment (net.ts's local character-token billboard, MVP goal items 1-2) can mirror it instead of duplicating the constant. */
   isThirdPerson(): boolean;
-}
-
-/** The remote-player half of `PlayerBodyMesh.tokenAnchor`'s own doc -- net.ts creates one of these per remote player's body box, for the exact same reason. */
-export function createBodyAnchor(mesh: BABYLON.Mesh): BABYLON.TransformNode {
-  const anchor = new BABYLON.TransformNode(`${mesh.name}-token-anchor`, mesh.getScene());
-  anchor.parent = mesh;
-  return anchor;
 }
 
 /**
@@ -103,14 +70,23 @@ export function createBodyAnchor(mesh: BABYLON.Mesh): BABYLON.TransformNode {
  * the mesh component's OWN existing state object in place instead
  * (`entities.getMeshData`, also noa's own, typed API) -- no
  * remove/re-add, no dispose, nothing else touched.
+ *
+ * Real bug found live, third pass ("the anchor puts the bottom of the
+ * billboard... well above the character 3d box at 0.8, and intersecting
+ * at 2.8 or 3.8"): an earlier version tried to cancel this mesh's scale
+ * for the character-token billboard by parenting it through an
+ * invisible counter-scaled `TransformNode`. That relied on Babylon
+ * composing a billboarded mesh's world transform through a scaled
+ * parent chain in a specific way that turned out NOT to hold up in
+ * practice (confirmed live, not just in theory). The billboard
+ * (net.ts) is now NOT parented to this mesh at all -- it reads this
+ * mesh's own already-correct, already-smooth `.position` (noa's render
+ * system keeps it current every tick regardless) and sets its own
+ * position/scale directly from that, every tick, with zero parent-
+ * chain transform composition involved at all.
  */
-export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Mesh, tokenAnchor: BABYLON.TransformNode, width: number, height: number, depth: number): void {
-  const scaleX = width / PLAYER_BODY_WIDTH;
-  const scaleY = height / PLAYER_BODY_HEIGHT;
-  const scaleZ = depth / PLAYER_BODY_DEPTH;
-  mesh.scaling.set(scaleX, scaleY, scaleZ);
-  // Exact inverse -- see tokenAnchor's own doc on PlayerBodyMesh for why this has to stay in lockstep with the line above, not just be set once at creation.
-  tokenAnchor.scaling.set(1 / scaleX, 1 / scaleY, 1 / scaleZ);
+export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Mesh, width: number, height: number, depth: number): void {
+  mesh.scaling.set(width / PLAYER_BODY_WIDTH, height / PLAYER_BODY_HEIGHT, depth / PLAYER_BODY_DEPTH);
   const meshData = noa.entities.getMeshData(entityId);
   if (meshData) meshData.offset[1] = height / 2;
   noa.entities.setEntitySize(entityId, width, height, depth);
@@ -118,7 +94,7 @@ export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Me
 
 /** The local player's own half of resizeEntityBody -- `noa.playerEntity` is noa's single built-in entity id, always the local player's. */
 export function resizeLocalPlayerBody(noa: Engine, body: PlayerBodyMesh, width: number, height: number, depth: number): void {
-  resizeEntityBody(noa, noa.playerEntity, body.mesh, body.tokenAnchor, width, height, depth);
+  resizeEntityBody(noa, noa.playerEntity, body.mesh, width, height, depth);
 }
 
 export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
@@ -142,7 +118,6 @@ export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
   // Offset matches net.ts's remote-player boxes (`[0, 0.9, 0]`) -- centers
   // the 1.8-tall box on the entity's feet-anchored position.
   entitiesEcs.addComponent(noa.playerEntity, noa.entities.names.mesh, { mesh, offset: [0, 0.9, 0] });
-  const tokenAnchor = createBodyAnchor(mesh);
 
   scene.onBeforeRenderObservable.add(() => {
     mesh.isVisible = noa.camera.currentZoom > FIRST_PERSON_ZOOM_THRESHOLD;
@@ -151,7 +126,6 @@ export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
   return {
     mesh,
     material,
-    tokenAnchor,
     isThirdPerson: () => noa.camera.currentZoom > FIRST_PERSON_ZOOM_THRESHOLD,
   };
 }

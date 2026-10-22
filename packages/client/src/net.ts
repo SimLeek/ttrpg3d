@@ -19,7 +19,7 @@ import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type Cha
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
 import type { PlayerController } from "./movement/PlayerController.js";
-import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, type PlayerBodyMesh } from "./playerBodyMesh.js";
+import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, type PlayerBodyMesh } from "./playerBodyMesh.js";
 
 interface EditBlockMessage {
   x: number;
@@ -380,11 +380,30 @@ export async function connectAndStreamWorld(
     const heightAboveFeet = bodyHeight + TOKEN_CLEARANCE_ABOVE_HEAD + TOKEN_PLANE_HEIGHT / 2;
     return heightAboveFeet - bodyHeight / 2;
   }
+  // Real request, still outstanding until now: "there should be a minimum
+  // size so that things still print" -- a very short character would
+  // otherwise shrink the nameplate/bars to illegibility. Floor, not a
+  // clamp on bodyHeight itself -- a tiny character's COLLISION box still
+  // shrinks correctly, only the billboard's own scale bottoms out.
+  const MIN_TOKEN_SCALE = 0.5;
+  function tokenScaleFor(bodyHeight: number): number {
+    return Math.max(MIN_TOKEN_SCALE, bodyHeight / PLAYER_BODY_HEIGHT);
+  }
+  // Third-pass fix (playerBodyMesh.ts's resizeEntityBody doc has the full
+  // story): the token is no longer parented to the body mesh or any
+  // anchor, so nothing propagates its position automatically through
+  // Babylon's transform hierarchy any more -- this has to be done
+  // explicitly, every tick, for both local and remote players (the body
+  // mesh's own position is already kept current every tick by noa's
+  // render system regardless, confirmed in components/mesh.js).
+  function syncTokenToBody(tokenMesh: BABYLON.Mesh, bodyMesh: BABYLON.Mesh, bodyHeight: number): void {
+    tokenMesh.position.copyFrom(bodyMesh.position);
+    tokenMesh.position.y += tokenYOffsetFor(bodyHeight);
+  }
   const remoteEntities = new Map<string, number>(); // sessionId -> noa entity id
   const remoteMaterials = new Map<string, BABYLON.StandardMaterial>();
   const remoteBodyMeshes = new Map<string, BABYLON.Mesh>(); // sessionId -> body box mesh, for tokenPicking.ts's extraHitboxMeshes
   const remoteTokens = new Map<string, CharacterToken>();
-  const remoteTokenAnchors = new Map<string, BABYLON.TransformNode>(); // sessionId -> the scale-cancelling anchor the token is actually parented to, see playerBodyMesh.ts's own doc
   // MVP goal item 4 follow-up -- last-applied body size per session (local uses the fixed "local" key), so resize only happens on an ACTUAL change rather than every tick.
   const appliedBodySizes = new Map<string, [number, number, number]>();
   const LOCAL_BODY_SIZE_KEY = "__local__";
@@ -537,12 +556,11 @@ export async function connectAndStreamWorld(
         let localToken = remoteTokens.get(sessionId);
         if (!localToken) {
           localToken = createCharacterToken(scene, p.characterName || p.name);
-          // Parented to the scale-cancelling anchor, NOT the body mesh
-          // directly -- see PlayerBodyMesh.tokenAnchor's own doc for
-          // the real squish/offset-drift bug this fixes.
-          localToken.mesh.parent = playerBodyMesh.tokenAnchor;
-          localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
-          localToken.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+          // Not parented to the body mesh at all (third-pass fix -- see
+          // playerBodyMesh.ts's resizeEntityBody doc) -- position/scale
+          // are set explicitly below instead, every tick.
+          syncTokenToBody(localToken.mesh, playerBodyMesh.mesh, p.bodyHeight);
+          localToken.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
           // Real bug found live: a mesh built via plain MeshBuilder and
           // just parented, without ever going through noa's own rendering
           // API, is NEVER added to noa's custom octree-based active-mesh
@@ -565,9 +583,9 @@ export async function connectAndStreamWorld(
 
         if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
           resizeLocalPlayerBody(noa, playerBodyMesh, p.bodyWidth, p.bodyHeight, p.bodyDepth);
-          localToken.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
-          localToken.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+          localToken.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
         }
+        syncTokenToBody(localToken.mesh, playerBodyMesh.mesh, p.bodyHeight);
         localToken.update({
           name: p.characterName || p.name,
           bars: toTokenBars(p.bars),
@@ -600,28 +618,23 @@ export async function connectAndStreamWorld(
         remoteEntities.set(sessionId, eid);
         remoteBodyMeshes.set(sessionId, mesh);
         appliedBodySizes.set(sessionId, [p.bodyWidth, p.bodyHeight, p.bodyDepth]);
-        const anchor = createBodyAnchor(mesh);
-        remoteTokenAnchors.set(sessionId, anchor);
 
         token = createCharacterToken(scene, p.characterName || p.name);
-        // Parented to the scale-cancelling anchor, NOT the body mesh
-        // directly -- see PlayerBodyMesh.tokenAnchor's own doc for the
-        // real squish/offset-drift bug this fixes. Still follows the
-        // box's own noa-driven position for free (the anchor is just
-        // an extra link in the SAME parent chain).
-        token.mesh.parent = anchor;
-        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
-        token.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+        // Not parented to the body mesh at all (third-pass fix -- see
+        // playerBodyMesh.ts's resizeEntityBody doc) -- position/scale
+        // are set explicitly below instead, every tick.
+        syncTokenToBody(token.mesh, mesh, p.bodyHeight);
+        token.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
         noa.rendering.addMeshToScene(token.mesh, false); // see the matching comment on the local-token branch above -- same real bug, same fix
         remoteTokens.set(sessionId, token);
       } else {
         noa.entities.setPosition(eid, [p.x, p.y, p.z]);
         material.diffuseColor = p.characterId ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
         if (bodySizeChanged(sessionId, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
-          resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, p.bodyWidth, p.bodyHeight, p.bodyDepth);
-          token.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
-          token.mesh.scaling.setAll(p.bodyHeight / PLAYER_BODY_HEIGHT);
+          resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, p.bodyWidth, p.bodyHeight, p.bodyDepth);
+          token.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
         }
+        syncTokenToBody(token.mesh, remoteBodyMeshes.get(sessionId)!, p.bodyHeight);
       }
 
       token.update({
@@ -638,8 +651,6 @@ export async function connectAndStreamWorld(
         remoteEntities.delete(sessionId);
         remoteBodyMeshes.delete(sessionId); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
         appliedBodySizes.delete(sessionId);
-        remoteTokenAnchors.get(sessionId)?.dispose();
-        remoteTokenAnchors.delete(sessionId);
         remoteTokens.get(sessionId)?.dispose();
         remoteTokens.delete(sessionId);
         remoteMaterials.get(sessionId)?.dispose();
