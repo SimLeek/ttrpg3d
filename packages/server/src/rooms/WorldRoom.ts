@@ -59,9 +59,19 @@ interface PlaceCharacterMessage {
   z: number;
 }
 
-/** MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling). */
+/**
+ * MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling). `direction`
+ * decides WHERE the previously-focused character goes back into
+ * `otherCharacters` (its tail for "next", its head for "previous") --
+ * required for Tab and Shift+Tab to be true inverses of each other
+ * around the ring [focused, ...otherCharacters]. Worked out on paper,
+ * not guessed: without it, "previous" would just be "next" with extra
+ * steps (both ends of the swap land in the same place), so repeatedly
+ * pressing Tab then Shift+Tab would NOT return to the original focus.
+ */
 interface FocusCharacterMessage {
   characterId: string;
+  direction: "next" | "previous";
 }
 
 /** MVP goal item 4 follow-up (right-click "Delete instance"). */
@@ -559,8 +569,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // into a fresh otherCharacters entry, and the target's stored data
     // onto the top-level focused fields -- never a different physics
     // entity (noa.playerEntity stays the one and only), purely a
-    // client-side teleport+relabel in response to this.
-    this.onMessage<FocusCharacterMessage>("focusCharacter", (client, { characterId }) => {
+    // client-side teleport+relabel in response to this. `direction`
+    // decides where the old focus goes back in -- see
+    // FocusCharacterMessage's own doc for why this has to be explicit,
+    // not inferred, for Tab/Shift+Tab to be true inverses.
+    this.onMessage<FocusCharacterMessage>("focusCharacter", (client, { characterId, direction }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender || characterId === sender.characterId) return;
       const targetIndex = sender.otherCharacters.findIndex((o) => o.characterId === characterId);
@@ -570,7 +583,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       const previouslyFocused = snapshotFocusedCharacter(sender);
       applyOtherCharacterAsFocused(sender, target);
       sender.otherCharacters.splice(targetIndex, 1);
-      sender.otherCharacters.push(previouslyFocused);
+      if (direction === "previous") sender.otherCharacters.unshift(previouslyFocused);
+      else sender.otherCharacters.push(previouslyFocused);
     });
 
     // MVP goal item 4 follow-up (right-click context menu "Delete

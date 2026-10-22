@@ -428,7 +428,7 @@ describe("WorldRoom", () => {
       client.send("placeCharacter", { characterId: toFocus.id, ...placedAt });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      client.send("focusCharacter", { characterId: toFocus.id });
+      client.send("focusCharacter", { characterId: toFocus.id, direction: "next" });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(player.characterId).toBe(toFocus.id);
@@ -438,13 +438,66 @@ describe("WorldRoom", () => {
       expect(player.otherCharacters[0].characterId).toBe(focused.id); // the previously-focused one, snapshotted
     });
 
+    it("focusCharacter cycles forward through a 3-character ring and returns to the start after 3 'next' presses (Tab)", async () => {
+      const a = store.createCharacter(owner.id, "RingA", [1, 0, 0]);
+      const b = store.createCharacter(owner.id, "RingB", [0, 1, 0]);
+      const c = store.createCharacter(owner.id, "RingC", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: a.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: b.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: c.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([b.id, c.id]);
+
+      // Tab always targets otherCharacters[0] -- same selection net.ts's own focus-cycling module uses.
+      client.send("focusCharacter", { characterId: player.otherCharacters[0].characterId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(b.id);
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([c.id, a.id]);
+
+      client.send("focusCharacter", { characterId: player.otherCharacters[0].characterId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(c.id);
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([a.id, b.id]);
+
+      client.send("focusCharacter", { characterId: player.otherCharacters[0].characterId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(a.id);
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([b.id, c.id]); // back to the exact starting arrangement
+    });
+
+    it("focusCharacter's 'previous' direction (Shift+Tab) is the true inverse of 'next' (Tab) -- one of each returns to the exact original state", async () => {
+      const a = store.createCharacter(owner.id, "InverseA", [1, 0, 0]);
+      const b = store.createCharacter(owner.id, "InverseB", [0, 1, 0]);
+      const c = store.createCharacter(owner.id, "InverseC", [0, 0, 1]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: a.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: b.id, x: player.x, y: player.y, z: player.z });
+      client.send("placeCharacter", { characterId: c.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Tab (next): targets otherCharacters[0].
+      client.send("focusCharacter", { characterId: player.otherCharacters[0].characterId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.characterId).toBe(b.id);
+
+      // Shift+Tab (previous): targets otherCharacters[last] -- same selection net.ts's own module uses.
+      client.send("focusCharacter", { characterId: player.otherCharacters[player.otherCharacters.length - 1].characterId, direction: "previous" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.characterId).toBe(a.id); // back to the exact original focus
+      expect(player.otherCharacters.map((o) => o.characterId)).toEqual([b.id, c.id]); // and the exact original arrangement
+    });
+
     it("focusCharacter is a no-op for a characterId that isn't one of the sender's own placed characters", async () => {
       const focused = store.createCharacter(owner.id, "StaysFocused", [1, 0, 0]);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
       const player = room.state.players.get(client.sessionId)!;
 
-      client.send("focusCharacter", { characterId: "not-a-real-character" });
+      client.send("focusCharacter", { characterId: "not-a-real-character", direction: "next" });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(player.characterId).toBe(focused.id);
