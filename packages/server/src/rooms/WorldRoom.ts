@@ -1,7 +1,7 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, type WorldStateType } from "./WorldState.js";
-import type { StatusEffect } from "../data/store.js";
+import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
+import { WorldState, PlayerState, StatusEffectState, BarState, type WorldStateType, type PlayerStateType } from "./WorldState.js";
+import type { StatusEffect, CharacterRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -34,12 +34,10 @@ interface JoinOptions {
   characterId?: string;
 }
 
-type CharacterStat = "hp" | "maxHp" | "mp" | "maxMp";
-const CHARACTER_STATS: readonly CharacterStat[] = ["hp", "maxHp", "mp", "maxMp"];
-
-interface SetCharacterStatMessage {
+/** Replaces the old hp/maxHp/mp/maxMp-specific SetCharacterStatMessage -- `variableId` is whichever sheet variable the clicked bar points at (always the CURRENT half; `max` is edited on the character sheet page, not in-game). */
+interface SetCharacterVariableValueMessage {
   characterId: string;
-  stat: CharacterStat;
+  variableId: string;
   value: number;
 }
 
@@ -55,6 +53,56 @@ interface SetCharacterTokenMessage {
 
 function flatIndex(i: number, j: number, k: number): number {
   return i * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + k;
+}
+
+/** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues and replaces the player's whole `bars` Schema array -- used both at join and after any setCharacterVariableValue edit, so every connected session always sees a freshly-derived list rather than a stale one. */
+function applyBarsToPlayer(player: PlayerStateType, character: CharacterRecord): void {
+  player.bars.clear();
+  for (const resolved of resolveCharacterBars(character.customSheet, character.variableValues)) {
+    const bar = new BarState();
+    bar.variableId = resolved.variableId;
+    bar.label = resolved.label;
+    bar.value = resolved.value;
+    bar.max = resolved.max;
+    bar.colorR = resolved.color[0];
+    bar.colorG = resolved.color[1];
+    bar.colorB = resolved.color[2];
+    player.bars.push(bar);
+  }
+}
+
+/**
+ * MVP goal item 4 follow-up ("characters" tab/popup) -- real bug found
+ * live: "updating the popout page variables didn't update the in-game
+ * bars, until I selected one bar, escaped, and the other updated."
+ * Root cause: characters.ts's standalone page, the in-game popup, and
+ * the pop-out window all persist sheet edits via a plain REST PUT
+ * (server.ts's putCharacterSheet) -- which has no way to reach a LIVE
+ * WorldRoom session for that same character to re-resolve its
+ * Schema-synced bars. The "escaping a bar editor updated the OTHER
+ * bar too" symptom was `setCharacterVariableValue`'s own handler
+ * (below) incidentally re-resolving the WHOLE bars array -- it just
+ * takes some UNRELATED room message to trigger that refresh today.
+ *
+ * This in-process registry (every room lives in the same Node
+ * process) tracks which (room, sessionId) pairs are currently playing
+ * each characterId, so a REST edit can reach them directly -- no new
+ * message/poll loop, just a same-process function call. Keyed by
+ * characterId since a character can in principle be active in more
+ * than one room at once (two tabs/sessions); cleaned up in onLeave.
+ */
+const activeCharacterSessions = new Map<string, Set<{ room: WorldRoom; sessionId: string }>>();
+
+/** Called by server.ts's putCharacterSheet, after persisting, to refresh bars for every live session currently playing this character -- across every WorldRoom that has one, not just the current room (same reason setCharacterVariableValue's own handler now also calls this instead of looping its own room only). No-op (not an error) if the character isn't currently played anywhere. */
+export function notifyCharacterSheetChanged(characterId: string): void {
+  const sessions = activeCharacterSessions.get(characterId);
+  if (!sessions || sessions.size === 0) return;
+  const character = store.getCharacter(characterId);
+  if (!character) return;
+  for (const { room, sessionId } of sessions) {
+    const player = room.state.players.get(sessionId);
+    if (player) applyBarsToPlayer(player, character);
+  }
 }
 
 export class WorldRoom extends Room<{ state: WorldStateType }> {
@@ -87,6 +135,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // tracked server-side rather than trusting a client-sent flag (checked
   // once at join via store.isWorldAdmin, not re-derived per message).
   private adminSessionIds = new Set<string>();
+  /** This room's own half of the activeCharacterSessions registry above -- which characterId (if any) each currently-connected session is playing, so onLeave can find and remove the right entry. */
+  private sessionCharacterIds = new Map<string, string>();
 
   // Respawn anchor: real bug found live ("the respawn anchor doesn't seem
   // to persist when switching pages") -- it used to live ONLY in this
@@ -236,24 +286,23 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.yaw = yaw;
     });
 
-    // Click-to-edit HP/MP backend (MVP goal items 1-2). Gated to the
-    // editing character's own owner session or an admin -- same spirit as
-    // setRespawnAnchor's admin gate above, plus a self-edit allowance since
-    // this is a per-character stat a player edits on their own token.
-    this.onMessage<SetCharacterStatMessage>("setCharacterStat", (client, { characterId, stat, value }) => {
-      if (!CHARACTER_STATS.includes(stat)) return;
+    // Click-to-edit bars backend (MVP goal items 1-2, generalized per
+    // docs/ROADMAP.md item 4's follow-up -- was HP/MP-specific
+    // setCharacterStat). Gated to the editing character's own owner
+    // session or an admin -- same spirit as setRespawnAnchor's admin
+    // gate above, plus a self-edit allowance since this is a
+    // per-character value a player edits on their own token.
+    this.onMessage<SetCharacterVariableValueMessage>("setCharacterVariableValue", (client, { characterId, variableId, value }) => {
       const sender = this.state.players.get(client.sessionId);
       const isSelf = sender?.characterId === characterId;
       if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
 
-      store.updateCharacterStats(characterId, stat, value);
-      for (const player of this.state.players.values()) {
-        if (player.characterId === characterId) player[stat] = value;
-      }
+      store.updateCharacterVariableValue(characterId, variableId, value);
+      notifyCharacterSheetChanged(characterId);
     });
 
     // Backs the "Select status effects" context-menu item -- same gating
-    // as setCharacterStat above.
+    // as setCharacterVariableValue above.
     this.onMessage<SetStatusEffectsMessage>("setStatusEffects", (client, { characterId, statusEffects }) => {
       const sender = this.state.players.get(client.sessionId);
       const isSelf = sender?.characterId === characterId;
@@ -273,7 +322,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     });
 
     // Backs the "Edit token properties" context-menu item -- same gating
-    // as setCharacterStat/setStatusEffects above.
+    // as setCharacterVariableValue/setStatusEffects above.
     this.onMessage<SetCharacterTokenMessage>("setCharacterToken", (client, { characterId, color }) => {
       const sender = this.state.players.get(client.sessionId);
       const isSelf = sender?.characterId === characterId;
@@ -329,10 +378,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.tokenColorR = character.token.color[0];
       player.tokenColorG = character.token.color[1];
       player.tokenColorB = character.token.color[2];
-      player.hp = character.hp;
-      player.maxHp = character.maxHp;
-      player.mp = character.mp;
-      player.maxMp = character.maxMp;
+      applyBarsToPlayer(player, character);
+      this.sessionCharacterIds.set(client.sessionId, character.id);
+      const sessions = activeCharacterSessions.get(character.id) ?? new Set();
+      sessions.add({ room: this, sessionId: client.sessionId });
+      activeCharacterSessions.set(character.id, sessions);
       for (const effect of character.statusEffects) {
         const effectState = new StatusEffectState();
         effectState.icon = effect.icon;
@@ -347,6 +397,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.adminSessionIds.delete(client.sessionId);
+    const characterId = this.sessionCharacterIds.get(client.sessionId);
+    if (characterId) {
+      const sessions = activeCharacterSessions.get(characterId);
+      if (sessions) {
+        for (const entry of sessions) {
+          if (entry.room === this && entry.sessionId === client.sessionId) sessions.delete(entry);
+        }
+        if (sessions.size === 0) activeCharacterSessions.delete(characterId);
+      }
+      this.sessionCharacterIds.delete(client.sessionId);
+    }
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }
 }

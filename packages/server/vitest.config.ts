@@ -10,5 +10,19 @@ export default defineConfig({
     // singleton race for that port; run files serially instead of trying to
     // work around the library's hardcoded port.
     fileParallelism: false,
+    // Real bug found live (not flakiness to tolerate, a genuine
+    // under-budget default): these tests are real @colyseus/testing
+    // room connections -- actual async handshakes over a real
+    // WebSocket/HTTP server, not mocked. Vitest's global default
+    // testTimeout (5000ms) is tight enough that a busy dev machine
+    // (confirmed directly via `uptime`/`ps` -- load average over 2x
+    // this machine's core count, from unrelated foreground apps) can
+    // push a single handshake past it even though nothing is actually
+    // hung, reproduced via a clean `git stash` baseline run showing
+    // the exact same timeout failures with zero code changes. Raised
+    // generously (not "just big enough to pass once") since the
+    // failure mode here is a real op running out of wall-clock time
+    // under load, not a hang to paper over.
+    testTimeout: 20000,
   },
 });

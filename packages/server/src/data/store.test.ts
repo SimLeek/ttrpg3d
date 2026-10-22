@@ -178,6 +178,46 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(() => store.setSeeThroughWallsForGame("not-a-real-game", false)).not.toThrow();
   });
 
+  it("createAccount defaults importedModIds to an empty array; importModForAccount/removeModForAccount persist changes, no-op for an unknown account id (MVP goal item 4, slice 1)", () => {
+    const account = store.createAccount("Mod Importer");
+
+    expect(store.getAccount(account.id)?.importedModIds).toEqual([]);
+
+    store.importModForAccount(account.id, "default");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["default"]);
+
+    // Importing the same mod twice doesn't duplicate it.
+    store.importModForAccount(account.id, "default");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["default"]);
+
+    store.importModForAccount(account.id, "stats-library");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["default", "stats-library"]);
+
+    store.removeModForAccount(account.id, "default");
+    expect(store.getAccount(account.id)?.importedModIds).toEqual(["stats-library"]);
+
+    expect(() => store.importModForAccount("not-a-real-account", "default")).not.toThrow();
+    expect(() => store.removeModForAccount("not-a-real-account", "default")).not.toThrow();
+  });
+
+  it("createCharacter defaults templateId/customSheet to null and variableValues to an empty object; updateCharacterSheet persists all three, no-op for an unknown character id (MVP goal item 4)", () => {
+    const owner = store.createAccount("Sheet Owner");
+    const character = store.createCharacter(owner.id, "Sheet Test", [1, 0, 0]);
+
+    expect(store.getCharacter(character.id)?.templateId).toBeNull();
+    expect(store.getCharacter(character.id)?.customSheet).toBeNull();
+    expect(store.getCharacter(character.id)?.variableValues).toEqual({});
+
+    const customSheet = { name: "Custom", pages: [{ title: "Overview", markdown: "# Hi", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }] };
+    store.updateCharacterSheet(character.id, "default", customSheet, { hp: 7, mp: 10 });
+    expect(store.getCharacter(character.id)).toMatchObject({ templateId: "default", customSheet, variableValues: { hp: 7, mp: 10 } });
+
+    store.updateCharacterSheet(character.id, null, null, {});
+    expect(store.getCharacter(character.id)).toMatchObject({ templateId: null, customSheet: null, variableValues: {} });
+
+    expect(() => store.updateCharacterSheet("not-a-real-character", "default", null, {})).not.toThrow();
+  });
+
   it("getWorld returns the world record by id, undefined for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const game = store.createGame("Lookup Game", owner.id);
@@ -213,7 +253,7 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(store.getCharacter(otherCharacter.id)).toEqual(otherCharacter);
   });
 
-  it("createCharacter creates a character with a unique id, defaulted stats, and no status effects", () => {
+  it("createCharacter creates a character with a unique id, no sheet yet, and no status effects", () => {
     const owner = store.createAccount("Owner");
     const a = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
     const b = store.createCharacter(owner.id, "Bram", [0, 0, 1]);
@@ -221,8 +261,7 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(a.id).not.toBe(b.id);
     expect(a.ownerAccountId).toBe(owner.id);
     expect(a.token).toEqual({ color: [1, 0, 0] });
-    expect(a.hp).toBe(a.maxHp);
-    expect(a.mp).toBe(a.maxMp);
+    expect(a.customSheet).toBeNull();
     expect(a.statusEffects).toEqual([]);
   });
 
@@ -275,15 +314,15 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(store.listCharactersForAccount(owner.id)).toHaveLength(1);
   });
 
-  it("updateCharacterStats writes a single stat and persists it; a no-op for an unknown id", () => {
+  it("updateCharacterVariableValue writes a single variableValues entry and persists it, leaving the rest alone; a no-op for an unknown id", () => {
     const owner = store.createAccount("Owner");
     const character = store.createCharacter(owner.id, "Statted", [1, 0, 0]);
+    store.updateCharacterSheet(character.id, null, null, { hp: 10, mp: 10 });
 
-    store.updateCharacterStats(character.id, "hp", 3);
-    expect(store.getCharacter(character.id)?.hp).toBe(3);
-    expect(store.getCharacter(character.id)?.maxHp).toBe(character.maxHp);
+    store.updateCharacterVariableValue(character.id, "hp", 3);
+    expect(store.getCharacter(character.id)?.variableValues).toEqual({ hp: 3, mp: 10 });
 
-    expect(() => store.updateCharacterStats("not-a-real-character", "hp", 99)).not.toThrow();
+    expect(() => store.updateCharacterVariableValue("not-a-real-character", "hp", 99)).not.toThrow();
   });
 
   it("setCharacterStatusEffects replaces the status effects list and persists it", () => {
@@ -352,5 +391,112 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
     expect(reopened.listGamesVisibleTo(owner.id)).toHaveLength(1);
     expect(reopened.listWorldsForGame(game.id)).toHaveLength(1);
     expect(reopened.listCharactersForAccount(owner.id)).toHaveLength(1);
+  });
+
+  describe("game<->character links (MVP goal item 4 follow-up -- 'characters' tab, many-to-many with optional folders)", () => {
+    it("linkCharacterToGame is self-service for your own character, a no-op (not an error) for someone else's unless you're a game admin, and upserts rather than duplicating", () => {
+      const owner = store.createAccount("Owner");
+      const stranger = store.createAccount("Stranger");
+      const game = store.createGame("G", owner.id);
+      const character = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+
+      expect(store.linkCharacterToGame(game.id, character.id, stranger.id)).toEqual([]); // not permitted, not an error
+      const linked = store.linkCharacterToGame(game.id, character.id, owner.id, "NPCs");
+      expect(linked).toHaveLength(1);
+      expect(linked[0]).toMatchObject({ gameId: game.id, characterId: character.id, folder: "NPCs", visibility: "all" });
+
+      // Admin of the game can also link someone else's character.
+      store.grantGameAdmin(game.id, stranger.id);
+      const strangerChar = store.createCharacter(stranger.id, "Bram", [0, 1, 0]);
+      expect(store.linkCharacterToGame(game.id, strangerChar.id, stranger.id)).toHaveLength(2);
+
+      // Re-linking an already-linked character doesn't duplicate or reset its folder.
+      expect(store.linkCharacterToGame(game.id, character.id, owner.id)).toHaveLength(2);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links.find((l) => l.character.id === character.id)?.link.folder).toBe("NPCs");
+    });
+
+    it("listVisibleCharactersForGameAndAccount: an admin sees everything; a non-admin sees their own + 'all'-visibility + anything explicitly listed for them, never anything else", () => {
+      const owner = store.createAccount("Owner");
+      const viewer = store.createAccount("Viewer");
+      const stranger = store.createAccount("Stranger");
+      const game = store.createGame("G", owner.id);
+
+      const visibleToAll = store.createCharacter(owner.id, "Visible", [1, 0, 0]);
+      const visibleToViewer = store.createCharacter(owner.id, "Shared", [0, 1, 0]);
+      const privateChar = store.createCharacter(owner.id, "Private", [0, 0, 1]);
+      store.linkCharacterToGame(game.id, visibleToAll.id, owner.id);
+      store.linkCharacterToGame(game.id, visibleToViewer.id, owner.id);
+      store.updateGameCharacterLink(game.id, visibleToViewer.id, owner.id, { visibility: [viewer.id] });
+      store.linkCharacterToGame(game.id, privateChar.id, owner.id);
+      store.updateGameCharacterLink(game.id, privateChar.id, owner.id, { visibility: [] });
+
+      const viewerSees = store.listVisibleCharactersForGameAndAccount(game.id, viewer.id).links.map((l) => l.character.id);
+      expect(viewerSees.sort()).toEqual([visibleToAll.id, visibleToViewer.id].sort());
+
+      const strangerSees = store.listVisibleCharactersForGameAndAccount(game.id, stranger.id).links.map((l) => l.character.id);
+      expect(strangerSees).toEqual([visibleToAll.id]);
+
+      store.grantGameAdmin(game.id, stranger.id);
+      const adminSees = store.listVisibleCharactersForGameAndAccount(game.id, stranger.id).links.map((l) => l.character.id);
+      expect(adminSees.sort()).toEqual([visibleToAll.id, visibleToViewer.id, privateChar.id].sort());
+
+      // participantAccounts is just "who owns any linked character" -- unaffected by visibility.
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, viewer.id).participantAccounts.map((a) => a.id)).toEqual([owner.id]);
+    });
+
+    it("canAccountViewCharacter / canAccountEditCharacter: owner always true; viewer true only via an 'all' or explicit-list link; editor true only via being an admin of a game it's linked to", () => {
+      const owner = store.createAccount("Owner");
+      const viewer = store.createAccount("Viewer");
+      const admin = store.createAccount("Admin");
+      const game = store.createGame("G", owner.id);
+      const character = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+
+      expect(store.canAccountViewCharacter(owner.id, character.id)).toBe(true);
+      expect(store.canAccountViewCharacter(viewer.id, character.id)).toBe(false); // not linked anywhere yet
+      expect(store.canAccountEditCharacter(admin.id, character.id)).toBe(false);
+
+      store.linkCharacterToGame(game.id, character.id, owner.id);
+      store.updateGameCharacterLink(game.id, character.id, owner.id, { visibility: [viewer.id] });
+      expect(store.canAccountViewCharacter(viewer.id, character.id)).toBe(true);
+
+      store.grantGameAdmin(game.id, admin.id);
+      expect(store.canAccountEditCharacter(admin.id, character.id)).toBe(true);
+      expect(store.canAccountViewCharacter(admin.id, character.id)).toBe(false); // admin's edit bypass is separate from the viewer check
+    });
+
+    it("unlinkCharacterFromGame removes just that link; a no-op (not an error) when not permitted or for an unknown link", () => {
+      const owner = store.createAccount("Owner");
+      const stranger = store.createAccount("Stranger");
+      const game = store.createGame("G", owner.id);
+      const character = store.createCharacter(owner.id, "Aria", [1, 0, 0]);
+      store.linkCharacterToGame(game.id, character.id, owner.id);
+
+      store.unlinkCharacterFromGame(game.id, character.id, stranger.id); // not permitted
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links).toHaveLength(1);
+
+      store.unlinkCharacterFromGame(game.id, character.id, owner.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links).toHaveLength(0);
+      expect(() => store.unlinkCharacterFromGame(game.id, "not-a-real-character", owner.id)).not.toThrow();
+    });
+
+    it("deleteCharacter/deleteGame/deleteAccount all cascade to drop that character's/game's links", () => {
+      const owner = store.createAccount("Owner");
+      const game = store.createGame("G", owner.id);
+      const charA = store.createCharacter(owner.id, "A", [1, 0, 0]);
+      const charB = store.createCharacter(owner.id, "B", [0, 1, 0]);
+      store.linkCharacterToGame(game.id, charA.id, owner.id);
+      store.linkCharacterToGame(game.id, charB.id, owner.id);
+
+      store.deleteCharacter(charA.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links.map((l) => l.character.id)).toEqual([charB.id]);
+
+      store.deleteGame(game.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game.id, owner.id).links).toEqual([]);
+
+      const game2 = store.createGame("G2", owner.id);
+      store.linkCharacterToGame(game2.id, charB.id, owner.id);
+      store.deleteAccount(owner.id);
+      expect(store.listVisibleCharactersForGameAndAccount(game2.id, owner.id).links).toEqual([]);
+    });
   });
 });

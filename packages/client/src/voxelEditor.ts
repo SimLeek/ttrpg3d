@@ -41,17 +41,15 @@ function blockAabb(x: number, y: number, z: number): AABB {
   return { minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 1, maxZ: z + 1 };
 }
 
-export type CharacterStat = "hp" | "maxHp" | "mp" | "maxMp";
-
 export interface TokenInteractionHooks {
   /** Coarse mesh-level pick (tokenPicking.ts) -- answers "is the cursor over a token, and do I own it" right now. Backs the right-click context menu. */
   pickOwnedToken: () => { characterId: string } | undefined;
-  /** The GUI's own fine-grained hover state (characterToken.ts's isHoveringHpBar/isHoveringMpBar) -- answers "is the cursor over an editable HP/MP bar, and which one" right now. Backs left-click-to-edit. */
-  pickHoveredStatBar: () => { characterId: string; stat: CharacterStat } | undefined;
+  /** The GUI's own fine-grained hover state (characterToken.ts's hitTestLocalPoint) -- answers "is the cursor over an editable bar, and which variable does it point at" right now (bars are whatever the character's sheet configures, not a fixed hp/mp pair -- docs/ROADMAP.md item 4 follow-up). Backs left-click-to-edit. */
+  pickHoveredStatBar: () => { characterId: string; variableId: string } | undefined;
   /** Opens characterContextMenu.ts at the given viewport coordinates for the picked character. */
   openContextMenu: (characterId: string, screenX: number, screenY: number) => void;
-  /** Opens the HTML <input> overlay (net.ts) at the given viewport coordinates to edit one stat. */
-  openStatEditor: (characterId: string, stat: CharacterStat, screenX: number, screenY: number) => void;
+  /** Opens the HTML <input> overlay (net.ts) at the given viewport coordinates to edit one variable's current value. */
+  openStatEditor: (characterId: string, variableId: string, screenX: number, screenY: number) => void;
 }
 
 export function installVoxelEditor(
@@ -65,7 +63,7 @@ export function installVoxelEditor(
   // every test) that doesn't care about GM mode keeps working unchanged.
   isGmModeActive: () => boolean = () => false,
   // MVP goal items 1-2 (docs/ROADMAP.md): left-click (Mouse1/fire) on an
-  // editable HP/MP bar opens its stat editor instead of breaking a block,
+  // editable bar opens its value editor instead of breaking a block,
   // and right-click (Mouse3/alt-fire) on an owned token opens its context
   // menu instead of placing a block -- both confirmed as the SAME
   // bindings block-editing already uses, so both branch INSIDE the
@@ -104,7 +102,7 @@ export function installVoxelEditor(
   noa.inputs.down.on("fire", () => {
     const hoveredStat = tokenInteraction?.pickHoveredStatBar();
     if (hoveredStat) {
-      tokenInteraction!.openStatEditor(hoveredStat.characterId, hoveredStat.stat, lastClickScreen.x, lastClickScreen.y);
+      tokenInteraction!.openStatEditor(hoveredStat.characterId, hoveredStat.variableId, lastClickScreen.x, lastClickScreen.y);
       return;
     }
 

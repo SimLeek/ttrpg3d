@@ -14,6 +14,8 @@
     "@babylonjs/gui": "^6.49.0",
     "@colyseus/sdk": "^0.18.2",
     "@ttrpg3d/shared": "workspace:*",
+    "dompurify": "^3.4.17",
+    "marked": "^18.1.1",
     "navigo": "^8.11.1",
     "noa-engine": "^0.33.0"
   },

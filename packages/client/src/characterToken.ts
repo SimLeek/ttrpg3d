@@ -1,11 +1,12 @@
-// A character's 3D billboard: name + HP/MP bars + a status-effect icon row
-// above them, always facing the camera. MVP goal items 1-2 (docs/ROADMAP.md)
-// -- genuinely new, confirmed against the old game's own code: its NPC
-// dialog system (NPCs/npc_dialog_system.gd) is a proximity-triggered
-// Sprite3D showing DIALOG TEXT, not an always-visible HP/MP+status billboard
-// (that was only ever a commented-out, never-wired stub -- "saving this as
-// commented for hp above head maybe", NPCs/evil_blob_ai.gd). This is a
-// PLAYER-character token, not a port of that NPC system.
+// A character's 3D billboard: name + configurable fill bars + a
+// status-effect icon row above them, always facing the camera. MVP goal
+// items 1-2 (docs/ROADMAP.md) -- genuinely new, confirmed against the old
+// game's own code: its NPC dialog system (NPCs/npc_dialog_system.gd) is a
+// proximity-triggered Sprite3D showing DIALOG TEXT, not an always-visible
+// HP/MP+status billboard (that was only ever a commented-out, never-wired
+// stub -- "saving this as commented for hp above head maybe",
+// NPCs/evil_blob_ai.gd). This is a PLAYER-character token, not a port of
+// that NPC system.
 //
 // Uses noa's own `mesh` ECS component for positioning (same mechanism
 // net.ts's remote-player boxes and playerBodyMesh.ts's local body already
@@ -22,15 +23,32 @@
 // voxel game: a full-scene raycast against every chunk mesh on every
 // mouse-move would be disastrous), which makes the ADT's own pointer
 // system permanently see an empty, never-hit PickingInfo on every move.
-// So HP/MP-bar hit-testing here is geometric instead, in the token's own
+// So bar hit-testing here is geometric instead, in the token's own
 // LOCAL plane space (hitTestLocalPoint below) -- net.ts drives it from
 // the SAME camera-center ray tokenPicking.ts already uses for "which
 // token," transforming the ray's world-space hit point into this plane's
 // local space via its own (invertible) world matrix. This also means
-// HP/MP-bar interaction uses the exact same crosshair-based model as
-// every other interaction in this game (block targeting, token picking
-// itself) rather than real mouse position, which is more consistent, not
-// a compromise.
+// bar interaction uses the exact same crosshair-based model as every
+// other interaction in this game (block targeting, token picking itself)
+// rather than real mouse position, which is more consistent, not a
+// compromise.
+//
+// Round 2 real correction (docs/ROADMAP.md item 4 follow-up): bars used
+// to be a hardcoded HP/MP pair, each with its own fixed color baked in
+// at creation. "They used to be hp and mp, but those are optional now
+// ... n bars of whatever color." Bars are now whatever the character's
+// sheet configures (CharacterSheetBarDef -> shared's resolveCharacterBars,
+// synced via WorldState.ts's PlayerState.bars) -- any xOfY variable, any
+// color, any count. The billboard reserves a FIXED number of bar slots
+// (MAX_DISPLAYED_BARS) at creation and simply hides the unused ones
+// (`isVisible = false`) rather than resizing the plane/texture on every
+// bar-count change -- same "reserve space, toggle visibility" precedent
+// the status-icon row above already uses one tier up. A real dynamic-
+// height billboard would also have to make net.ts's token vertical-offset
+// math (which assumes TOKEN_PLANE_HEIGHT is a fixed constant) recompute
+// per-token, which is real, separate complexity not worth it yet for "not
+// too complicated" scope -- revisit if 4 bars turns out to be the wrong
+// cap during playtesting.
 
 import * as BABYLON from "@babylonjs/core";
 import * as GUI from "@babylonjs/gui";
@@ -40,29 +58,38 @@ export interface StatusEffectData {
   label: string;
 }
 
+export interface CharacterTokenBarData {
+  variableId: string;
+  label: string;
+  value: number;
+  max: number;
+  color: [number, number, number];
+}
+
 export interface CharacterTokenData {
   name: string;
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
+  /** Whatever the character's sheet currently configures -- see this file's header. Capped at MAX_DISPLAYED_BARS; extras are silently not shown, not an error. */
+  bars: CharacterTokenBarData[];
   statusEffects: StatusEffectData[];
 }
+
+/** Fixed billboard capacity -- see this file's header for why this is a hard cap, not a dynamically-resized plane. */
+const MAX_DISPLAYED_BARS = 4;
 
 const TEXTURE_WIDTH = 256;
 const STATUS_ICON_SIZE = 32;
 const BAR_HEIGHT = 20;
 const BAR_WIDTH = 220;
 const BAR_LEFT = (TEXTURE_WIDTH - BAR_WIDTH) / 2;
-const HP_BAR_TOP = STATUS_ICON_SIZE + 24;
-const MP_BAR_TOP = HP_BAR_TOP + BAR_HEIGHT + 4;
+const BAR_TOP_BASE = STATUS_ICON_SIZE + 24;
+const BAR_STEP = BAR_HEIGHT + 4;
 /**
  * Real feedback from a live screenshot: the billboard appeared to float
  * well above the character, with a big gap between the player and the
  * visible bars. Root cause, confirmed via the SAME debug log used to
  * verify the raycast math (which turned out to be exactly correct) --
  * the texture/plane used to be a full 256x256 SQUARE, but the actual
- * content (status row + name + 2 bars) only ever occupied its TOP ~40%;
+ * content (status row + name + bars) only ever occupied its TOP portion;
  * the rest was blank, transparent texture that still took up real
  * physical space on the plane. net.ts's "clear the player's head"
  * vertical-offset math correctly cleared the PLANE's own geometric
@@ -73,7 +100,7 @@ const MP_BAR_TOP = HP_BAR_TOP + BAR_HEIGHT + 4;
  * magic clearance number layered on top of the real problem.
  */
 const CONTENT_BOTTOM_MARGIN = 8;
-const TEXTURE_HEIGHT = MP_BAR_TOP + BAR_HEIGHT + CONTENT_BOTTOM_MARGIN;
+const TEXTURE_HEIGHT = BAR_TOP_BASE + (MAX_DISPLAYED_BARS - 1) * BAR_STEP + BAR_HEIGHT + CONTENT_BOTTOM_MARGIN;
 /** The plane's own world-unit width (createCharacterToken's CreatePlane call below). Exported so net.ts could reference it if it ever needs the horizontal extent; the vertical one (TOKEN_PLANE_HEIGHT, derived to preserve the texture's aspect ratio so content is never stretched) is what the vertical-offset math actually needs. */
 export const TOKEN_PLANE_WIDTH = 1.5;
 export const TOKEN_PLANE_HEIGHT = (TOKEN_PLANE_WIDTH * TEXTURE_HEIGHT) / TEXTURE_WIDTH;
@@ -92,17 +119,23 @@ function pixelRectToLocal(rect: PixelRect): { minX: number; minY: number; maxX: 
   return { minX: toLocalX(rect.left), maxX: toLocalX(rect.right), minY: toLocalY(rect.bottom), maxY: toLocalY(rect.top) };
 }
 
-export type HoveredBar = "hp" | "mp";
+function colorToHex([r, g, b]: [number, number, number]): string {
+  const toHex = (c: number) => Math.round(Math.max(0, Math.min(1, c)) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/** The bar's own variableId when the slot is currently showing one, undefined when hidden (no configured bar occupies that slot right now). */
+export type HoveredBar = string | undefined;
 
 export interface CharacterToken {
   mesh: BABYLON.Mesh;
   /** Exposed mainly for test introspection -- production callers otherwise only need `mesh`/`update`/`hitTestLocalPoint`/`dispose`. */
   texture: GUI.AdvancedDynamicTexture;
   update(data: CharacterTokenData): void;
-  /** Geometric hit-test against the HP/MP bars, given a point already in this token's own LOCAL space (see this file's header -- net.ts does the world-to-local transform via `mesh.getWorldMatrix()`). Returns which bar (if any) contains the point. */
-  hitTestLocalPoint(localX: number, localY: number): HoveredBar | undefined;
+  /** Geometric hit-test against the currently-visible bars, given a point already in this token's own LOCAL space (see this file's header -- net.ts does the world-to-local transform via `mesh.getWorldMatrix()`). Returns the hit bar's variableId, if any. */
+  hitTestLocalPoint(localX: number, localY: number): HoveredBar;
   /** Real request: the bar itself should show SOME feedback when it's the one under the cursor (a border highlight), same spirit as the token/body-box outline for the coarser "is this token owned/interactable" hover. Pass undefined to clear. */
-  setHoveredBar(bar: HoveredBar | undefined): void;
+  setHoveredBar(variableId: HoveredBar): void;
   dispose(): void;
 }
 
@@ -113,8 +146,8 @@ export function createCharacterToken(scene: BABYLON.Scene, name: string): Charac
   // Stays pickable (the default): AdvancedDynamicTexture's own hover/click
   // detection (its attachToMesh below) relies on scene.onPointerObservable's
   // real-mouse-position pick against THIS mesh to find which GUI control is
-  // under the cursor -- an unpickable mesh would silently break the HP/MP-
-  // bar hover/click feature entirely. tokenPicking.ts's coarser "which
+  // under the cursor -- an unpickable mesh would silently break the bar
+  // hover/click feature entirely. tokenPicking.ts's coarser "which
   // token" pick (a separate scene.pickWithRay call from the camera center,
   // not the real mouse position) targets this SAME mesh with no conflict --
   // two independent pick mechanisms for two different input models (real
@@ -128,7 +161,7 @@ export function createCharacterToken(scene: BABYLON.Scene, name: string): Charac
   // _verticalAlignment to CENTER): every control added to the texture's
   // root container is centered by default, with `top`/`left` acting as
   // offsets FROM that centered position -- NOT from the top-left corner,
-  // which is what this file's pixel<->local-space math (HP_BAR_TOP,
+  // which is what this file's pixel<->local-space math (BAR_TOP_BASE,
   // BAR_LEFT, pixelRectToLocal, ...) always assumed. This was the actual
   // source of every "the bars are in the wrong place" report in this
   // investigation -- not the raycast math (verified correct), not the
@@ -152,7 +185,7 @@ export function createCharacterToken(scene: BABYLON.Scene, name: string): Charac
   nameLabel.verticalAlignment = GUI.Control.VERTICAL_ALIGNMENT_TOP;
   texture.addControl(nameLabel);
 
-  function makeBar(topOffset: number, fillColor: string) {
+  function makeBarSlot(topOffset: number) {
     const background = new GUI.Rectangle();
     background.width = `${BAR_WIDTH}px`;
     background.height = `${BAR_HEIGHT}px`;
@@ -167,7 +200,6 @@ export function createCharacterToken(scene: BABYLON.Scene, name: string): Charac
 
     const fill = new GUI.Rectangle();
     fill.height = `${BAR_HEIGHT}px`;
-    fill.background = fillColor;
     fill.thickness = 0;
     fill.horizontalAlignment = GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
     background.addControl(fill);
@@ -180,21 +212,43 @@ export function createCharacterToken(scene: BABYLON.Scene, name: string): Charac
     return { background, fill, label };
   }
 
-  const hpBar = makeBar(HP_BAR_TOP, "#c0392b");
-  const mpBar = makeBar(MP_BAR_TOP, "#2980b9");
-  const hpRectLocal = pixelRectToLocal({ left: BAR_LEFT, top: HP_BAR_TOP, right: BAR_LEFT + BAR_WIDTH, bottom: HP_BAR_TOP + BAR_HEIGHT });
-  const mpRectLocal = pixelRectToLocal({ left: BAR_LEFT, top: MP_BAR_TOP, right: BAR_LEFT + BAR_WIDTH, bottom: MP_BAR_TOP + BAR_HEIGHT });
+  const barSlots = Array.from({ length: MAX_DISPLAYED_BARS }, (_, i) => makeBarSlot(BAR_TOP_BASE + i * BAR_STEP));
+  const barSlotRectsLocal = barSlots.map((_, i) => {
+    const top = BAR_TOP_BASE + i * BAR_STEP;
+    return pixelRectToLocal({ left: BAR_LEFT, top, right: BAR_LEFT + BAR_WIDTH, bottom: top + BAR_HEIGHT });
+  });
+  /** Which variableId each slot is CURRENTLY showing, kept in lockstep with the last `update()` call -- undefined for a hidden (unused) slot. */
+  let currentBarIds: HoveredBar[] = barSlots.map(() => undefined);
+  let hoveredBarId: HoveredBar;
 
-  function setBarFill(bar: typeof hpBar, value: number, max: number): void {
-    const ratio = max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
-    bar.fill.width = `${220 * ratio}px`;
-    bar.label.text = `${value}/${max}`;
+  const BAR_BORDER_DEFAULT = "#000";
+  const BAR_BORDER_HOVERED = "#ffd933"; // same gold the token/body-box outline uses (net.ts's HIGHLIGHT_OUTLINE_COLOR), for one consistent "this is interactable" color across both hover tiers
+
+  function applyHoverHighlight(): void {
+    barSlots.forEach((slot, i) => {
+      const isHovered = hoveredBarId !== undefined && currentBarIds[i] === hoveredBarId;
+      slot.background.thickness = isHovered ? 3 : 1;
+      slot.background.color = isHovered ? BAR_BORDER_HOVERED : BAR_BORDER_DEFAULT;
+    });
+  }
+
+  function setBarFill(slot: (typeof barSlots)[number], bar: CharacterTokenBarData): void {
+    const ratio = bar.max > 0 ? Math.max(0, Math.min(1, bar.value / bar.max)) : 0;
+    slot.fill.background = colorToHex(bar.color);
+    slot.fill.width = `${BAR_WIDTH * ratio}px`;
+    slot.label.text = `${bar.value}/${bar.max}`;
   }
 
   function update(data: CharacterTokenData): void {
     nameLabel.text = data.name;
-    setBarFill(hpBar, data.hp, data.maxHp);
-    setBarFill(mpBar, data.mp, data.maxMp);
+
+    barSlots.forEach((slot, i) => {
+      const bar = data.bars[i];
+      slot.background.isVisible = bar !== undefined;
+      currentBarIds[i] = bar?.variableId;
+      if (bar) setBarFill(slot, bar);
+    });
+    applyHoverHighlight();
 
     statusRow.clearControls();
     statusRow.isVisible = data.statusEffects.length > 0;
@@ -214,22 +268,20 @@ export function createCharacterToken(scene: BABYLON.Scene, name: string): Charac
     }
   }
 
-  update({ name, hp: 0, maxHp: 0, mp: 0, maxMp: 0, statusEffects: [] });
+  update({ name, bars: [], statusEffects: [] });
 
-  function hitTestLocalPoint(localX: number, localY: number): HoveredBar | undefined {
-    if (localX >= hpRectLocal.minX && localX <= hpRectLocal.maxX && localY >= hpRectLocal.minY && localY <= hpRectLocal.maxY) return "hp";
-    if (localX >= mpRectLocal.minX && localX <= mpRectLocal.maxX && localY >= mpRectLocal.minY && localY <= mpRectLocal.maxY) return "mp";
+  function hitTestLocalPoint(localX: number, localY: number): HoveredBar {
+    for (let i = 0; i < barSlots.length; i++) {
+      if (currentBarIds[i] === undefined) continue;
+      const rect = barSlotRectsLocal[i];
+      if (localX >= rect.minX && localX <= rect.maxX && localY >= rect.minY && localY <= rect.maxY) return currentBarIds[i];
+    }
     return undefined;
   }
 
-  const BAR_BORDER_DEFAULT = "#000";
-  const BAR_BORDER_HOVERED = "#ffd933"; // same gold the token/body-box outline uses (net.ts's HIGHLIGHT_OUTLINE_COLOR), for one consistent "this is interactable" color across both hover tiers
-
-  function setHoveredBar(bar: HoveredBar | undefined): void {
-    hpBar.background.thickness = bar === "hp" ? 3 : 1;
-    hpBar.background.color = bar === "hp" ? BAR_BORDER_HOVERED : BAR_BORDER_DEFAULT;
-    mpBar.background.thickness = bar === "mp" ? 3 : 1;
-    mpBar.background.color = bar === "mp" ? BAR_BORDER_HOVERED : BAR_BORDER_DEFAULT;
+  function setHoveredBar(variableId: HoveredBar): void {
+    hoveredBarId = variableId;
+    applyHoverHighlight();
   }
 
   return {

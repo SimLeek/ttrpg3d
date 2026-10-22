@@ -31,13 +31,26 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams } from "@ttrpg3d/shared";
+import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type CharacterSheetTemplate } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
   displayName: string;
   role: "root" | "normal";
   createdAt: number;
+  /**
+   * MVP goal item 4 (docs/ROADMAP.md), slice 1 -- which mods this
+   * ACCOUNT has imported, by id, mirroring GameRecord.modIds exactly
+   * but keyed on the account instead of a game: real direction,
+   * 2026-10-21, "the character sheet page would itself have mods
+   * imported as libraries for different functionalities, and those
+   * mods would have to be imported to the character page itself per
+   * account, NOT site-wide." This is what the standalone, game-free
+   * characters page resolves character-sheet templates against (via
+   * modLoader.ts's listCharacterSheetTemplates) -- NOT a bare scan of
+   * every mod on disk, and NOT gated by any game's own modIds.
+   */
+  importedModIds: string[];
 }
 
 export interface GameRecord {
@@ -116,12 +129,56 @@ export interface CharacterRecord {
   ownerAccountId: string;
   name: string;
   token: { color: [number, number, number] };
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
   statusEffects: StatusEffect[];
   createdAt: number;
+  /**
+   * MVP goal item 4 (docs/ROADMAP.md) -- which mod this sheet was last
+   * CLONED FROM (round 2 real correction: a mod's own
+   * `characterSheetTemplate` is only ever a clone source now, not a
+   * live, permanent reference -- "not 'this is all you get ever' once
+   * the mod is loaded in"). Also doubles as "which mod this sheet
+   * depends on as a library" for computeMissingModDependencies, since
+   * a cloned page's markdown may still call that mod's
+   * `characterSheetLibrary` functions inline. `null` until a template
+   * is picked or a blank sheet is started -- a real state, not an
+   * error, matching this project's own "a missing selection is a real
+   * state" convention (e.g. characterId on a world join).
+   */
+  templateId: string | null;
+  /**
+   * The character's OWN editable pages/variables (round 2) -- `null`
+   * until the player starts one (blank, or cloned from a mod's
+   * template). Once set, this is what's rendered/edited; the mod
+   * named by `templateId` is never read again for rendering, only
+   * for the dependency check above (its markdown may still call that
+   * mod's library functions by name).
+   */
+  customSheet: CharacterSheetTemplate | null;
+  /**
+   * Flat map keyed by variable id (customSheet's own variable defs,
+   * plus the core RESERVED_BODY_SIZE_VARIABLES ids, which use fixed
+   * keys regardless of sheet). Values are read/written as a whole by
+   * store.updateCharacterSheet -- no per-variable endpoint.
+   */
+  variableValues: Record<string, number | string>;
+}
+
+/**
+ * Many-to-many game<->character link (real request: "a many to many
+ * game to character table... with optional folders to help
+ * organization"). A character stays owned per-account (CharacterRecord
+ * above, unchanged) -- this is purely "which games is this character
+ * ALSO linked into, and who besides the owner/admins can see it
+ * there." One row per (gameId, characterId) pair.
+ */
+export interface GameCharacterLink {
+  id: string;
+  gameId: string;
+  characterId: string;
+  /** Free text, grouping only -- no separate "folder" entity/rename-as-object, just a string characters are grouped by in the UI. */
+  folder: string | null;
+  /** "all" = every player in the game; otherwise the exact list of account ids permitted to see/open it. An empty array means nobody but the owner/admins -- real correction: "owner/admins just see everything no matter what, so that would be the 'none' special option," i.e. an empty list, not a third enum value. */
+  visibility: "all" | string[];
 }
 
 function newId(): string {
@@ -133,6 +190,7 @@ export function createStore(baseDir: string) {
   const gamesFile = join(baseDir, "games.json");
   const worldsFile = join(baseDir, "worlds.json");
   const charactersFile = join(baseDir, "characters.json");
+  const gameCharacterLinksFile = join(baseDir, "gameCharacterLinks.json");
 
   function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
@@ -145,7 +203,11 @@ export function createStore(baseDir: string) {
   }
 
   function loadAccounts(): Account[] {
-    return readJson<Account[]>(accountsFile, []);
+    // importedModIds is new (MVP goal item 4, slice 1) -- same
+    // backward-compat default-fill as loadGames() already does for
+    // GameRecord.modIds, so a real pre-existing account with no such
+    // key on disk doesn't crash the first time anything iterates it.
+    return readJson<Account[]>(accountsFile, []).map((a) => ({ ...a, importedModIds: a.importedModIds ?? [] }));
   }
 
   function saveAccounts(accounts: Account[]): void {
@@ -183,11 +245,22 @@ export function createStore(baseDir: string) {
   }
 
   function loadCharacters(): CharacterRecord[] {
-    return readJson<CharacterRecord[]>(charactersFile, []);
+    // templateId/variableValues are new (MVP goal item 4, slice 1) --
+    // same backward-compat default-fill spirit as loadAccounts()/
+    // loadGames() already use for their own new fields.
+    return readJson<CharacterRecord[]>(charactersFile, []).map((c) => ({ ...c, templateId: c.templateId ?? null, customSheet: c.customSheet ?? null, variableValues: c.variableValues ?? {} }));
   }
 
   function saveCharacters(characters: CharacterRecord[]): void {
     writeJson(charactersFile, characters);
+  }
+
+  function loadGameCharacterLinks(): GameCharacterLink[] {
+    return readJson<GameCharacterLink[]>(gameCharacterLinksFile, []);
+  }
+
+  function saveGameCharacterLinks(links: GameCharacterLink[]): void {
+    writeJson(gameCharacterLinksFile, links);
   }
 
   /** Deterministic, no-two-defaults-look-identical color for an auto-created default character -- real request: picking a character shouldn't be required just to see something other than a flat gray/placeholder box. Not cryptographic, just spread across the color space. */
@@ -204,12 +277,11 @@ export function createStore(baseDir: string) {
       ownerAccountId,
       name,
       token: { color },
-      hp: 10,
-      maxHp: 10,
-      mp: 10,
-      maxMp: 10,
       statusEffects: [],
       createdAt: Date.now(),
+      templateId: null,
+      customSheet: null,
+      variableValues: {},
     };
     characters.push(character);
     saveCharacters(characters);
@@ -223,9 +295,9 @@ export function createStore(baseDir: string) {
       if (accounts.length === 0) {
         const now = Date.now();
         accounts = [
-          { id: "root", displayName: "root", role: "root", createdAt: now },
-          { id: "test1", displayName: "Test Account 1", role: "normal", createdAt: now },
-          { id: "test2", displayName: "Test Account 2", role: "normal", createdAt: now },
+          { id: "root", displayName: "root", role: "root", createdAt: now, importedModIds: [] },
+          { id: "test1", displayName: "Test Account 1", role: "normal", createdAt: now, importedModIds: [] },
+          { id: "test2", displayName: "Test Account 2", role: "normal", createdAt: now, importedModIds: [] },
         ];
         saveAccounts(accounts);
       }
@@ -265,10 +337,27 @@ export function createStore(baseDir: string) {
 
     createAccount(displayName: string): Account {
       const accounts = loadAccounts();
-      const account: Account = { id: newId(), displayName, role: "normal", createdAt: Date.now() };
+      const account: Account = { id: newId(), displayName, role: "normal", createdAt: Date.now(), importedModIds: [] };
       accounts.push(account);
       saveAccounts(accounts);
       return account;
+    },
+
+    /** No-op if already imported or the account id is unknown, same "stale id, not a crash" spirit as enableModForGame. Ungated here (an account manages its own imports) -- same trust level the existing /accounts/:id/characters endpoints already use. */
+    importModForAccount(accountId: string, modId: string): void {
+      const accounts = loadAccounts();
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) return;
+      if (!account.importedModIds.includes(modId)) account.importedModIds.push(modId);
+      saveAccounts(accounts);
+    },
+
+    removeModForAccount(accountId: string, modId: string): void {
+      const accounts = loadAccounts();
+      const account = accounts.find((a) => a.id === accountId);
+      if (!account) return;
+      account.importedModIds = account.importedModIds.filter((id) => id !== modId);
+      saveAccounts(accounts);
     },
 
     createGame(name: string, ownerAccountId: string): GameRecord {
@@ -381,6 +470,17 @@ export function createStore(baseDir: string) {
       return loadCharacters().find((c) => c.id === id);
     },
 
+    /** MVP goal item 4 (docs/ROADMAP.md) -- replaces templateId/customSheet/variableValues wholesale (no per-field endpoint). No-op if the character id is unknown. Ownership-gating (is the caller actually this character's owner) happens at the caller (server.ts's PUT /characters/:id/sheet), same split enableModForGame/setRespawnAnchor already use. */
+    updateCharacterSheet(characterId: string, templateId: string | null, customSheet: CharacterSheetTemplate | null, variableValues: Record<string, number | string>): void {
+      const characters = loadCharacters();
+      const character = characters.find((c) => c.id === characterId);
+      if (!character) return;
+      character.templateId = templateId;
+      character.customSheet = customSheet;
+      character.variableValues = variableValues;
+      saveCharacters(characters);
+    },
+
     /**
      * Real request: a characterless join shouldn't be a dead end requiring
      * a trip through the lobby's create-character form first -- WorldRoom.ts/
@@ -407,12 +507,12 @@ export function createStore(baseDir: string) {
       return createCharacterInternal(accountId, `${account.displayName}'s Character`, colorFromAccountId(accountId));
     },
 
-    /** The click-to-edit write-back (WorldRoom's setCharacterStat handler) -- `stat` is whichever flat numeric field was edited (hp/maxHp/mp/maxMp), never the whole record, so an admin/self edit can't accidentally clobber name/token/statusEffects. No-op for an unknown id, same "stale id, not a crash" spirit as setWorldRespawnAnchor. */
-    updateCharacterStats(id: string, stat: "hp" | "maxHp" | "mp" | "maxMp", value: number): void {
+    /** The click-to-edit write-back (WorldRoom's setCharacterVariableValue handler) -- writes ONE key into variableValues, never the whole record, so an admin/self edit can't accidentally clobber name/token/statusEffects/customSheet. Generalizes the old hp/maxHp/mp/maxMp-specific updateCharacterStats now that bars (and any other in-game-editable value) point at arbitrary sheet variables instead of fixed fields. No-op for an unknown id, same "stale id, not a crash" spirit as setWorldRespawnAnchor. */
+    updateCharacterVariableValue(id: string, variableId: string, value: number): void {
       const characters = loadCharacters();
       const character = characters.find((c) => c.id === id);
       if (!character) return;
-      character[stat] = value;
+      character.variableValues = { ...character.variableValues, [variableId]: value };
       saveCharacters(characters);
     },
 
@@ -435,6 +535,95 @@ export function createStore(baseDir: string) {
 
     deleteCharacter(id: string): void {
       saveCharacters(loadCharacters().filter((c) => c.id !== id));
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => l.characterId !== id));
+    },
+
+    // ---- game<->character links (many-to-many, with optional folders) --
+
+    /** Permitted if `requestingAccountId` owns the character OR is an admin of `gameId` -- same "stale id, not a crash" spirit as the rest of this file (an unknown game/character id just makes the permission check false, not a throw). Upserts: linking an already-linked character again just no-ops (doesn't reset folder/visibility). Returns the account's own currently-visible list for this game, same "return the fresh state" shape updateCharacterStats's callers already expect. */
+    linkCharacterToGame(gameId: string, characterId: string, requestingAccountId: string, folder: string | null = null): GameCharacterLink[] {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return [];
+      const permitted = character.ownerAccountId === requestingAccountId || this.isGameAdmin(gameId, requestingAccountId);
+      if (!permitted) return [];
+      const links = loadGameCharacterLinks();
+      if (!links.some((l) => l.gameId === gameId && l.characterId === characterId)) {
+        links.push({ id: newId(), gameId, characterId, folder, visibility: "all" });
+        saveGameCharacterLinks(links);
+      }
+      return links.filter((l) => l.gameId === gameId);
+    },
+
+    unlinkCharacterFromGame(gameId: string, characterId: string, requestingAccountId: string): void {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return;
+      const permitted = character.ownerAccountId === requestingAccountId || this.isGameAdmin(gameId, requestingAccountId);
+      if (!permitted) return;
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => !(l.gameId === gameId && l.characterId === characterId)));
+    },
+
+    updateGameCharacterLink(gameId: string, characterId: string, requestingAccountId: string, patch: { folder?: string | null; visibility?: "all" | string[] }): void {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return;
+      const permitted = character.ownerAccountId === requestingAccountId || this.isGameAdmin(gameId, requestingAccountId);
+      if (!permitted) return;
+      const links = loadGameCharacterLinks();
+      const link = links.find((l) => l.gameId === gameId && l.characterId === characterId);
+      if (!link) return;
+      if (patch.folder !== undefined) link.folder = patch.folder;
+      if (patch.visibility !== undefined) link.visibility = patch.visibility;
+      saveGameCharacterLinks(links);
+    },
+
+    /**
+     * An admin of `gameId` sees every link; anyone else sees links where
+     * `visibility === "all"`, `visibility` includes their own accountId,
+     * or they own the character themselves. `participantAccounts` is
+     * the distinct set of owners of EVERY character linked to this game
+     * regardless of visibility (just "who's playing," not sensitive) --
+     * the candidate roster a visibility-editing UI picks specific
+     * players FROM, since no other game-membership/invite list exists
+     * anywhere in this codebase.
+     */
+    listVisibleCharactersForGameAndAccount(gameId: string, accountId: string): { links: { link: GameCharacterLink; character: Pick<CharacterRecord, "id" | "name" | "token" | "ownerAccountId"> }[]; participantAccounts: { id: string; displayName: string }[] } {
+      const allLinks = loadGameCharacterLinks().filter((l) => l.gameId === gameId);
+      const characters = loadCharacters();
+      const accounts = loadAccounts();
+      const isAdmin = this.isGameAdmin(gameId, accountId);
+
+      const joined = allLinks
+        .map((link) => ({ link, character: characters.find((c) => c.id === link.characterId) }))
+        .filter((entry): entry is { link: GameCharacterLink; character: CharacterRecord } => entry.character !== undefined);
+
+      const visible = joined.filter(({ link, character }) => isAdmin || character.ownerAccountId === accountId || link.visibility === "all" || (Array.isArray(link.visibility) && link.visibility.includes(accountId)));
+
+      const participantIds = new Set(joined.map(({ character }) => character.ownerAccountId));
+      const participantAccounts = accounts.filter((a) => participantIds.has(a.id)).map((a) => ({ id: a.id, displayName: a.displayName }));
+
+      return {
+        links: visible.map(({ link, character }) => ({ link, character: { id: character.id, name: character.name, token: character.token, ownerAccountId: character.ownerAccountId } })),
+        participantAccounts,
+      };
+    },
+
+    /** Owner always; otherwise true if ANY link for this character has `visibility === "all"` or includes `accountId`. Used by the single-character fetch endpoint and chat's "post as this character" attribution. */
+    canAccountViewCharacter(accountId: string, characterId: string): boolean {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return false;
+      if (character.ownerAccountId === accountId) return true;
+      return loadGameCharacterLinks()
+        .filter((l) => l.characterId === characterId)
+        .some((l) => l.visibility === "all" || (Array.isArray(l.visibility) && l.visibility.includes(accountId)));
+    },
+
+    /** Owner always; otherwise true if `accountId` is an admin of ANY game this character is linked to. Used to loosen the sheet-edit endpoint's owner-only gate for a GM editing a shared/linked character. */
+    canAccountEditCharacter(accountId: string, characterId: string): boolean {
+      const character = loadCharacters().find((c) => c.id === characterId);
+      if (!character) return false;
+      if (character.ownerAccountId === accountId) return true;
+      return loadGameCharacterLinks()
+        .filter((l) => l.characterId === characterId)
+        .some((l) => this.isGameAdmin(l.gameId, accountId));
     },
 
     /**
@@ -458,12 +647,15 @@ export function createStore(baseDir: string) {
      */
     deleteAccount(id: string): void {
       saveAccounts(loadAccounts().filter((a) => a.id !== id));
+      const removedCharacterIds = new Set(loadCharacters().filter((c) => c.ownerAccountId === id).map((c) => c.id));
       saveCharacters(loadCharacters().filter((c) => c.ownerAccountId !== id));
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => !removedCharacterIds.has(l.characterId)));
     },
 
     deleteGame(id: string): void {
       saveGames(loadGames().filter((g) => g.id !== id));
       saveWorlds(loadWorlds().filter((w) => w.gameId !== id));
+      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => l.gameId !== id));
     },
 
     deleteWorld(id: string): void {

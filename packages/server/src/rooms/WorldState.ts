@@ -52,6 +52,29 @@ export const StatusEffectState = schema(
   "StatusEffectState",
 );
 
+/**
+ * One resolved billboard bar (mirrors shared/characterSheet.ts's
+ * ResolvedBar) -- replaces the old fixed hp/maxHp/mp/maxMp fields
+ * below. A player's bar LIST is now whatever their sheet's `bars`
+ * config says, resolved against their own `variableValues`
+ * (WorldRoom.ts's onJoin + setCharacterVariableValue), not a fixed
+ * pair every character always has (docs/ROADMAP.md item 4 follow-up:
+ * "HP/MP become DEFAULT ... not permanent/fixed ... linked to the
+ * billboard bars").
+ */
+export const BarState = schema(
+  {
+    variableId: t.string().default(""),
+    label: t.string().default(""),
+    value: t.number().default(0),
+    max: t.number().default(0),
+    colorR: t.number().default(1),
+    colorG: t.number().default(1),
+    colorB: t.number().default(1),
+  },
+  "BarState",
+);
+
 export const PlayerState = schema(
   {
     name: t.string().default("Player"),
@@ -74,10 +97,7 @@ export const PlayerState = schema(
     tokenColorR: t.number().default(0),
     tokenColorG: t.number().default(0),
     tokenColorB: t.number().default(0),
-    hp: t.number().default(0),
-    maxHp: t.number().default(0),
-    mp: t.number().default(0),
-    maxMp: t.number().default(0),
+    bars: t.array(BarState),
     statusEffects: t.array(StatusEffectState),
   },
   "PlayerState",
@@ -102,3 +122,4 @@ export type WorldStateType = InstanceType<typeof WorldState>;
 export type PlayerStateType = InstanceType<typeof PlayerState>;
 export type PlayerMap = MapSchema<PlayerStateType>;
 export type StatusEffectStateType = InstanceType<typeof StatusEffectState>;
+export type BarStateType = InstanceType<typeof BarState>;

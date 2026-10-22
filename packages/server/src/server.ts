@@ -6,11 +6,12 @@
 import { defineServer, defineRoom, createEndpoint, createRouter } from "colyseus";
 import { APIError } from "@colyseus/better-call";
 import { HelloRoom } from "./rooms/HelloRoom.js";
-import { WorldRoom } from "./rooms/WorldRoom.js";
+import { WorldRoom, notifyCharacterSheetChanged } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
-import { listAvailableMods } from "./mods/modLoader.js";
+import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
+import { findLibraryCalls } from "@ttrpg3d/shared";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -60,6 +61,127 @@ const postAccountCharacter = createEndpoint("/accounts/:id/characters", { method
     throw new APIError("BAD_REQUEST", { message: "color must be an [r,g,b] number triple" });
   }
   return store.createCharacter(ownerAccountId, name, color as [number, number, number]);
+});
+
+// MVP goal item 4 (docs/ROADMAP.md), slice 1 -- an account's own
+// imported mods, which character-sheet templates (and future library
+// mods) get resolved against on the standalone, game-free characters
+// page. Ungated, same trust level as getAccountCharacters/
+// postAccountCharacter above -- an account manages its own imports,
+// not a game-scoped admin decision like postGameMod's isGameAdmin check.
+const getAccountMods = createEndpoint("/accounts/:id/mods", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.getAccount(ctx.params.id)?.importedModIds ?? [];
+});
+
+const postAccountMod = createEndpoint("/accounts/:id/mods", { method: "POST", scope: "http" }, async (ctx) => {
+  const accountId = ctx.params.id;
+  const modId = typeof ctx.body?.modId === "string" ? ctx.body.modId : "";
+  if (!modId) throw new APIError("BAD_REQUEST", { message: "modId is required" });
+  store.importModForAccount(accountId, modId);
+  return store.getAccount(accountId)?.importedModIds ?? [];
+});
+
+const deleteAccountMod = createEndpoint("/accounts/:id/mods/:modId", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const accountId = ctx.params.id;
+  store.removeModForAccount(accountId, ctx.params.modId);
+  return store.getAccount(accountId)?.importedModIds ?? [];
+});
+
+// Catalog of character-sheet templates this account can actually pick
+// from -- scoped to its OWN importedModIds, not every mod on disk
+// (getMods below) and not any game's modIds.
+const getAccountCharacterSheetTemplates = createEndpoint("/accounts/:id/character-sheet-templates", { method: "GET", scope: "http" }, async (ctx) => {
+  const account = store.getAccount(ctx.params.id);
+  if (!account) return [];
+  return listCharacterSheetTemplates(join(process.cwd(), "mods"), account.importedModIds);
+});
+
+// MVP goal item 4, round 5 -- "gotta make it so we actually know what
+// the mod library names are, because right now there's no way to
+// tell." Same scope/trust level as getAccountCharacterSheetTemplates
+// above. A library's actual FUNCTIONS can't cross JSON (they'd just
+// silently vanish from the response) -- only their NAMES are useful
+// to a "what can I call" listing anyway, so that's all this maps to.
+const getAccountCharacterSheetLibraries = createEndpoint("/accounts/:id/character-sheet-libraries", { method: "GET", scope: "http" }, async (ctx) => {
+  const account = store.getAccount(ctx.params.id);
+  if (!account) return [];
+  const libraries = await listCharacterSheetLibraries(join(process.cwd(), "mods"), account.importedModIds);
+  return libraries.map(({ modId, manifest, library }) => ({ modId, manifest, functionNames: Object.keys(library) }));
+});
+
+// Sets a character's template + variable values wholesale. Ownership-
+// gated (the caller must actually own this character) -- a NEW gate
+// shape, not isGameAdmin, since no game is involved at all; same
+// "checked fresh against the store, never trusted blindly" spirit
+// every other gate in this file already uses.
+const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  // Real correction (MVP goal item 4 follow-up, "characters" tab): a
+  // game admin can now edit a character they don't own too, once it's
+  // linked into one of their games -- not just the character's own
+  // owner.
+  if (accountId !== character.ownerAccountId && !store.canAccountEditCharacter(accountId, characterId)) throw new APIError("UNAUTHORIZED", { message: "not this character's owner or an admin of a game it's linked to" });
+  const templateId = typeof ctx.body?.templateId === "string" ? ctx.body.templateId : null;
+  const customSheet = typeof ctx.body?.customSheet === "object" && ctx.body.customSheet !== null ? ctx.body.customSheet : null;
+  const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
+  store.updateCharacterSheet(characterId, templateId, customSheet, variableValues);
+  // Real bug found live: this REST write has no way to reach a LIVE
+  // WorldRoom session for this same character on its own -- the
+  // standalone characters page, the in-game popup, and the pop-out
+  // window all go through here, none of them have a WorldRoom
+  // connection at all. Without this, a character's billboard bars sat
+  // stale in-game until some UNRELATED room message happened to
+  // trigger a refresh. See notifyCharacterSheetChanged's own doc.
+  notifyCharacterSheetChanged(characterId);
+  return store.getCharacter(characterId);
+});
+
+// Fetches a single character by id for a viewer who doesn't necessarily
+// own it (fetchCharactersForAccount is scoped to one account's OWN
+// characters only) -- backs the in-game character-sheet popup/popout.
+// `canEdit` is computed server-side (store.canAccountEditCharacter) so
+// the client never has to re-implement the admin/ownership check.
+const getCharacter = createEndpoint("/characters/:id", { method: "GET", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const viewerAccountId = typeof ctx.query?.viewerAccountId === "string" ? ctx.query.viewerAccountId : "";
+  if (!store.canAccountViewCharacter(viewerAccountId, characterId)) throw new APIError("UNAUTHORIZED", { message: "not permitted to view this character" });
+  return { character, canEdit: viewerAccountId === character.ownerAccountId || store.canAccountEditCharacter(viewerAccountId, characterId) };
+});
+
+// Live-preview resolution of a sheet page's `{{modId.fn(args)}}` calls
+// (findLibraryCalls/resolveCharacterSheetMarkdown) against the
+// ACCOUNT's own importedModIds -- a mod not imported is treated as
+// missing even if it exists on disk (see resolveCharacterSheetMarkdown's
+// own doc). Markdown parsing itself stays client-side (characters.ts's
+// existing marked+DOMPurify pipeline); only library-call resolution
+// needs this round trip, since a mod's real function body is
+// server-side Node code with no way to ship it to the browser.
+const postCharacterSheetPreview = createEndpoint("/accounts/:id/character-sheet-preview", { method: "POST", scope: "http" }, async (ctx) => {
+  const account = store.getAccount(ctx.params.id);
+  if (!account) throw new APIError("NOT_FOUND", { message: "no such account" });
+  const markdown = typeof ctx.body?.markdown === "string" ? ctx.body.markdown : "";
+  const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
+  const modsDir = join(process.cwd(), "mods");
+  const resolvedMarkdown = await resolveCharacterSheetMarkdown(modsDir, account.importedModIds, markdown, variableValues);
+  // MVP goal item 4, round 3 -- per-segment resolved values too (not
+  // just the flattened text), so the client can render each call as a
+  // clickable "roll chip" (characters.ts's test chat panel) instead of
+  // plain substituted text. Reuses resolveCharacterSheetMarkdown
+  // unchanged -- just called once per segment's own substring rather
+  // than once for the whole text, zero new resolution logic.
+  const callSegments = findLibraryCalls(markdown);
+  const segments = await Promise.all(
+    callSegments.map(async (segment) => ({
+      ...segment,
+      value: await resolveCharacterSheetMarkdown(modsDir, account.importedModIds, markdown.slice(segment.start, segment.end), variableValues),
+    })),
+  );
+  return { resolvedMarkdown, segments };
 });
 
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {
@@ -147,11 +269,57 @@ const deleteGameMod = createEndpoint("/games/:id/mods/:modId", { method: "DELETE
   return store.getGame(gameId)?.modIds ?? [];
 });
 
+// ---- game<->character links ("Characters" tab) -- many-to-many, with
+// optional folders. Self-service by design: an account can link its
+// OWN character to any game it knows the id of; only a game admin can
+// manage (folder/visibility/unlink) a link for a character it doesn't
+// own -- gating lives in store.ts (same shape every linking method
+// shares), this file just surfaces it over HTTP.
+
+const getGameCharacters = createEndpoint("/games/:id/characters", { method: "GET", scope: "http" }, async (ctx) => {
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  return store.listVisibleCharactersForGameAndAccount(ctx.params.id, accountId);
+});
+
+const postGameCharacter = createEndpoint("/games/:id/characters", { method: "POST", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  const characterId = typeof ctx.body?.characterId === "string" ? ctx.body.characterId : "";
+  if (!characterId) throw new APIError("BAD_REQUEST", { message: "characterId is required" });
+  const folder = typeof ctx.body?.folder === "string" ? ctx.body.folder : null;
+  store.linkCharacterToGame(gameId, characterId, accountId, folder);
+  return store.listVisibleCharactersForGameAndAccount(gameId, accountId);
+});
+
+const patchGameCharacter = createEndpoint("/games/:id/characters/:characterId", { method: "PATCH", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  const folder = typeof ctx.body?.folder === "string" || ctx.body?.folder === null ? ctx.body.folder : undefined;
+  const visibility = ctx.body?.visibility === "all" || Array.isArray(ctx.body?.visibility) ? ctx.body.visibility : undefined;
+  store.updateGameCharacterLink(gameId, ctx.params.characterId, accountId, { folder, visibility });
+  return store.listVisibleCharactersForGameAndAccount(gameId, accountId);
+});
+
+const deleteGameCharacter = createEndpoint("/games/:id/characters/:characterId", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const gameId = ctx.params.id;
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  store.unlinkCharacterFromGame(gameId, ctx.params.characterId, accountId);
+  return store.listVisibleCharactersForGameAndAccount(gameId, accountId);
+});
+
 const routes = createRouter({
   getAccounts,
   postAccount,
   getAccountCharacters,
   postAccountCharacter,
+  getAccountMods,
+  postAccountMod,
+  deleteAccountMod,
+  getAccountCharacterSheetTemplates,
+  getAccountCharacterSheetLibraries,
+  putCharacterSheet,
+  getCharacter,
+  postCharacterSheetPreview,
   getGames,
   postGame,
   getGameWorlds,
@@ -161,6 +329,10 @@ const routes = createRouter({
   getGameMods,
   postGameMod,
   deleteGameMod,
+  getGameCharacters,
+  postGameCharacter,
+  patchGameCharacter,
+  deleteGameCharacter,
 });
 
 export const server = defineServer({

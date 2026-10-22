@@ -1,0 +1,7 @@
+{
+  "id": "default",
+  "name": "Default Character Sheet",
+  "version": "0.1.0",
+  "entry": "entry.ts",
+  "characterSheet": true
+}

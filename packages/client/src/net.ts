@@ -11,11 +11,11 @@ import { Client, type Room } from "@colyseus/sdk";
 import * as BABYLON from "@babylonjs/core";
 import type { Engine } from "noa-engine";
 import { CHUNK_SIZE, decodeChunk, type ChunkRequest, type Item } from "@ttrpg3d/shared";
-import { installVoxelEditor, type CharacterStat } from "./voxelEditor.js";
+import { installVoxelEditor } from "./voxelEditor.js";
 import { installGmOverride } from "./gmOverride.js";
 import { installRespawnControl } from "./respawnControl.js";
 import { mountPageManager } from "./pageManager.js";
-import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type HoveredBar } from "./characterToken.js";
+import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type CharacterTokenBarData, type HoveredBar } from "./characterToken.js";
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
 import type { PlayerController } from "./movement/PlayerController.js";
@@ -33,6 +33,17 @@ interface StatusEffectLike {
   label: string;
 }
 
+/** Mirrors WorldState.ts's BarState -- whatever the character's sheet currently configures as bars, not a fixed hp/mp pair (docs/ROADMAP.md item 4 follow-up). */
+interface BarLike {
+  variableId: string;
+  label: string;
+  value: number;
+  max: number;
+  colorR: number;
+  colorG: number;
+  colorB: number;
+}
+
 interface RemotePlayerLike {
   name: string;
   x: number;
@@ -44,11 +55,13 @@ interface RemotePlayerLike {
   tokenColorR: number;
   tokenColorG: number;
   tokenColorB: number;
-  hp: number;
-  maxHp: number;
-  mp: number;
-  maxMp: number;
+  bars: BarLike[];
   statusEffects: StatusEffectLike[];
+}
+
+/** Colyseus's Schema array -> characterToken.ts's plain data shape. */
+function toTokenBars(bars: Iterable<BarLike> | undefined): CharacterTokenBarData[] {
+  return Array.from(bars ?? []).map((b) => ({ variableId: b.variableId, label: b.label, value: b.value, max: b.max, color: [b.colorR, b.colorG, b.colorB] }));
 }
 
 // Send position at a fraction of tick rate -- small DM-hosted groups (per
@@ -205,7 +218,7 @@ export async function connectAndStreamWorld(
   });
 
   // ---- character tokens (MVP goal items 1-2): right-click context menu +
-  // left-click-to-edit HP/MP overlay, both DOM overlays mounted up front
+  // left-click-to-edit bar-value overlay, both DOM overlays mounted up front
   // so voxelEditor.ts's hooks (installed just below) always have
   // somewhere real to open into.
   //
@@ -244,14 +257,15 @@ export async function connectAndStreamWorld(
   statInputContainer.style.cssText = "position:fixed;z-index:1001;";
   document.body.appendChild(statInputContainer);
 
-  /** Click-to-edit HP/MP: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." */
-  function openStatEditor(characterIdToEdit: string, stat: CharacterStat, x: number, y: number): void {
+  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). */
+  function openStatEditor(characterIdToEdit: string, variableId: string, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "number";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; width:60px; font-size:14px; z-index:1001;`;
     const players = (room!.state as { players?: Map<string, RemotePlayerLike> } | undefined)?.players;
     const current = Array.from(players?.values() ?? []).find((p) => p.characterId === characterIdToEdit);
-    input.value = String(current?.[stat] ?? 0);
+    const currentBar = current?.bars.find((b) => b.variableId === variableId);
+    input.value = String(currentBar?.value ?? 0);
     statInputContainer.innerHTML = "";
     statInputContainer.appendChild(input);
     // Real bug found live: calling focus() synchronously, within the SAME
@@ -269,7 +283,7 @@ export async function connectAndStreamWorld(
 
     function commit(): void {
       const value = Number(input.value);
-      if (Number.isFinite(value)) room!.send("setCharacterStat", { characterId: characterIdToEdit, stat, value });
+      if (Number.isFinite(value)) room!.send("setCharacterVariableValue", { characterId: characterIdToEdit, variableId, value });
       statInputContainer.innerHTML = "";
     }
     input.addEventListener("keydown", (e) => {
@@ -329,7 +343,7 @@ export async function connectAndStreamWorld(
   }
 
   // ---- character tokens: color-matched body boxes + a billboard above
-  // each (characterToken.ts) showing name/HP/MP/status -- replaces the
+  // each (characterToken.ts) showing name/bars/status -- replaces the
   // old fixed-red-box-only remote-player rendering. ----
   const scene = noa.rendering.getScene();
   // Real feedback: "the hp/mp bars... intersecting with the character" --
@@ -428,15 +442,15 @@ export async function connectAndStreamWorld(
    * the exact same "which owned token's bar, if any, is at this screen
    * point" answer, just at different moments (continuously vs. on click).
    */
-  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; sessionId: string; stat: HoveredBar } | undefined {
+  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; sessionId: string; variableId: string } | undefined {
     const result = pickToken(scene, trackedTokens, screenPoint);
     if (!result?.owned) return undefined;
     const token = remoteTokens.get(result.sessionId);
     if (!token) return undefined;
     if (result.pickedMesh !== token.mesh) return undefined; // hit the body box (the coarser extraHitboxMeshes target), not the billboard plane -- not precise enough for bar editing
     const localPoint = BABYLON.Vector3.TransformCoordinates(result.worldPoint, token.mesh.getWorldMatrix().clone().invert());
-    const stat = token.hitTestLocalPoint(localPoint.x, localPoint.y);
-    return stat ? { characterId: result.characterId, sessionId: result.sessionId, stat } : undefined;
+    const variableId = token.hitTestLocalPoint(localPoint.x, localPoint.y);
+    return variableId ? { characterId: result.characterId, sessionId: result.sessionId, variableId } : undefined;
   }
 
   // ---- voxel edits: apply locally immediately (installVoxelEditor already
@@ -460,7 +474,7 @@ export async function connectAndStreamWorld(
       },
       pickHoveredStatBar: () => {
         const resolved = resolveHoveredBar(currentPickScreenPoint());
-        return resolved ? { characterId: resolved.characterId, stat: resolved.stat } : undefined;
+        return resolved ? { characterId: resolved.characterId, variableId: resolved.variableId } : undefined;
       },
       openContextMenu: (characterIdToOpen, x, y) => {
         lastMenuOpenScreen = { x, y };
@@ -525,10 +539,7 @@ export async function connectAndStreamWorld(
         localToken.mesh.isPickable = thirdPerson;
         localToken.update({
           name: p.characterName || p.name,
-          hp: p.hp,
-          maxHp: p.maxHp,
-          mp: p.mp,
-          maxMp: p.maxMp,
+          bars: toTokenBars(p.bars),
           statusEffects: Array.from(p.statusEffects ?? []),
         });
         continue;
@@ -565,10 +576,7 @@ export async function connectAndStreamWorld(
 
       token.update({
         name: p.characterName || p.name,
-        hp: p.hp,
-        maxHp: p.maxHp,
-        mp: p.mp,
-        maxMp: p.maxMp,
+        bars: toTokenBars(p.bars),
         statusEffects: Array.from(p.statusEffects ?? []),
       });
     }
@@ -602,7 +610,7 @@ export async function connectAndStreamWorld(
     const hoveredBar = resolveHoveredBar(screenPoint);
     if (hoveredBar?.sessionId !== hoveredBarSessionId) {
       if (hoveredBarSessionId) remoteTokens.get(hoveredBarSessionId)?.setHoveredBar(undefined);
-      if (hoveredBar) remoteTokens.get(hoveredBar.sessionId)?.setHoveredBar(hoveredBar.stat);
+      if (hoveredBar) remoteTokens.get(hoveredBar.sessionId)?.setHoveredBar(hoveredBar.variableId);
       hoveredBarSessionId = hoveredBar?.sessionId;
     }
   });
