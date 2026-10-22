@@ -129,45 +129,45 @@ discussion (2026-10-15), in dependency order:
      body-box dimensions and derived token placement (`net.ts`'s
      `TOKEN_Y_OFFSET` math already derives from `PLAYER_BODY_HEIGHT`, so
      this becomes per-character instead of one fixed value for everyone).
-   - **NEW -- HP/MP become DEFAULT (not permanent/fixed) character-sheet
-     variables, linked to the billboard bars** (real request,
-     2026-10-17): unlike body size above, HP/MP should NOT be hardcoded
-     into the core variable system -- they're part of the DEFAULT
-     template (so a new sheet starts with them, matching item 1's
-     current fixed hp/maxHp/mp/maxMp shape), but a template can
-     theoretically omit or replace them. `characterToken.ts`'s HP/MP
-     bars need to read whichever variables the active template actually
-     resolves as HP/MP instead of the hardcoded `CharacterRecord.hp/mp`
-     fields item 1 built -- a real migration of item 1's minimal fields
-     onto this general variable system once it exists, not a separate,
-     parallel path.
+     **Still NOT done** -- confirmed live, 2026-10-21 ("I tried
+     adjusting the character width/height/depth and that did nothing"):
+     the `bodyWidth`/`bodyHeight`/`bodyDepth` reserved variables exist
+     as editable/persisted sheet data (Core & Variables tab), but
+     `playerBodyMesh.ts`/`net.ts` still read the fixed
+     `PLAYER_BODY_WIDTH`/`HEIGHT`/`DEPTH` constants, not those values.
+     Also non-trivial beyond the bars precedent: noa's entity collision
+     box is sized once at creation (`noa.entities.add`), so making this
+     live means resizing/recreating the physics body, not just the
+     visual mesh.
+   - ~~**NEW -- HP/MP become DEFAULT (not permanent/fixed) character-sheet
+     variables, linked to the billboard bars**~~ -- **DONE** (2026-10-21,
+     PR #29). Generalized further than originally scoped: not just HP/MP
+     specifically but an arbitrary, per-sheet-configured list of
+     `{variableId, color}` bars (any `xOfY` variable, any count, any
+     color) -- `characterToken.ts`'s billboard renders whichever bars
+     the sheet defines, capped at 4 reserved slots. The old fixed
+     `CharacterRecord.hp/maxHp/mp/maxMp` fields are gone entirely.
    - **NEW -- chat should show the character's name, not the account's**
      (real request, 2026-10-17): chat currently sends/displays the
      account's own `displayName` (`chatNet.ts`'s `connectChat`,
      `GameRoom.ts`'s `senderName`) -- once a character is actually
      selected, the chat sender name should be that CHARACTER's name
      instead, so party members see "Aria said..." not "bob said...".
-     Needs real character data to resolve against (the account's
-     currently-controlled character), hence sequenced here rather than
-     attempted with item 1's minimal record alone.
-   - **NEW -- a third top-level page, scoped to the ACCOUNT (not a
-     game), for viewing/testing character sheets outside any game**
-     (real request, 2026-10-21). Site layout becomes three pages: the
-     games lobby (today's `/`), a game itself (today's `/game/:id`),
-     and this new characters page -- listing the account's own
-     characters (ownership is already per-account, see above), each
-     rendering its real character sheet. Neither this page nor the
-     in-game sheet view needs 3D/noa at all to render a sheet -- it's
-     just the template's markup + the typed-variable widgets above --
-     so this page is a genuinely lighter-weight host than the game
-     page, not a stripped-down copy of it.
-     - **An out-of-game test harness, not just a read-only viewer**:
-       both this page and the in-game sheet view must be able to set
-       HP/other variables, run the template's own macros/scripts, and
-       see what WOULD be posted to chat -- without a live game
-       session/room to actually post into. This page needs its own
-       local stand-in for "post to chat" (render the message, don't
-       send it anywhere real).
+     **Partially done** (2026-10-21, PR #29): `chatSend` now takes an
+     optional `asCharacterId`, and the compose row has a "post as"
+     dropdown defaulting to "My username" -- but it's still a MANUAL
+     per-message choice, not automatically derived from whichever
+     character the account is CURRENTLY controlling (there's no
+     "currently controlling" concept yet at all -- see the new
+     Tab/Shift+Tab item below, which is exactly what would define it).
+   - ~~**NEW -- a third top-level page, scoped to the ACCOUNT (not a
+     game), for viewing/testing character sheets outside any game**~~
+     -- **DONE** (2026-10-21, PR #29): the standalone `/characters`
+     page, with its own local test-chat panel standing in for "post to
+     chat" (an out-of-game test harness, not just a read-only viewer --
+     the sub-bullet below is DONE along with it).
+     - ~~**An out-of-game test harness, not just a read-only viewer**~~
+       -- **DONE** (2026-10-21, PR #29).
      - **Mods need a way to split game-affecting behavior from sheet-
        only behavior, so ONE mod implementation works unmodified in
        both places**: a character-sheet-template mod's functions that
@@ -183,7 +183,60 @@ discussion (2026-10-15), in dependency order:
        to only ever call into a distinct, game-state-free subset of a
        mod's exports), rather than the host having to guess which of
        a mod's functions are "safe" to call from a context with no
-       live world/room behind it.
+       live world/room behind it. **Still NOT done** -- no mod built
+       yet actually touches live game state from a library function,
+       so this constraint hasn't been exercised for real yet either.
+   - ~~**NEW -- an in-game "Characters" tab + character-sheet popup/
+     popout**~~ -- **DONE** (2026-10-21, PR #29, following real
+     requests the same day). A many-to-many game<->character link
+     (`GameCharacterLink`, with optional folders and a `visibility:
+     "all" | string[]` list), a "Characters" tab inside `chatPanel.ts`
+     (tab order Chat, Characters, GM) listing characters visible to the
+     account in the current game, and a centered popup (+ a "Pop out"
+     into a real separate browser window) showing that character's
+     sheet -- `canEdit: false` for a shared character you don't own or
+     admin.
+   - **NEW -- drag a character from the Characters tab onto the 3D
+     world to place/move their token** (real request, 2026-10-21):
+     "drag and drop a character from the character's tab to a location
+     within a specific distance from the active and controlled
+     character that is mouse picked by a raycast from the mouse
+     location to the terrain location." Needs: a drag-start on a
+     Characters-tab row (`chatPanel.ts`), a raycast from the drop
+     point's screen position to the terrain (same crosshair/camera-ray
+     machinery `tokenPicking.ts`/`net.ts` already use for block
+     targeting and token picking), a max-distance check against the
+     ACTIVE/controlled character's own current position specifically
+     (not just any character already in the world), and a server
+     message to actually move/spawn that character's token at the
+     resolved terrain position. In-game only (`chatPanel.ts` + `net.ts`)
+     -- the standalone characters page has no 3D/terrain to drop onto.
+   - **NEW -- Tab/Shift+Tab cycles control + camera focus between the
+     player's own character instances present in the world** (real
+     request, 2026-10-21): pressing Tab switches control+camera to the
+     NEXT of the account's own characters currently in-world, Shift+Tab
+     to the previous. Implies an account can have more than one of its
+     OWN characters simultaneously present/controllable in a single
+     world session -- today's model is "one character per session,
+     fixed at join" (`WorldRoom.ts`'s `onJoin`), so this is a real
+     change to that assumption, not just a camera toggle. Distinct from
+     item 5's existing party-list "click to focus" follow-up below,
+     which is about SPECTATING another player's token, not switching
+     your own control between several of your own characters. Once a
+     real "currently controlling" concept exists here, the chat-
+     sender-name item above could switch from a manual dropdown to
+     defaulting off of it.
+   - **NEW -- deleting a character** (real request, 2026-10-21): a real
+     delete action, reachable both from the standalone `/characters`
+     page and from a game's in-game Characters tab -- distinct from
+     that tab's existing "Unlink," which only removes the
+     game<->character LINK, not the character itself. No REST/UI
+     delete-a-character path exists today at all (`store.deleteCharacter`
+     exists server-side but is currently only ever invoked via
+     `deleteAccount`'s own cascade, never as its own user-facing
+     action) -- needs a new endpoint + a confirmation step in both
+     places (irreversible, and would need to cascade its own
+     `GameCharacterLink` rows the same way `deleteAccount` already does).
 5. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
    the full implementation) for the chrome itself: all 4 panels exist
