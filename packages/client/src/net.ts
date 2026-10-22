@@ -15,6 +15,7 @@ import { installVoxelEditor } from "./voxelEditor.js";
 import { installGmOverride } from "./gmOverride.js";
 import { installRespawnControl } from "./respawnControl.js";
 import { installFocusCycling } from "./focusCycling.js";
+import { installCharacterPlacement } from "./characterPlacement.js";
 import { mountPageManager } from "./pageManager.js";
 import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type CharacterTokenBarData, type HoveredBar } from "./characterToken.js";
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
@@ -189,6 +190,7 @@ export async function connectAndStreamWorld(
   const gmOverride = installGmOverride(noa, room, playerController, onGmActiveChange);
   installRespawnControl(noa, room, playerController, fallbackSpawn);
   installFocusCycling(room, playerController);
+  installCharacterPlacement(noa, room);
 
   // Real bug found live: the client never actually applied the SERVER's
   // own computed spawn position to the local player at all -- it just
