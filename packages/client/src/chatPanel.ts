@@ -110,8 +110,15 @@ export interface ChatPanelController {
    * on EVERY row (an admin can manage any linked character) or only
    * the viewer's own (reused from the SAME gmOverride signal the GM
    * tab's own visibility already uses, not a second permission system).
+   * `focusedCharacterId` (MVP goal item 4 follow-up, real bug found
+   * live): whichever character the viewer is CURRENTLY controlling in
+   * the active world session, if any -- that one row is never
+   * draggable (dropping it onto the world is always silently rejected
+   * server-side, "it already has a live position, wherever you are").
+   * `null` outside an active world session (the lobby) -- a real
+   * state, not an error.
    */
-  setCharactersState(visibleLinks: VisibleGameCharacterEntry[], participantAccounts: { id: string; displayName: string }[], myCharacters: { id: string; name: string }[], viewerAccountId: string, isAdmin: boolean): void;
+  setCharactersState(visibleLinks: VisibleGameCharacterEntry[], participantAccounts: { id: string; displayName: string }[], myCharacters: { id: string; name: string }[], viewerAccountId: string, isAdmin: boolean, focusedCharacterId: string | null): void;
   /** Removes this panel's window-level key listener and releases its input capture if the compose box was left focused. Mirrors hotbar.ts's destroy() pattern. */
   destroy(): void;
 }
@@ -259,6 +266,7 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   let myCharacters: { id: string; name: string }[] = [];
   let viewerAccountId = "";
   let isAdmin = false;
+  let focusedCharacterId: string | null = null;
 
   function setActiveTab(tab: ChatPanelTab): void {
     activeTab = tab;
@@ -310,8 +318,17 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
             // self-service only (WorldRoom.ts), so starting a drag for
             // someone else's character could only ever end in a silent
             // server-side no-op. `isOwner` already computed above.
+            //
+            // Real bug found live: dragging your OWN currently-FOCUSED
+            // character (the one you're playing right now) onto the
+            // world is ALSO always silently rejected server-side (it
+            // already has a live position -- wherever you are) --
+            // excluded here too, with a title explaining why, so the
+            // "I dropped it and nothing happened" confusion can't occur.
+            const isFocused = character.id === focusedCharacterId;
+            const draggable = isOwner && !isFocused;
             return `
-          <li data-character-id="${character.id}" ${isOwner ? 'draggable="true"' : ""}>
+          <li data-character-id="${character.id}" ${draggable ? 'draggable="true"' : ""} ${isFocused ? 'title="This is the character you\'re currently playing -- it already has a live position"' : ""}>
             <button type="button" class="open-character-btn" data-character-id="${character.id}">${character.name}</button>
             ${
               canManage
@@ -556,12 +573,13 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       enabledModIds = nextEnabledModIds;
       renderModsList();
     },
-    setCharactersState(nextVisibleLinks, nextParticipantAccounts, nextMyCharacters, nextViewerAccountId, nextIsAdmin) {
+    setCharactersState(nextVisibleLinks, nextParticipantAccounts, nextMyCharacters, nextViewerAccountId, nextIsAdmin, nextFocusedCharacterId) {
       visibleLinks = nextVisibleLinks;
       participantAccounts = nextParticipantAccounts;
       myCharacters = nextMyCharacters;
       viewerAccountId = nextViewerAccountId;
       isAdmin = nextIsAdmin;
+      focusedCharacterId = nextFocusedCharacterId;
       renderSendAsOptions();
       renderCharacterGroups();
     },

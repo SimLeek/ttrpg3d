@@ -115,6 +115,8 @@ export interface RunningGame {
   setSeeThroughWalls(enabled: boolean): void;
   /** No hot-reload exists for mods -- re-launches the player's own current world, same teardown/recreate cycle page-switching already uses. chatPanel.ts's GM tab "Reload this page" button calls this via main.ts. */
   reloadWorld(): void;
+  /** Relays net.ts's WorldConnection.getFocusedCharacterId -- main.ts uses this to keep that one row in the Characters tab non-draggable (real bug found live: dropping your own currently-focused character onto the world is silently rejected server-side, with no feedback). */
+  getFocusedCharacterId(): string;
 }
 
 export function startGame(
@@ -431,6 +433,13 @@ export function startGame(
     console.error("[net] failed to connect to world server:", err);
     return null;
   });
+  // getFocusedCharacterId() below needs a synchronous value, unlike
+  // setSeeThroughWalls/reloadWorld (fire-and-forget) -- this just keeps
+  // a plain reference current once the connection promise settles,
+  // same "resolves once joinOrCreate() completes" spirit as `connection`
+  // itself.
+  let resolvedConnection: Awaited<typeof connection> = null;
+  void connection.then((c) => (resolvedConnection = c));
 
   return {
     stop(): void {
@@ -493,6 +502,10 @@ export function startGame(
 
     reloadWorld(): void {
       onSwitchWorld(worldId, worldName);
+    },
+
+    getFocusedCharacterId(): string {
+      return resolvedConnection?.getFocusedCharacterId() ?? "";
     },
   };
 }
