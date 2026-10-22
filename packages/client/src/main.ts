@@ -146,13 +146,7 @@ let visibleCharactersResult: GameCharactersResult = { links: [], participantAcco
 
 function pushCharactersState(): void {
   if (!runningChat) return;
-  // MVP goal item 4 follow-up -- real bug found live: dropping your own
-  // currently-focused character onto the world is silently rejected
-  // server-side, with no feedback at all. `null` while not in an active
-  // world session (the lobby, or mid-connect) -- a real state, not an
-  // error, chatPanel.ts's own draggable check already handles it.
-  const focusedCharacterId = runningGame?.getFocusedCharacterId() || null;
-  runningChat.chatPanel.setCharactersState(visibleCharactersResult.links, visibleCharactersResult.participantAccounts, myCharacters.map((c) => ({ id: c.id, name: c.name })), runningChat.accountId, isCurrentAccountGameAdmin, focusedCharacterId);
+  runningChat.chatPanel.setCharactersState(visibleCharactersResult.links, visibleCharactersResult.participantAccounts, myCharacters.map((c) => ({ id: c.id, name: c.name })), runningChat.accountId, isCurrentAccountGameAdmin);
 }
 
 async function refreshGameCharacters(): Promise<void> {

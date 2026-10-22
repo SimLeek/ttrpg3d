@@ -273,7 +273,7 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
   it("the compose dropdown offers every visible character plus the default 'My username', and onSend carries whichever is selected", () => {
     const onSend = vi.fn();
     const panel = mount({ initialMessages: [], onSend });
-    panel.setCharactersState([link("c1", "Thrain", "me")], [], [{ id: "c1", name: "Thrain" }], "me", false, null);
+    panel.setCharactersState([link("c1", "Thrain", "me")], [], [{ id: "c1", name: "Thrain" }], "me", false);
 
     const select = container.querySelector<HTMLSelectElement>("#chat-send-as")!;
     expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["My username", "Thrain"]);
@@ -289,7 +289,7 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
   it("renders characters grouped by folder, with an '(no folder)' bucket for null, and clicking a row calls onOpenCharacter", () => {
     const onOpenCharacter = vi.fn();
     const panel = mount({ initialMessages: [], onSend: vi.fn(), onOpenCharacter });
-    panel.setCharactersState([link("c1", "Thrain", "me", "all", "NPCs"), link("c2", "Bram", "me", "all", null)], [], [], "me", false, null);
+    panel.setCharactersState([link("c1", "Thrain", "me", "all", "NPCs"), link("c2", "Bram", "me", "all", null)], [], [], "me", false);
 
     const groups = container.querySelectorAll(".character-folder-group h4");
     expect(Array.from(groups).map((g) => g.textContent)).toEqual(["NPCs", "(no folder)"]);
@@ -300,19 +300,19 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
 
   it("shows folder/visibility/unlink controls on the viewer's OWN character, but not on someone else's, unless isAdmin", () => {
     const panel = mount({ initialMessages: [], onSend: vi.fn() });
-    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", false, null);
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", false);
 
     expect(container.querySelector(".character-link-manage[data-character-id='mine']")).not.toBeNull();
     expect(container.querySelector(".character-link-manage[data-character-id='theirs']")).toBeNull();
 
-    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", true, null);
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", true);
     expect(container.querySelector(".character-link-manage[data-character-id='theirs']")).not.toBeNull();
   });
 
   it("toggling 'All players' off/on calls onUpdateCharacterLink with the right visibility shape", () => {
     const onUpdateCharacterLink = vi.fn();
     const panel = mount({ initialMessages: [], onSend: vi.fn(), onUpdateCharacterLink });
-    panel.setCharactersState([link("c1", "Thrain", "me", "all")], [{ id: "other", displayName: "Other" }], [], "me", false, null);
+    panel.setCharactersState([link("c1", "Thrain", "me", "all")], [{ id: "other", displayName: "Other" }], [], "me", false);
 
     const allCheckbox = container.querySelector<HTMLInputElement>(".link-visibility-all")!;
     allCheckbox.checked = false;
@@ -323,7 +323,7 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
   it("the link form only offers the viewer's own NOT-yet-linked characters, and clicking Link calls onLinkCharacter", () => {
     const onLinkCharacter = vi.fn();
     const panel = mount({ initialMessages: [], onSend: vi.fn(), onLinkCharacter });
-    panel.setCharactersState([link("c1", "AlreadyLinked", "me")], [], [{ id: "c1", name: "AlreadyLinked" }, { id: "c2", name: "NotYetLinked" }], "me", false, null);
+    panel.setCharactersState([link("c1", "AlreadyLinked", "me")], [], [{ id: "c1", name: "AlreadyLinked" }, { id: "c2", name: "NotYetLinked" }], "me", false);
 
     const select = container.querySelector<HTMLSelectElement>("#link-character-select")!;
     expect(Array.from(select.options).map((o) => o.value)).toEqual(["c2"]);
@@ -336,7 +336,7 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
   it("clicking Unlink calls onUnlinkCharacter", () => {
     const onUnlinkCharacter = vi.fn();
     const panel = mount({ initialMessages: [], onSend: vi.fn(), onUnlinkCharacter });
-    panel.setCharactersState([link("c1", "Thrain", "me")], [], [], "me", false, null);
+    panel.setCharactersState([link("c1", "Thrain", "me")], [], [], "me", false);
 
     container.querySelector<HTMLButtonElement>(".unlink-btn")!.click();
     expect(onUnlinkCharacter).toHaveBeenCalledWith("c1");
@@ -345,7 +345,7 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
   it("MVP goal item 4 follow-up: Delete shows only on the viewer's OWN character (never an admin-only row), confirms first, and calls onDeleteCharacter only when confirmed", () => {
     const onDeleteCharacter = vi.fn();
     const panel = mount({ initialMessages: [], onSend: vi.fn(), onDeleteCharacter });
-    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", true, null); // isAdmin=true -- can manage theirs, but still shouldn't see Delete on it
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", true); // isAdmin=true -- can manage theirs, but still shouldn't see Delete on it
 
     expect(container.querySelector(".delete-char-btn[data-character-id='mine']")).not.toBeNull();
     expect(container.querySelector(".delete-char-btn[data-character-id='theirs']")).toBeNull();
@@ -363,7 +363,7 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
 
   it("MVP goal item 4 follow-up (drag-and-drop placement): a row is draggable only for the viewer's OWN character, and dragstart puts its characterId on dataTransfer under CHARACTER_DRAG_MIME", () => {
     const panel = mount({ initialMessages: [], onSend: vi.fn() });
-    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", false, null);
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", false);
 
     const mineLi = container.querySelector<HTMLLIElement>("li[data-character-id='mine']")!;
     const theirsLi = container.querySelector<HTMLLIElement>("li[data-character-id='theirs']")!;
@@ -376,19 +376,5 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
     mineLi.dispatchEvent(event);
 
     expect(setData).toHaveBeenCalledWith(CHARACTER_DRAG_MIME, "mine");
-  });
-
-  it("real bug found live: a row for the viewer's own CURRENTLY-FOCUSED character is never draggable either, since dropping it onto the world is always silently rejected server-side (it already has a live position)", () => {
-    const panel = mount({ initialMessages: [], onSend: vi.fn() });
-    panel.setCharactersState([link("mine", "Mine", "me"), link("alsoMine", "AlsoMine", "me")], [], [], "me", false, "mine");
-
-    const focusedLi = container.querySelector<HTMLLIElement>("li[data-character-id='mine']")!;
-    const otherOwnedLi = container.querySelector<HTMLLIElement>("li[data-character-id='alsoMine']")!;
-    expect(focusedLi.draggable).toBe(false); // the focused one -- excluded even though it's owned
-    expect(otherOwnedLi.draggable).toBe(true); // a DIFFERENT character you own is still draggable
-
-    // null (no active world session, e.g. the lobby) excludes nothing extra.
-    panel.setCharactersState([link("mine", "Mine", "me"), link("alsoMine", "AlsoMine", "me")], [], [], "me", false, null);
-    expect(container.querySelector<HTMLLIElement>("li[data-character-id='mine']")!.draggable).toBe(true);
   });
 });
