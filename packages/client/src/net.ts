@@ -323,7 +323,21 @@ export async function connectAndStreamWorld(
     // position to invert, and "next" is the same "old focus goes to the
     // tail" behavior Tab itself uses). Same gate as Delete -- only ever
     // invoked with a real instanceId.
+    //
+    // Real bug found live: "that character teleports to the currently
+    // controlled character, instead of the focus moving to that
+    // character." focusCycling.ts's Tab/Shift+Tab ALSO calls
+    // playerController.teleportTo(...) using the target's own
+    // already-synced position, not just sending the message -- this
+    // callback was missing that half entirely. Without it, the local
+    // physics entity never actually moves; only the Schema fields
+    // relabel it (new name/bars/color) in place, which looks exactly
+    // like "the target character jumped to wherever I'm already
+    // standing" instead of "I teleported to the target."
     onControl: (instanceId) => {
+      const state = room!.state as WorldStateLike | undefined;
+      const target = state?.otherCharacters?.find((o) => o.instanceId === instanceId);
+      if (target) playerController.teleportTo([target.x, target.y, target.z]);
       room!.send("focusCharacter", { instanceId, direction: "next" });
     },
   });
@@ -686,6 +700,23 @@ export async function connectAndStreamWorld(
         const thirdPerson = playerBodyMesh.isThirdPerson();
         localToken.mesh.isVisible = thirdPerson;
         localToken.mesh.isPickable = thirdPerson;
+
+        // Real bug found live: "changing colors only updates after
+        // tabbing through, so changing to blue because selected/
+        // controlled, and changing to blue shouldn't even be a thing."
+        // The local body's own material was a FIXED blue, set ONCE at
+        // creation (playerBodyMesh.ts's installPlayerBodyMesh) and
+        // never touched again -- a leftover from before per-character
+        // custom colors existed. Remote players' and otherCharacters'
+        // boxes already reassign their material color every tick from
+        // their own tokenColor; the local one just never did, so an
+        // edited color was already applied server-side but invisible
+        // while you were the one focused on it -- only showing up once
+        // Tab/Control made it an otherCharacters entry instead (which
+        // DOES respect the real color). Characterless join keeps the
+        // original fixed blue (still useful for telling yourself apart
+        // from a nearby remote player when there's no real color to use).
+        playerBodyMesh.material.diffuseColor = p.characterId ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.3, 0.5, 0.9);
 
         if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
           resizeLocalPlayerBody(noa, playerBodyMesh, p.bodyWidth, p.bodyHeight, p.bodyDepth);
