@@ -22,6 +22,7 @@ import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, type PlayerBodyMesh } from "./playerBodyMesh.js";
+import { CHARACTER_STORAGE_KEY } from "./api.js";
 
 interface EditBlockMessage {
   x: number;
@@ -646,6 +647,7 @@ export async function connectAndStreamWorld(
     noa.setBlock(voxelId, x, y, z);
   });
 
+  let lastPersistedCharacterId: string | null = null;
   noa.on("tick", () => {
     // GM-only chat tab's seeThroughWalls checkbox (chatPanel.ts): poll
     // the room's own Schema-synced value fresh every tick, same idiom
@@ -717,6 +719,23 @@ export async function connectAndStreamWorld(
         // original fixed blue (still useful for telling yourself apart
         // from a nearby remote player when there's no real color to use).
         playerBodyMesh.material.diffuseColor = p.characterId ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.3, 0.5, 0.9);
+
+        // Real bug found live: "the currently controlled character is
+        // always blue" after a hard refresh. Root cause wasn't this
+        // material at all (confirmed correct above) -- main.ts's
+        // reload-while-in-game path resumes whichever characterId is
+        // in CHARACTER_STORAGE_KEY, which lobby.ts only ever writes at
+        // your ORIGINAL pre-game character pick. Tab/Shift+Tab/Control
+        // change your focused character purely server-side; nothing
+        // kept that localStorage key in sync, so a refresh after
+        // switching focus (or after entering without ever using the
+        // lobby picker this session) resumed you characterless --
+        // genuinely triggering this same material's intentional
+        // "no character" blue fallback, not a second bug in it.
+        if (p.characterId && p.characterId !== lastPersistedCharacterId) {
+          lastPersistedCharacterId = p.characterId;
+          localStorage.setItem(CHARACTER_STORAGE_KEY, p.characterId);
+        }
 
         if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
           resizeLocalPlayerBody(noa, playerBodyMesh, p.bodyWidth, p.bodyHeight, p.bodyDepth);
