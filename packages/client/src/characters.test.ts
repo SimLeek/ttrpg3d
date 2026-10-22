@@ -88,6 +88,18 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Real bug found live (test-only, not a characters.ts bug): leaving
+  // the old container attached left its id="variable-def-list" (etc.)
+  // duplicated across every later test's own container. An ID-anchored
+  // descendant selector like `#variable-def-list .foo`, scoped via
+  // `container.querySelector(...)`, can then resolve against the
+  // FIRST such id in the whole document rather than the one actually
+  // inside `container` -- confirmed directly (document had 2 matching
+  // ids; `container.querySelectorAll` alone found the right one, but
+  // the combined descendant selector didn't). Removing each test's
+  // container keeps ids unique across the whole suite, like lobby.ts's
+  // own real page would ever only have one on screen at a time.
+  container.remove();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -260,6 +272,27 @@ describe("mountCharactersPage", () => {
     current.dispatchEvent(new Event("change"));
     await flush();
     expect(character.variableValues.hp).toBe(9);
+  });
+
+  it("changing a variable's type in Core & Variables swaps its value widget immediately -- xOfY's two boxes disappear, the new type's single box appears (real bug: both used to stay on screen at once)", async () => {
+    character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [{ id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 }] };
+    character.variableValues = { hp: 6 };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // "Core & Variables"
+    await flush();
+
+    expect(container.querySelector("#variable-def-list .sheet-widget-xofy-current")).not.toBeNull();
+
+    const typeSelect = container.querySelector<HTMLSelectElement>(".var-type")!;
+    typeSelect.value = "number";
+    typeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+
+    expect(container.querySelector("#variable-def-list .sheet-widget-xofy-current")).toBeNull();
+    expect(container.querySelector("#variable-def-list .sheet-widget-xofy-max")).toBeNull();
+    expect(container.querySelectorAll("#variable-def-list .var-value-host input").length).toBe(1); // exactly one box, not accumulated old + new
+    expect(container.querySelector("#variable-def-list .sheet-widget-number")).not.toBeNull();
   });
 
   it("the Core & Variables tab lists each imported mod's library function names, updating when mods change (round 5 -- previously no way to tell)", async () => {

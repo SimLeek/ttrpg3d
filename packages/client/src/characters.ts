@@ -441,6 +441,15 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
         variable.label = value;
       } else if (field === "type") {
         variable.type = value as CharacterSheetVariableType;
+        saveSheet(character);
+        // The value widget's own SHAPE depends on type (one box vs.
+        // xOfY's two) -- unlike id/label/default below, this has to
+        // rebuild the row, not just re-save, or the old widget just
+        // sits there showing the wrong type's boxes forever (real bug
+        // found live: switching xOfY -> number left both the old
+        // xOfY boxes AND a number box on screen at once).
+        renderList();
+        return;
       } else if (field === "default") {
         const asNumber = Number(value);
         variable.default = value !== "" && !Number.isNaN(asNumber) ? asNumber : value;
