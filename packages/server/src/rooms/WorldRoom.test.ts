@@ -5,7 +5,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { server } from "../server.js";
-import { WorldRoom } from "./WorldRoom.js";
+import { WorldRoom, notifyCharacterSheetChanged } from "./WorldRoom.js";
 import { DEFAULT_WORLD_BOTTOM_Y } from "./WorldState.js";
 import { store } from "../data/store.js";
 
@@ -286,6 +286,31 @@ describe("WorldRoom", () => {
 
       expect(room.state.players.get(client.sessionId)!.bars[0].value).toBe(3);
       expect(store.getCharacter(character.id)?.variableValues.hp).toBe(3);
+    });
+
+    it("notifyCharacterSheetChanged refreshes a connected session's bars after a plain REST-style sheet update (real bug found live: a popout/popup/standalone-page edit, which has no WorldRoom connection of its own, left in-game bars stale until an unrelated room message happened to trigger a refresh)", async () => {
+      const character = store.createCharacter(owner.id, "RestEdited", [1, 0, 0]);
+      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
+      store.updateCharacterSheet(character.id, null, customSheet, { hp: 10 });
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { characterId: character.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.players.get(client.sessionId)!.bars[0].value).toBe(10);
+
+      // The REST endpoint's own half (server.ts's putCharacterSheet) --
+      // simulated directly here as the plain store write it actually
+      // is, with NO room message sent at all.
+      store.updateCharacterSheet(character.id, null, customSheet, { hp: 4 });
+      expect(room.state.players.get(client.sessionId)!.bars[0].value).toBe(10); // not yet -- the room doesn't know
+
+      notifyCharacterSheetChanged(character.id);
+      expect(room.state.players.get(client.sessionId)!.bars[0].value).toBe(4);
+    });
+
+    it("notifyCharacterSheetChanged is a no-op (not an error) for a character nobody is currently playing, or an unknown id", async () => {
+      const character = store.createCharacter(owner.id, "NotPlaying", [1, 0, 0]);
+      expect(() => notifyCharacterSheetChanged(character.id)).not.toThrow();
+      expect(() => notifyCharacterSheetChanged("not-a-real-character")).not.toThrow();
     });
 
     it("setCharacterVariableValue is ignored from a client who is neither the character's own owner session nor an admin", async () => {

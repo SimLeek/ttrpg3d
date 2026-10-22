@@ -71,6 +71,40 @@ function applyBarsToPlayer(player: PlayerStateType, character: CharacterRecord):
   }
 }
 
+/**
+ * MVP goal item 4 follow-up ("characters" tab/popup) -- real bug found
+ * live: "updating the popout page variables didn't update the in-game
+ * bars, until I selected one bar, escaped, and the other updated."
+ * Root cause: characters.ts's standalone page, the in-game popup, and
+ * the pop-out window all persist sheet edits via a plain REST PUT
+ * (server.ts's putCharacterSheet) -- which has no way to reach a LIVE
+ * WorldRoom session for that same character to re-resolve its
+ * Schema-synced bars. The "escaping a bar editor updated the OTHER
+ * bar too" symptom was `setCharacterVariableValue`'s own handler
+ * (below) incidentally re-resolving the WHOLE bars array -- it just
+ * takes some UNRELATED room message to trigger that refresh today.
+ *
+ * This in-process registry (every room lives in the same Node
+ * process) tracks which (room, sessionId) pairs are currently playing
+ * each characterId, so a REST edit can reach them directly -- no new
+ * message/poll loop, just a same-process function call. Keyed by
+ * characterId since a character can in principle be active in more
+ * than one room at once (two tabs/sessions); cleaned up in onLeave.
+ */
+const activeCharacterSessions = new Map<string, Set<{ room: WorldRoom; sessionId: string }>>();
+
+/** Called by server.ts's putCharacterSheet, after persisting, to refresh bars for every live session currently playing this character -- across every WorldRoom that has one, not just the current room (same reason setCharacterVariableValue's own handler now also calls this instead of looping its own room only). No-op (not an error) if the character isn't currently played anywhere. */
+export function notifyCharacterSheetChanged(characterId: string): void {
+  const sessions = activeCharacterSessions.get(characterId);
+  if (!sessions || sessions.size === 0) return;
+  const character = store.getCharacter(characterId);
+  if (!character) return;
+  for (const { room, sessionId } of sessions) {
+    const player = room.state.players.get(sessionId);
+    if (player) applyBarsToPlayer(player, character);
+  }
+}
+
 export class WorldRoom extends Room<{ state: WorldStateType }> {
   // Set once in onCreate from the first joiner's options -- paired with
   // `.filterBy(['worldId'])` on this room's registration (server.ts), which
@@ -101,6 +135,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // tracked server-side rather than trusting a client-sent flag (checked
   // once at join via store.isWorldAdmin, not re-derived per message).
   private adminSessionIds = new Set<string>();
+  /** This room's own half of the activeCharacterSessions registry above -- which characterId (if any) each currently-connected session is playing, so onLeave can find and remove the right entry. */
+  private sessionCharacterIds = new Map<string, string>();
 
   // Respawn anchor: real bug found live ("the respawn anchor doesn't seem
   // to persist when switching pages") -- it used to live ONLY in this
@@ -262,11 +298,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       if (!isSelf && !this.adminSessionIds.has(client.sessionId)) return;
 
       store.updateCharacterVariableValue(characterId, variableId, value);
-      const character = store.getCharacter(characterId);
-      if (!character) return;
-      for (const player of this.state.players.values()) {
-        if (player.characterId === characterId) applyBarsToPlayer(player, character);
-      }
+      notifyCharacterSheetChanged(characterId);
     });
 
     // Backs the "Select status effects" context-menu item -- same gating
@@ -347,6 +379,10 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.tokenColorG = character.token.color[1];
       player.tokenColorB = character.token.color[2];
       applyBarsToPlayer(player, character);
+      this.sessionCharacterIds.set(client.sessionId, character.id);
+      const sessions = activeCharacterSessions.get(character.id) ?? new Set();
+      sessions.add({ room: this, sessionId: client.sessionId });
+      activeCharacterSessions.set(character.id, sessions);
       for (const effect of character.statusEffects) {
         const effectState = new StatusEffectState();
         effectState.icon = effect.icon;
@@ -361,6 +397,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.adminSessionIds.delete(client.sessionId);
+    const characterId = this.sessionCharacterIds.get(client.sessionId);
+    if (characterId) {
+      const sessions = activeCharacterSessions.get(characterId);
+      if (sessions) {
+        for (const entry of sessions) {
+          if (entry.room === this && entry.sessionId === client.sessionId) sessions.delete(entry);
+        }
+        if (sessions.size === 0) activeCharacterSessions.delete(characterId);
+      }
+      this.sessionCharacterIds.delete(client.sessionId);
+    }
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }
 }

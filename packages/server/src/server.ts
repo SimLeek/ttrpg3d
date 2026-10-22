@@ -6,7 +6,7 @@
 import { defineServer, defineRoom, createEndpoint, createRouter } from "colyseus";
 import { APIError } from "@colyseus/better-call";
 import { HelloRoom } from "./rooms/HelloRoom.js";
-import { WorldRoom } from "./rooms/WorldRoom.js";
+import { WorldRoom, notifyCharacterSheetChanged } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
@@ -128,6 +128,14 @@ const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT
   const customSheet = typeof ctx.body?.customSheet === "object" && ctx.body.customSheet !== null ? ctx.body.customSheet : null;
   const variableValues = typeof ctx.body?.variableValues === "object" && ctx.body.variableValues !== null ? ctx.body.variableValues : {};
   store.updateCharacterSheet(characterId, templateId, customSheet, variableValues);
+  // Real bug found live: this REST write has no way to reach a LIVE
+  // WorldRoom session for this same character on its own -- the
+  // standalone characters page, the in-game popup, and the pop-out
+  // window all go through here, none of them have a WorldRoom
+  // connection at all. Without this, a character's billboard bars sat
+  // stale in-game until some UNRELATED room message happened to
+  // trigger a refresh. See notifyCharacterSheetChanged's own doc.
+  notifyCharacterSheetChanged(characterId);
   return store.getCharacter(characterId);
 });
 
