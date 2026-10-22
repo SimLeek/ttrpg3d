@@ -107,18 +107,22 @@ discussion (2026-10-15), in dependency order:
      single value gets one box. (Item 1's HP/MP pair is the first real
      instance of the "x-of-y" case -- this general variable system
      should subsume it, not duplicate it.)
-   - **A safe/sandboxed scripting system** for calculated variables
-     (e.g. a derived modifier) and RNG-driven attacks that auto-roll and
-     post to the chat above.
    - **Ownership: per-USER (account), not per-game** (already true of
      item 1's minimal record too). A character is portable across
      games by construction, rather than needing an export/import step
      between two games.
-   - **Importing** is also mod-based: rather than bespoke native parsers
-     for every external format (Excel sheets from paid westmarches
-     servers, Roll20/Foundry JSON exports, etc.), the import mechanism
-     itself is a pluggable mod interface -- a handful of built-in
-     importer mods to start, swappable/extensible later.
+   - A safe/sandboxed scripting system for calculated variables, and
+     mod-based sheet importers, were both originally scoped here --
+     **moved to `docs/BACKLOG.md`** (2026-10-21, real correction: "I
+     wouldn't call those small follow ups. We'll probably only do a
+     portion of them... we should probably move them to a backlog/
+     deferred page... so we can come back to those later while getting
+     a working system now"). Of the items below, body size, drag-and-
+     drop placement, Tab/Shift+Tab cycling, and deleting a character
+     are this item's actual MVP-scope finish, being built now
+     (2026-10-21) -- chat-sender-name stays partial/blocked and the
+     ModContext split is in `docs/BACKLOG.md` too (see their own notes
+     below).
    - **NEW -- player body size becomes a permanent character-sheet
      variable** (real request, 2026-10-17): `playerBodyMesh.ts`/
      `net.ts`'s `PLAYER_BODY_WIDTH`/`HEIGHT`/`DEPTH` (today fixed
@@ -167,25 +171,10 @@ discussion (2026-10-15), in dependency order:
      chat" (an out-of-game test harness, not just a read-only viewer --
      the sub-bullet below is DONE along with it).
      - ~~**An out-of-game test harness, not just a read-only viewer**~~
-       -- **DONE** (2026-10-21, PR #29).
-     - **Mods need a way to split game-affecting behavior from sheet-
-       only behavior, so ONE mod implementation works unmodified in
-       both places**: a character-sheet-template mod's functions that
-       only touch the sheet/variables/chat-preview must be callable
-       here, while any functions that touch live game state (the
-       world, other players, voxels) must be excluded/filtered out
-       entirely on this page, not just inert. This is a real
-       constraint on item 3's `ModContext` (today deliberately an
-       empty type, per that item's own "don't pre-build the content-
-       specific API before its real shape is known" direction) --
-       whatever shape item 4 gives `ModContext` needs to let a mod
-       register these two categories separately (or needs this page
-       to only ever call into a distinct, game-state-free subset of a
-       mod's exports), rather than the host having to guess which of
-       a mod's functions are "safe" to call from a context with no
-       live world/room behind it. **Still NOT done** -- no mod built
-       yet actually touches live game state from a library function,
-       so this constraint hasn't been exercised for real yet either.
+       -- **DONE** (2026-10-21, PR #29). The ModContext game-state
+       split this page's mods would eventually need is tracked in
+       `docs/BACKLOG.md` now, not here -- unexercised by any real mod
+       yet, so not actually blocking this page's own done-ness.
    - ~~**NEW -- an in-game "Characters" tab + character-sheet popup/
      popout**~~ -- **DONE** (2026-10-21, PR #29, following real
      requests the same day). A many-to-many game<->character link
