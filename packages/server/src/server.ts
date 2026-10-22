@@ -153,6 +153,24 @@ const getCharacter = createEndpoint("/characters/:id", { method: "GET", scope: "
   return { character, canEdit: viewerAccountId === character.ownerAccountId || store.canAccountEditCharacter(viewerAccountId, characterId) };
 });
 
+// MVP goal item 4 follow-up ("deleting a character") -- real request:
+// "deleting characters from the character page should be an option as
+// well as from games." Deliberately OWNER-ONLY, stricter than
+// canAccountEditCharacter: a game admin can already unlink a character
+// from their game (deleteGameCharacter above), but destroying someone
+// else's character record entirely just because it's linked into
+// their game would be a real overreach -- unlinking is the correct
+// admin action, not deleting.
+const deleteCharacterEndpoint = createEndpoint("/characters/:id", { method: "DELETE", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const accountId = typeof ctx.query?.accountId === "string" ? ctx.query.accountId : "";
+  if (accountId !== character.ownerAccountId) throw new APIError("UNAUTHORIZED", { message: "not this character's owner" });
+  store.deleteCharacter(characterId);
+  return { ok: true };
+});
+
 // Live-preview resolution of a sheet page's `{{modId.fn(args)}}` calls
 // (findLibraryCalls/resolveCharacterSheetMarkdown) against the
 // ACCOUNT's own importedModIds -- a mod not imported is treated as
@@ -319,6 +337,7 @@ const routes = createRouter({
   getAccountCharacterSheetLibraries,
   putCharacterSheet,
   getCharacter,
+  deleteCharacterEndpoint,
   postCharacterSheetPreview,
   getGames,
   postGame,

@@ -32,8 +32,8 @@ import {
 
 export type { Account, GameRecord, WorldRecord, CharacterRecord };
 
-/** MVP goal items 1-2 (docs/ROADMAP.md) -- a random-ish default so "Create character" doesn't require picking a color first; the color input below lets the player change it before or after. */
-function randomCharacterColor(): [number, number, number] {
+/** MVP goal items 1-2 (docs/ROADMAP.md) -- a random-ish default so "Create character" doesn't require picking a color first; the color input below lets the player change it before or after. Exported -- characters.ts's own "+ Create new character" control (MVP goal item 4 follow-up) reuses this exact default instead of inventing a second one. */
+export function randomCharacterColor(): [number, number, number] {
   return [Math.random(), Math.random(), Math.random()];
 }
 

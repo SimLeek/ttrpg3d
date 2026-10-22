@@ -29,6 +29,7 @@ function mount(options: Partial<ChatPanelOptions> & Pick<ChatPanelOptions, "init
     onLinkCharacter: vi.fn(),
     onUnlinkCharacter: vi.fn(),
     onUpdateCharacterLink: vi.fn(),
+    onDeleteCharacter: vi.fn(),
     ...options,
   });
   return activePanel;
@@ -339,5 +340,24 @@ describe("mountChatPanel's Characters tab + compose-row 'post as' dropdown (MVP 
 
     container.querySelector<HTMLButtonElement>(".unlink-btn")!.click();
     expect(onUnlinkCharacter).toHaveBeenCalledWith("c1");
+  });
+
+  it("MVP goal item 4 follow-up: Delete shows only on the viewer's OWN character (never an admin-only row), confirms first, and calls onDeleteCharacter only when confirmed", () => {
+    const onDeleteCharacter = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onDeleteCharacter });
+    panel.setCharactersState([link("mine", "Mine", "me"), link("theirs", "Theirs", "someone-else")], [], [], "me", true); // isAdmin=true -- can manage theirs, but still shouldn't see Delete on it
+
+    expect(container.querySelector(".delete-char-btn[data-character-id='mine']")).not.toBeNull();
+    expect(container.querySelector(".delete-char-btn[data-character-id='theirs']")).toBeNull();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    container.querySelector<HTMLButtonElement>(".delete-char-btn[data-character-id='mine']")!.click();
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("Mine"));
+    expect(onDeleteCharacter).not.toHaveBeenCalled();
+
+    confirmSpy.mockReturnValue(true);
+    container.querySelector<HTMLButtonElement>(".delete-char-btn[data-character-id='mine']")!.click();
+    expect(onDeleteCharacter).toHaveBeenCalledWith("mine");
+    confirmSpy.mockRestore();
   });
 });

@@ -41,7 +41,14 @@ function mockFetch(url: string, init?: { method?: string; body?: string }): Prom
     return Promise.resolve(jsonResponse(importedModIds));
   }
 
+  if (url.endsWith("/characters") && method === "POST") {
+    const { name, color } = JSON.parse(init!.body!) as { name: string; color: [number, number, number] };
+    const created: CharacterRecord = { id: `char-${name}`, ownerAccountId: "account-1", name, token: { color }, statusEffects: [], createdAt: 0, templateId: null, customSheet: null, variableValues: {} };
+    return Promise.resolve(jsonResponse(created));
+  }
   if (url.endsWith("/characters")) return Promise.resolve(jsonResponse([character]));
+
+  if (/\/characters\/[^/?]+\?accountId=/.test(url) && method === "DELETE") return Promise.resolve(jsonResponse({ ok: true }));
 
   if (url.includes("/sheet") && method === "PUT") {
     const body = JSON.parse(init!.body!) as { templateId: string | null; customSheet: CharacterRecord["customSheet"]; variableValues: Record<string, number | string> };
@@ -114,7 +121,48 @@ describe("mountCharactersPage", () => {
     expect(modItems.length).toBe(1);
     expect(modItems[0].textContent).toContain("Default Character Sheet");
     expect(container.querySelector(".mod-list")!.textContent).not.toContain("Example");
-    expect(container.querySelectorAll("#char-list button").length).toBe(1);
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1);
+  });
+
+  it("MVP goal item 4 follow-up: the delete button asks for confirmation first -- declining leaves the character untouched, confirming deletes it and clears the empty sheet section", async () => {
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    container.querySelector<HTMLButtonElement>(".delete-char-btn")!.click();
+    await flush();
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("Aria"));
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1); // declined -- still there
+
+    confirmSpy.mockReturnValue(true);
+    container.querySelector<HTMLButtonElement>(".delete-char-btn")!.click();
+    await flush();
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(0);
+    expect(container.querySelector("#sheet-section")!.innerHTML).toBe(""); // no character left selected
+    confirmSpy.mockRestore();
+  });
+
+  it("MVP goal item 4 follow-up: '+ Create new character' actually creates one and selects it -- real gap found live (deleting your last character left no way to make a new one on this page)", async () => {
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    container.querySelector<HTMLInputElement>("#new-character-name")!.value = "Bram";
+    container.querySelector<HTMLButtonElement>("#create-character-btn")!.click();
+    await flush();
+
+    const names = Array.from(container.querySelectorAll<HTMLButtonElement>("#char-list .select-char-btn")).map((b) => b.textContent);
+    expect(names).toEqual(["Aria", "Bram"]);
+    expect(container.querySelector<HTMLButtonElement>(".select-char-btn.selected")!.textContent).toBe("Bram"); // newly created one is selected
+    expect(container.querySelector<HTMLInputElement>("#new-character-name")!.value).toBe(""); // input cleared for the next one
+  });
+
+  it("'+ Create new character' does nothing for a blank name", async () => {
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    container.querySelector<HTMLButtonElement>("#create-character-btn")!.click();
+    await flush();
+    expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1); // unchanged
   });
 
   it("importing a mod flips only that button in place, without rebuilding the whole list", async () => {

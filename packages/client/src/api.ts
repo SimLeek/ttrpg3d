@@ -323,3 +323,10 @@ export async function fetchCharacter(httpUrl: string, characterId: string, viewe
   const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}?viewerAccountId=${encodeURIComponent(viewerAccountId)}`);
   return res.json();
 }
+
+/** MVP goal item 4 follow-up ("deleting a character") -- owner-only server-side, deliberately stricter than canAccountEditCharacter (see server.ts's own doc). */
+export async function deleteCharacter(httpUrl: string, characterId: string, accountId: string): Promise<void> {
+  await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}?accountId=${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+  });
+}

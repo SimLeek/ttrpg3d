@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, StatusEffectState, BarState, type WorldStateType, type PlayerStateType } from "./WorldState.js";
 import type { StatusEffect, CharacterRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
@@ -71,6 +71,18 @@ function applyBarsToPlayer(player: PlayerStateType, character: CharacterRecord):
   }
 }
 
+const DEFAULT_BODY_WIDTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyWidth")!.default as number;
+const DEFAULT_BODY_HEIGHT = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyHeight")!.default as number;
+const DEFAULT_BODY_DEPTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyDepth")!.default as number;
+
+/** Real bug found live ("I tried adjusting the character width/height/depth and that did nothing"): `RESERVED_BODY_SIZE_VARIABLES` existed as editable sheet data but nothing read it onto anything real. Mirrors applyBarsToPlayer's own shape -- used both at join and after any sheet edit (notifyCharacterSheetChanged below), so every connected session always sees the character's CURRENT body size rather than a stale/default one. */
+function applyBodySizeToPlayer(player: PlayerStateType, character: CharacterRecord): void {
+  const values = character.variableValues;
+  player.bodyWidth = typeof values.bodyWidth === "number" ? values.bodyWidth : DEFAULT_BODY_WIDTH;
+  player.bodyHeight = typeof values.bodyHeight === "number" ? values.bodyHeight : DEFAULT_BODY_HEIGHT;
+  player.bodyDepth = typeof values.bodyDepth === "number" ? values.bodyDepth : DEFAULT_BODY_DEPTH;
+}
+
 /**
  * MVP goal item 4 follow-up ("characters" tab/popup) -- real bug found
  * live: "updating the popout page variables didn't update the in-game
@@ -101,7 +113,9 @@ export function notifyCharacterSheetChanged(characterId: string): void {
   if (!character) return;
   for (const { room, sessionId } of sessions) {
     const player = room.state.players.get(sessionId);
-    if (player) applyBarsToPlayer(player, character);
+    if (!player) continue;
+    applyBarsToPlayer(player, character);
+    applyBodySizeToPlayer(player, character);
   }
 }
 
@@ -379,6 +393,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.tokenColorG = character.token.color[1];
       player.tokenColorB = character.token.color[2];
       applyBarsToPlayer(player, character);
+      applyBodySizeToPlayer(player, character);
       this.sessionCharacterIds.set(client.sessionId, character.id);
       const sessions = activeCharacterSessions.get(character.id) ?? new Set();
       sessions.add({ room: this, sessionId: client.sessionId });

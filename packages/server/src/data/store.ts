@@ -533,6 +533,7 @@ export function createStore(baseDir: string) {
       saveCharacters(characters);
     },
 
+    /** MVP goal item 4 follow-up ("deleting a character") -- no permission check in here (same split as updateCharacterSheet/the game-character-link methods: the caller gates, this just removes). Cascades GameCharacterLink rows (a character can't meaningfully outlive its own deletion any more than it can outlive its owner's). No-op for an unknown id. */
     deleteCharacter(id: string): void {
       saveCharacters(loadCharacters().filter((c) => c.id !== id));
       saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => l.characterId !== id));
@@ -647,9 +648,13 @@ export function createStore(baseDir: string) {
      */
     deleteAccount(id: string): void {
       saveAccounts(loadAccounts().filter((a) => a.id !== id));
-      const removedCharacterIds = new Set(loadCharacters().filter((c) => c.ownerAccountId === id).map((c) => c.id));
-      saveCharacters(loadCharacters().filter((c) => c.ownerAccountId !== id));
-      saveGameCharacterLinks(loadGameCharacterLinks().filter((l) => !removedCharacterIds.has(l.characterId)));
+      // Real cleanup found live (MVP goal item 4 follow-up, "deleting a
+      // character"): this used to reimplement deleteCharacter's own
+      // filter logic inline instead of calling it -- same behavior,
+      // but duplicated. deleteCharacter is now actually CALLED here
+      // (previously it had zero production callers anywhere, despite
+      // this very comment already claiming the cascade).
+      for (const character of loadCharacters().filter((c) => c.ownerAccountId === id)) this.deleteCharacter(character.id);
     },
 
     deleteGame(id: string): void {
