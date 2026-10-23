@@ -381,10 +381,136 @@ via console logging, never guessed:
 
 **Known gaps, carried into `docs/ROADMAP.md`'s item 2 follow-ups**:
 context-menu actions ("Edit token properties", "Select status effects")
-are intentionally minimal placeholders, not final UI; the client-side
-`owned` ownership check is a literal characterId match with no
-admin/GM override yet, even though the server-side handlers already
-admin-gate correctly.
+are intentionally minimal placeholders, not final UI. The client-side
+`owned` ownership check being a literal characterId match with no
+admin/GM override is now fixed -- see "GM token override" below.
+
+## MVP goal item 4 (partial) — Character pages/tabs, body size, chat sender name, character deletion
+
+PR #29 (2026-10-21) plus a couple of directly-related follow-ups,
+never previously logged here despite being done:
+
+- **Standalone `/characters` page**, scoped to the ACCOUNT (not a
+  game) -- for viewing/testing character sheets outside any game, with
+  its own local test-chat panel standing in for "post to chat" (an
+  out-of-game test harness, not just a read-only viewer). The
+  `ModContext` game-state split this page's mods would eventually need
+  is tracked in `docs/BACKLOG.md`, not here -- unexercised by any real
+  mod yet, so not actually blocking this page's own done-ness.
+- **In-game "Characters" tab + character-sheet popup/popout** -- a
+  many-to-many game<->character link (`GameCharacterLink`, with
+  optional folders and a `visibility: "all" | string[]` list), a tab
+  inside `chatPanel.ts` (tab order Chat, Characters, GM) listing
+  characters visible to the account in the current game, and a
+  centered popup (+ a "Pop out" into a real separate browser window)
+  showing that character's sheet -- `canEdit: false` for a shared
+  character you don't own or admin.
+- **HP/MP generalized into an arbitrary, per-sheet-configured list of
+  billboard bars** -- not just HP/MP specifically, any `xOfY`
+  variable, any count, any color (`{variableId, color}`), capped at 4
+  reserved slots. The old fixed `CharacterRecord.hp/maxHp/mp/maxMp`
+  fields are gone entirely.
+- **Chat shows the character's name, not the account's** -- `chatSend`
+  takes an optional `asCharacterId`, and the compose row has a "post
+  as" dropdown defaulting to "My username." Accepted in this
+  manual-dropdown shape (2026-10-22 user call) rather than
+  automatically deriving it from whichever character the account is
+  currently controlling -- a real "currently controlling" concept does
+  exist now (Tab/Shift+Tab, below) if that's ever wanted later.
+- **Player body size is a live, reserved character-sheet variable** --
+  `bodyWidth`/`bodyHeight`/`bodyDepth` drive each character's actual
+  body-box dimensions AND its physics collision box (`net.ts` calls
+  `resizeLocalPlayerBody`/`resizeEntityBody` whenever a synced
+  player's/instance's body size changes, resolved server-side via
+  `applyBodySizeToCharacterTarget`; `playerBodyMesh.ts`'s
+  `resizeEntityBody` calls noa's `entities.setEntitySize`, not just the
+  visual mesh).
+- **Deleting a character** -- a real `DELETE /characters/:id` endpoint
+  (`server.ts`, backed by `store.deleteCharacter`), with a confirmation
+  step wired from both the standalone `/characters` page and the
+  in-game Characters tab -- distinct from that tab's own "Unlink,"
+  which only removes the game<->character LINK, not the character
+  itself.
+
+## MVP goal item 4 follow-up — Multiple character instances, persistence, GM token override
+
+PR #33 (multi-character presence) + PR #34 (this round) + a follow-up
+GM-override fix, built directly on real playtest feedback after each
+merge, not speculative scope:
+
+- **Drag-and-drop character placement onto the 3D world**
+  (`characterPlacement.ts` + `WorldRoom.ts`'s `placeCharacter` handler),
+  **multiple independent instances of the same character**
+  (`OtherCharacterState.instanceId`, real request: "I can't add
+  multiple instances of the same character. I would want to do that
+  for monsters"), and **Tab/Shift+Tab + a right-click "Control" item**
+  to cycle/jump control between an account's own placed instances
+  (`focusCycling.ts`, `characterContextMenu.ts`, `WorldRoom.ts`'s
+  `focusCharacter` handler, shared by both UI paths).
+- **Placed instances now persist per-WORLD, not per-session**: moved
+  `otherCharacters` from `PlayerState` onto `WorldState` (top-level,
+  shared by the whole room) specifically because a session-scoped
+  array can never survive that session disconnecting -- real feedback:
+  "the tokens do not persist upon exiting and re-entering games... they
+  should be stored and loaded with the page/world." `store.ts`'s
+  `PlacedCharacterInstanceRecord`/`WorldRecord.placedCharacters` is the
+  actual disk-backed half, loaded back in `WorldRoom.onCreate`.
+- **Each instance's own stat/color/status-effect deviations are
+  independent**, not a shared pool -- `instanceVariableOverrides`
+  (reversing an earlier "deliberately ephemeral" call, per explicit
+  user steer, once persistence existed to make it safe).
+- **Your own currently-focused character's live edits are ALSO
+  isolated** (`focusedVariableOverrides`) -- real correction found
+  live: editing your own focused character's bar used to write
+  straight through to the shared `CharacterRecord`, retroactively
+  resetting every sibling instance/session with no override of its
+  own yet, and a focus swap had the same problem in reverse. A real
+  edit still survives a disconnect (baked into the permanent record in
+  `onLeave`, since the focused slot has nowhere else to carry it to).
+- **GM token override**: `net.ts`'s `pickOwnedToken`/`resolveHoveredBar`
+  (and the matching hover-highlight check) now also accept a pick
+  while `gmOverride.isActive()` -- same G-key-toggled escape hatch
+  `voxelEditor.ts`'s block-edit bypass already uses. Closes the
+  long-standing item-2 gap above. Also found while fixing it:
+  `focusCharacter`/`removeCharacterInstance` never had the admin bypass
+  their sibling instance-scoped handlers already had, so opening the
+  client-side gate would have left "Control"/"Delete instance"
+  silently no-op for a GM on someone else's instance -- both fixed
+  together.
+- **Real bugs found live, each confirmed by direct evidence, not
+  guessed**:
+  - Default/Select mode bleed-through (right-click in Default mode
+    opened the context menu instead of placing a block; leftover
+    floating stat/color/status-effect UI never dismissed) -- fixed by
+    making `voxelEditor.ts`'s click handlers a clean either/or on
+    `noa.container.hasPointerLock`.
+  - `placeCharacter` used to silently reject placing the character you
+    were already focused on (a stale rule from before multiple
+    instances existed) -- real correction: "if you're controlling an
+    instance of 'bob' and you drag in another 'bob', that should still
+    work."
+  - "Control" teleported the wrong thing: its callback sent the
+    `focusCharacter` message but never called
+    `playerController.teleportTo(...)` like Tab/Shift+Tab already did,
+    so the local physics entity stayed put while the Schema fields
+    relabeled it with the target's data.
+  - The local player's own body box was stuck rendering its
+    creation-time fixed blue regardless of the focused character's
+    real color. Root cause (confirmed by direct experiment, not a
+    guess): the material OBJECT attached to `noa.playerEntity` (via a
+    raw `addComponent` call, unlike every remote/other box's fresh
+    `noa.entities.add()` entity) never visually reflected a
+    `.diffuseColor` property reassignment, even though a live console
+    check confirmed the property held the correct value continuously.
+    Swapping in a brand-new `StandardMaterial` whenever the target
+    color changes (disposing the old one) fixed it.
+  - A hard refresh while already in-game resumed whichever character
+    was last stored in `localStorage`'s `CHARACTER_STORAGE_KEY`, which
+    was only ever written at the original lobby pick -- never updated
+    when Tab/Shift+Tab/Control changed the actually-focused character,
+    so a refresh after switching silently resumed the wrong one (or
+    characterless). Fixed by keeping that key in sync with the local
+    player's live `characterId` every tick it actually changes.
 
 ## MVP goal items 3 + 9 — Mod load/unload mechanism, GM-only settings UI
 

@@ -912,7 +912,15 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.onMessage<FocusCharacterMessage>("focusCharacter", (client, { instanceId, direction }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      const targetIndex = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
+      // Real gap (docs/ROADMAP.md item 2 follow-up, "better ownership
+      // check"): every OTHER instance-scoped handler in this file
+      // (setCharacterVariableValue/setStatusEffects/setCharacterToken)
+      // already has this admin bypass -- Control/Delete-instance were
+      // added later and never got it, so a GM's client could now open
+      // the context menu on someone else's placed instance (net.ts's
+      // own half of this fix) but have the action silently no-op here.
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
+      const targetIndex = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && (o.placedByAccountId === sender.accountId || isAdmin));
       if (targetIndex === -1) return;
 
       const target = this.state.otherCharacters[targetIndex];
@@ -949,16 +957,18 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // character record or its game link (those are PR A's REST-backed
     // deleteCharacter/unlinkCharacterFromGame, a completely separate
     // action). Self-only (must be a world-level entry THIS SENDER
-    // placed). Keyed by `instanceId`, not `characterId` -- see
-    // RemoveCharacterInstanceMessage's own doc: this can no longer even
-    // ADDRESS the focused slot (it has no instanceId), so "can't
-    // delete the character you're controlling" (real request: "that
-    // keeps at least one controllable instance") is now structural,
-    // not a separate check to maintain.
+    // placed) UNLESS admin -- same GM-escape-hatch bypass as
+    // focusCharacter just above. Keyed by `instanceId`, not
+    // `characterId` -- see RemoveCharacterInstanceMessage's own doc:
+    // this can no longer even ADDRESS the focused slot (it has no
+    // instanceId), so "can't delete the character you're controlling"
+    // (real request: "that keeps at least one controllable instance")
+    // is now structural, not a separate check to maintain.
     this.onMessage<RemoveCharacterInstanceMessage>("removeCharacterInstance", (client, { instanceId }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      const index = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
+      const index = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && (o.placedByAccountId === sender.accountId || isAdmin));
       if (index === -1) return;
 
       const [removed] = this.state.otherCharacters.splice(index, 1);

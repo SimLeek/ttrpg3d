@@ -574,6 +574,29 @@ describe("WorldRoom", () => {
       expect(player.characterId).toBe(focused.id);
     });
 
+    it("focusCharacter (Control) refuses a DIFFERENT account's real placed instance for an ordinary session, but an ADMIN session can take it over -- real gap, docs/ROADMAP.md item 2: 'I can't select root's bob from another tab... better ownership check'", async () => {
+      const placerAccount = trackedAccount(`WorldRoom-test-focus-admin-placer-${Date.now()}`);
+      const placerChar = store.createCharacter(placerAccount.id, "OtherPlayersGoblin", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const placerClient = await colyseus.connectTo(room, { accountId: placerAccount.id, characterId: placerChar.id });
+      const placerPlayer = room.state.players.get(placerClient.sessionId)!;
+      placerClient.send("placeCharacter", { characterId: placerChar.id, x: placerPlayer.x + 2, y: placerPlayer.y, z: placerPlayer.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const instanceId = room.state.otherCharacters.find((o) => o.characterId === placerChar.id)!.instanceId;
+
+      const bystanderAccount = trackedAccount(`WorldRoom-test-focus-admin-bystander-${Date.now()}`);
+      const bystanderChar = store.createCharacter(bystanderAccount.id, "Bystander", [0, 0, 1]);
+      const bystanderClient = await colyseus.connectTo(room, { accountId: bystanderAccount.id, characterId: bystanderChar.id });
+      bystanderClient.send("focusCharacter", { instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.players.get(bystanderClient.sessionId)!.characterId).toBe(bystanderChar.id); // refused -- not this account's instance, not an admin
+
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id }); // owner.id IS this game's admin, per trackedGame above
+      adminClient.send("focusCharacter", { instanceId, direction: "next" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.players.get(adminClient.sessionId)!.characterId).toBe(placerChar.id); // admin bypass works
+    });
+
     it("focusCharacter (the same handler 'Control' uses) carries the target instance's own override deltas into the focused slot WITHOUT touching the character's PERMANENT sheet record -- real correction: this used to merge them into the shared record, which is exactly the 'affects all the others' bug a direct bar edit on your own focused character had too", async () => {
       const focused = store.createCharacter(owner.id, "ControlSwitcher", [1, 0, 0]);
       const goblinSheet = store.createCharacter(owner.id, "ControlledGoblin", [0, 1, 0]);
@@ -676,6 +699,23 @@ describe("WorldRoom", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(room.state.otherCharacters.some((o) => o.instanceId === instanceId)).toBe(true); // still there -- not the placer
+    });
+
+    it("removeCharacterInstance (Delete instance) can be used by an ADMIN session on a DIFFERENT account's placed instance -- same gap/fix as focusCharacter above", async () => {
+      const placerAccount = trackedAccount(`WorldRoom-test-remove-admin-placer-${Date.now()}`);
+      const placerChar = store.createCharacter(placerAccount.id, "OtherPlayersGoblinToDelete", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const placerClient = await colyseus.connectTo(room, { accountId: placerAccount.id, characterId: placerChar.id });
+      const placerPlayer = room.state.players.get(placerClient.sessionId)!;
+      placerClient.send("placeCharacter", { characterId: placerChar.id, x: placerPlayer.x + 2, y: placerPlayer.y, z: placerPlayer.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const instanceId = room.state.otherCharacters.find((o) => o.characterId === placerChar.id)!.instanceId;
+
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id }); // owner.id IS this game's admin, per trackedGame above
+      adminClient.send("removeCharacterInstance", { instanceId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.otherCharacters.some((o) => o.instanceId === instanceId)).toBe(false); // admin bypass works
     });
 
     it("notifyCharacterSheetChanged refreshes EVERY placed instance of a character, not just the first", async () => {
