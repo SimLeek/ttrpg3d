@@ -35,17 +35,27 @@ export interface TrackedToken {
   tokenKey: string;
   /**
    * MVP goal item 4 follow-up ("multiple instances of the same
-   * character... for monsters"): undefined for a FOCUSED-slot token;
-   * the specific OtherCharacterState's own instanceId for a placed
-   * instance (equal to `tokenKey` in that case -- kept as its own
-   * explicit field rather than relying on callers to infer "is this
-   * token's tokenKey actually an instanceId" from context). Callers
-   * (net.ts) pass this through to setCharacterVariableValue/
-   * setStatusEffects/setCharacterToken/removeCharacterInstance so the
-   * server edits the right thing -- one specific instance, or (when
-   * undefined) the shared character record via the focused slot.
+   * character... for monsters"); real correction, 2026-10-23: always a
+   * real id now, for a FOCUSED-slot token too (equal to `tokenKey` for
+   * a placed/idle one -- kept as its own explicit field rather than
+   * relying on callers to infer "is this token's tokenKey actually an
+   * instanceId" from context). Callers (net.ts) pass this through to
+   * setCharacterVariableValue/setStatusEffects/setCharacterToken/
+   * removeCharacterInstance/addToTurnOrder so the server edits the
+   * right instance.
    */
-  instanceId?: string;
+  instanceId: string;
+  /**
+   * Real correction, 2026-10-23: distinguishes a currently-PILOTED
+   * token (a player's `currentInstance`) from an idle placed
+   * `otherCharacters` one, now that both always have a real
+   * `instanceId` -- "Control"/"Delete instance" stay structurally
+   * disabled for whichever one is piloted (characterContextMenu.ts),
+   * the same "can't delete/take over the character you're (or anyone
+   * is) controlling" guarantee the old undefined-instanceId check used
+   * to provide.
+   */
+  isPiloted: boolean;
   /** Whether the LOCAL client owns this token (its own character, or any of theirs once multi-character control exists) -- only an owned token highlights on hover, per the spec. */
   owned: boolean;
   /** The token's own billboard content plane (characterToken.ts's `mesh`) -- the precise pick target the bar geometric hit-test needs (net.ts checks a pick's `pickedMesh` against this before attempting it). */
@@ -68,7 +78,8 @@ export interface TokenPickResult {
   sessionId: string;
   characterId: string;
   tokenKey: string;
-  instanceId?: string;
+  instanceId: string;
+  isPiloted: boolean;
   owned: boolean;
   /** The ray's world-space hit point -- callers (net.ts) transform this into the token's own local space via its mesh's world matrix to do the bar geometric hit-test (characterToken.ts's hitTestLocalPoint). */
   worldPoint: BABYLON.Vector3;
@@ -109,5 +120,5 @@ export function pickToken(scene: BABYLON.Scene, tokens: readonly TrackedToken[],
 
   const token = meshToToken.get(hit.pickedMesh);
   if (!token) return undefined;
-  return { sessionId: token.sessionId, characterId: token.characterId, tokenKey: token.tokenKey, instanceId: token.instanceId, owned: token.owned, worldPoint: hit.pickedPoint, pickedMesh: hit.pickedMesh };
+  return { sessionId: token.sessionId, characterId: token.characterId, tokenKey: token.tokenKey, instanceId: token.instanceId, isPiloted: token.isPiloted, owned: token.owned, worldPoint: hit.pickedPoint, pickedMesh: hit.pickedMesh };
 }

@@ -46,18 +46,18 @@ export interface TokenInteractionHooks {
    * Coarse mesh-level pick (tokenPicking.ts) -- answers "is the cursor
    * over a token, and do I own it" right now. Backs the right-click
    * context menu. `instanceId` (MVP goal item 4 follow-up, "multiple
-   * instances of the same character... for monsters"): undefined for
-   * the focused character, the specific placed instance's own id
-   * otherwise -- callers need this to edit/delete the RIGHT one once
-   * several instances can share a characterId.
+   * instances of the same character... for monsters"): always a real
+   * id now (real correction, 2026-10-23 -- see TrackedToken's own
+   * doc), `isPiloted` is what now distinguishes the focused character
+   * from a placed instance.
    */
-  pickOwnedToken: () => { characterId: string; instanceId?: string } | undefined;
+  pickOwnedToken: () => { characterId: string; instanceId: string; isPiloted: boolean } | undefined;
   /** The GUI's own fine-grained hover state (characterToken.ts's hitTestLocalPoint) -- answers "is the cursor over an editable bar, and which variable does it point at" right now (bars are whatever the character's sheet configures, not a fixed hp/mp pair -- docs/ROADMAP.md item 4 follow-up). Backs left-click-to-edit. */
-  pickHoveredStatBar: () => { characterId: string; instanceId?: string; variableId: string } | undefined;
+  pickHoveredStatBar: () => { characterId: string; instanceId: string; variableId: string } | undefined;
   /** Opens characterContextMenu.ts at the given viewport coordinates for the picked character/instance. */
-  openContextMenu: (characterId: string, instanceId: string | undefined, screenX: number, screenY: number) => void;
+  openContextMenu: (characterId: string, instanceId: string, isPiloted: boolean, screenX: number, screenY: number) => void;
   /** Opens the HTML <input> overlay (net.ts) at the given viewport coordinates to edit one variable's current value. */
-  openStatEditor: (characterId: string, instanceId: string | undefined, variableId: string, screenX: number, screenY: number) => void;
+  openStatEditor: (characterId: string, instanceId: string, variableId: string, screenX: number, screenY: number) => void;
   /**
    * Real feedback, two related bugs found live: "if I right click
    * while in default mode, the context menu pops up instead of me
@@ -174,7 +174,7 @@ export function installVoxelEditor(
 
     const picked = tokenInteraction?.pickOwnedToken();
     if (picked) {
-      tokenInteraction!.openContextMenu(picked.characterId, picked.instanceId, lastClickScreen.x, lastClickScreen.y);
+      tokenInteraction!.openContextMenu(picked.characterId, picked.instanceId, picked.isPiloted, lastClickScreen.x, lastClickScreen.y);
     }
   });
 }

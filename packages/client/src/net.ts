@@ -25,6 +25,11 @@ import type { PlayerController } from "./movement/PlayerController.js";
 import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, type PlayerBodyMesh } from "./playerBodyMesh.js";
 import { CHARACTER_STORAGE_KEY } from "./api.js";
 
+/** Scoped per-world (an instanceId only ever makes sense within the world it was placed/piloted in) -- real correction, 2026-10-23: "disconnecting and reconnecting puts the player back to where they were exactly instead of respawning." Read back at connect time below (JoinOptions.instanceId), written whenever the locally-piloted instance's own id changes (the tick loop's local-player branch). */
+function instanceStorageKeyFor(worldId: string): string {
+  return `ttrpg3d.instanceId.${worldId}`;
+}
+
 interface EditBlockMessage {
   x: number;
   y: number;
@@ -85,23 +90,24 @@ interface OtherCharacterLike {
   statusEffects: StatusEffectLike[];
 }
 
+/**
+ * Mirrors WorldState.ts's PlayerState -- real architecture change,
+ * 2026-10-23: the character a session is PILOTING is now a REAL
+ * `OtherCharacterState`, held by reference (`currentInstance`) and
+ * literally MOVED between here and the world-level `otherCharacters`
+ * array on every focus-swap/join/leave, instead of a second, field-
+ * duplicated copy of the same per-character data living directly on
+ * PlayerState. Fixes the real bug: "the controlled player starts in
+ * spawn instead [of where they were], which is 100% wrong" -- and
+ * means a piloted character has the SAME stable `instanceId` the
+ * whole time, so it can be added to the turn order, Controlled, etc.
+ * just like an idle placed instance ("I cannot add my currently
+ * controlled character to the turn order... even though I should be
+ * able to").
+ */
 interface RemotePlayerLike {
   name: string;
-  x: number;
-  y: number;
-  z: number;
-  yaw: number;
-  characterId: string;
-  characterName: string;
-  tokenColorR: number;
-  tokenColorG: number;
-  tokenColorB: number;
-  bars: BarLike[];
-  statusEffects: StatusEffectLike[];
-  /** MVP goal item 4 follow-up -- flattened server-side from the character's own bodyWidth/Height/Depth sheet variables (WorldRoom.ts's applyBodySizeToPlayer), defaulting to the same values as PLAYER_BODY_WIDTH/HEIGHT/DEPTH below. */
-  bodyWidth: number;
-  bodyHeight: number;
-  bodyDepth: number;
+  currentInstance: OtherCharacterLike;
 }
 
 /** The shape of `room.state` this file actually reads -- `players` (per-session) alongside the world-level `otherCharacters` array (see OtherCharacterLike's own doc for why this moved off PlayerState). */
@@ -214,7 +220,9 @@ export async function connectAndStreamWorld(
   // server-side (WorldRoom.onJoin -> store.isWorldAdmin, core/mod-boundary
   // plan's GM admin-override escape hatch) to check owner/admin/root
   // status -- never trusted blindly, checked fresh against the store.
-  room = await client.joinOrCreate("world", { name: playerName, worldId, accountId, characterId: characterId ?? undefined });
+  const instanceStorageKey = instanceStorageKeyFor(worldId);
+  const storedInstanceId = localStorage.getItem(instanceStorageKey) ?? undefined;
+  room = await client.joinOrCreate("world", { name: playerName, worldId, accountId, characterId: characterId ?? undefined, instanceId: storedInstanceId });
   for (const req of queuedRequests) room.send("requestChunk", req);
   queuedRequests.length = 0;
 
@@ -291,19 +299,17 @@ export async function connectAndStreamWorld(
    * MVP goal item 4 follow-up (multi-character presence, then
    * "multiple instances... for monsters"): the stat-value/color/
    * status-effect editors below need to read the CURRENT value of
-   * whichever specific thing is being edited. `instanceId` undefined
-   * means "the focused slot" (characterId must match a player's own
-   * `characterId`); defined means ONE SPECIFIC placed otherCharacters
-   * entry -- now required to disambiguate, since several instances can
-   * share a characterId.
+   * whichever specific thing is being edited. Every character --
+   * piloted (a player's `currentInstance`) or idle (an
+   * `otherCharacters` entry) -- now has a real, stable `instanceId`
+   * (real correction, 2026-10-23: see RemotePlayerLike's own doc), so
+   * this is a single flat lookup across both, mirroring WorldRoom.ts's
+   * own `findAnyInstance`.
    */
-  function findCharacterLike(characterId: string, instanceId: string | undefined): RemotePlayerLike | OtherCharacterLike | undefined {
+  function findCharacterLike(instanceId: string): OtherCharacterLike | undefined {
     const state = room!.state as WorldStateLike | undefined;
-    if (instanceId === undefined) {
-      for (const p of state?.players?.values() ?? []) {
-        if (p.characterId === characterId) return p;
-      }
-      return undefined;
+    for (const p of state?.players?.values() ?? []) {
+      if (p.currentInstance.instanceId === instanceId) return p.currentInstance;
     }
     return state?.otherCharacters?.find((o) => o.instanceId === instanceId);
   }
@@ -349,6 +355,9 @@ export async function connectAndStreamWorld(
     // like "the target character jumped to wherever I'm already
     // standing" instead of "I teleported to the target."
     onControl: (instanceId) => {
+      // Only ever invoked for an IDLE placed instance (characterContextMenu.ts
+      // disables "Control" for the piloted slot) -- otherCharacters is the
+      // right (and only) place to look this up.
       const state = room!.state as WorldStateLike | undefined;
       const target = state?.otherCharacters?.find((o) => o.instanceId === instanceId);
       if (target) playerController.teleportTo([target.x, target.y, target.z]);
@@ -385,12 +394,12 @@ export async function connectAndStreamWorld(
   statInputContainer.style.cssText = "position:fixed;z-index:1001;";
   document.body.appendChild(statInputContainer);
 
-  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). `instanceId` (MVP goal item 4 follow-up, independent per-instance stats): when set, this edit is an EPHEMERAL override on just that one placed instance (WorldRoom.ts's instanceVariableOverrides) -- never the shared character record. */
-  function openStatEditor(characterIdToEdit: string, instanceId: string | undefined, variableId: string, x: number, y: number): void {
+  /** Click-to-edit a bar's current value: a real HTML <input> overlay (this project's established DOM-overlay convention for text entry), not a Babylon GUI InputText control -- avoids that control's own keyboard-capture/IME quirks for what's purely "type a number." Always the CURRENT half of whichever variable the bar points at -- max is edited on the character sheet page, same as every other xOfY variable (docs/ROADMAP.md item 4 follow-up: bars are configurable, not a fixed hp/mp pair). `instanceId`: always a real one now (piloted or idle, see RemotePlayerLike's own doc) -- this edit is an override scoped to just that one instance (WorldRoom.ts's instanceVariableOverrides) -- never the shared character record. */
+  function openStatEditor(characterIdToEdit: string, instanceId: string, variableId: string, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "number";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; width:60px; font-size:14px; z-index:1001;`;
-    const current = findCharacterLike(characterIdToEdit, instanceId);
+    const current = findCharacterLike(instanceId);
     const currentBar = current?.bars.find((b) => b.variableId === variableId);
     input.value = String(currentBar?.value ?? 0);
     statInputContainer.innerHTML = "";
@@ -420,8 +429,8 @@ export async function connectAndStreamWorld(
     input.addEventListener("blur", commit);
   }
 
-  /** Minimal color-picker overlay backing "Edit token properties" -- full token-property authoring is downstream of MVP goal item 3, this is just the color this project's rendering can actually use today (characterToken.ts's generalization of the existing fixed-color-box convention). `instanceId`: see openStatEditor's own doc -- same ephemeral, per-instance-only semantics when set. */
-  function openColorEditor(characterIdToEdit: string, instanceId: string | undefined, x: number, y: number): void {
+  /** Minimal color-picker overlay backing "Edit token properties" -- full token-property authoring is downstream of MVP goal item 3, this is just the color this project's rendering can actually use today (characterToken.ts's generalization of the existing fixed-color-box convention). `instanceId`: see openStatEditor's own doc -- same per-instance-only semantics. */
+  function openColorEditor(characterIdToEdit: string, instanceId: string, x: number, y: number): void {
     const input = document.createElement("input");
     input.type = "color";
     input.style.cssText = `position:fixed; left:${x}px; top:${y}px; z-index:1001;`;
@@ -436,14 +445,14 @@ export async function connectAndStreamWorld(
     });
   }
 
-  /** Minimal status-effect toggle overlay -- a flat, fixed small catalog (no mod-based status-effect catalog/definitions system yet, that's downstream of MVP goal item 3). `instanceId`: see openStatEditor's own doc -- same ephemeral, per-instance-only semantics when set. */
-  function openStatusEffectsEditor(characterIdToEdit: string, instanceId: string | undefined, x: number, y: number): void {
+  /** Minimal status-effect toggle overlay -- a flat, fixed small catalog (no mod-based status-effect catalog/definitions system yet, that's downstream of MVP goal item 3). `instanceId`: see openStatEditor's own doc -- same per-instance-only semantics. */
+  function openStatusEffectsEditor(characterIdToEdit: string, instanceId: string, x: number, y: number): void {
     const CATALOG: StatusEffectLike[] = [
       { icon: "poison", label: "Poisoned" },
       { icon: "stun", label: "Stunned" },
       { icon: "blessed", label: "Blessed" },
     ];
-    const current = findCharacterLike(characterIdToEdit, instanceId);
+    const current = findCharacterLike(instanceId);
     const activeLabels = new Set((current?.statusEffects ?? []).map((e) => e.label));
 
     const panel = document.createElement("div");
@@ -587,9 +596,17 @@ export async function connectAndStreamWorld(
       const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
       trackedTokens.push({
         sessionId,
-        characterId: p.characterId,
+        characterId: p.currentInstance.characterId,
         tokenKey: sessionId,
-        owned: !!p.characterId && owned,
+        instanceId: p.currentInstance.instanceId,
+        // Real correction, 2026-10-23: distinguishes a PILOTED token
+        // (this loop) from an idle placed one (otherCharacters, below)
+        // now that both always have a real instanceId -- Control/
+        // Delete instance stay structurally disabled for whichever one
+        // you're (or anyone is) actively piloting (characterContextMenu.ts),
+        // while Add to Turn Order is allowed for either.
+        isPiloted: true,
+        owned: !!p.currentInstance.characterId && owned,
         planeMesh: token.mesh,
         extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
       });
@@ -612,6 +629,7 @@ export async function connectAndStreamWorld(
         characterId: other.characterId,
         tokenKey: other.instanceId,
         instanceId: other.instanceId,
+        isPiloted: false,
         owned: other.placedByAccountId === accountId,
         planeMesh: otherToken.mesh,
         extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
@@ -627,7 +645,7 @@ export async function connectAndStreamWorld(
    * the exact same "which owned token's bar, if any, is at this screen
    * point" answer, just at different moments (continuously vs. on click).
    */
-  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; instanceId?: string; variableId: string } | undefined {
+  function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; instanceId: string; variableId: string } | undefined {
     const result = pickToken(scene, trackedTokens, screenPoint);
     // Real gap, long-standing (docs/ROADMAP.md item 2 follow-up): "I
     // can't select root's bob from another tab though I can select if
@@ -665,15 +683,15 @@ export async function connectAndStreamWorld(
         // Same GM-mode escape hatch as resolveHoveredBar above -- this is
         // what lets the right-click context menu open on someone else's
         // token at all while GM mode is active.
-        return result && (result.owned || gmOverride.isActive()) ? { characterId: result.characterId, instanceId: result.instanceId } : undefined;
+        return result && (result.owned || gmOverride.isActive()) ? { characterId: result.characterId, instanceId: result.instanceId, isPiloted: result.isPiloted } : undefined;
       },
       pickHoveredStatBar: () => {
         const resolved = resolveHoveredBar(currentPickScreenPoint());
         return resolved ? { characterId: resolved.characterId, instanceId: resolved.instanceId, variableId: resolved.variableId } : undefined;
       },
-      openContextMenu: (characterIdToOpen, instanceId, x, y) => {
+      openContextMenu: (characterIdToOpen, instanceId, isPiloted, x, y) => {
         lastMenuOpenScreen = { x, y };
-        contextMenu.open(x, y, characterIdToOpen, instanceId);
+        contextMenu.open(x, y, characterIdToOpen, instanceId, isPiloted);
       },
       openStatEditor,
       // Real request: dismiss any leftover floating overlay on a
@@ -695,6 +713,7 @@ export async function connectAndStreamWorld(
   });
 
   let lastPersistedCharacterId: string | null = null;
+  let lastPersistedInstanceId: string | null = null;
   let lastLocalBodyColor: [number, number, number] | null = null;
   noa.on("tick", () => {
     // GM-only chat tab's seeThroughWalls checkbox (chatPanel.ts): poll
@@ -720,6 +739,10 @@ export async function connectAndStreamWorld(
     const seen = new Set<string>();
     for (const [sessionId, p] of players) {
       seen.add(sessionId);
+      // Real correction, 2026-10-23: every per-character field now lives
+      // on `currentInstance` (the same OtherCharacterState shape an idle
+      // placed instance has) -- see RemotePlayerLike's own doc.
+      const c = p.currentInstance;
 
       // Real bug found live: a characterToken billboard only ever existed
       // for REMOTE players (same precedent the original fixed-color box
@@ -731,13 +754,13 @@ export async function connectAndStreamWorld(
       if (sessionId === room.sessionId) {
         let localToken = remoteTokens.get(sessionId);
         if (!localToken) {
-          localToken = createCharacterToken(scene, p.characterName || p.name);
+          localToken = createCharacterToken(scene, c.characterName || p.name);
           // Parented to the scale-cancelling anchor, NOT the body mesh
           // directly -- see PlayerBodyMesh.tokenAnchor's own doc for
           // the real squish/offset-drift bug this fixes.
           localToken.mesh.parent = playerBodyMesh.tokenAnchor;
-          localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
-          localToken.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
+          localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(c.bodyHeight), 0);
+          localToken.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
           // Real bug found live: a mesh built via plain MeshBuilder and
           // just parented, without ever going through noa's own rendering
           // API, is NEVER added to noa's custom octree-based active-mesh
@@ -780,9 +803,9 @@ export async function connectAndStreamWorld(
         // can't undo. Rather than chase that further, swap in a fresh
         // material whenever the color actually needs to change (not
         // every tick -- that leaks a new material object per frame).
-        const localBodyR = p.characterId ? p.tokenColorR : 0.3;
-        const localBodyG = p.characterId ? p.tokenColorG : 0.5;
-        const localBodyB = p.characterId ? p.tokenColorB : 0.9;
+        const localBodyR = c.characterId ? c.tokenColorR : 0.3;
+        const localBodyG = c.characterId ? c.tokenColorG : 0.5;
+        const localBodyB = c.characterId ? c.tokenColorB : 0.9;
         if (!lastLocalBodyColor || lastLocalBodyColor[0] !== localBodyR || lastLocalBodyColor[1] !== localBodyG || lastLocalBodyColor[2] !== localBodyB) {
           lastLocalBodyColor = [localBodyR, localBodyG, localBodyB];
           const freshMaterial = new BABYLON.StandardMaterial("local-player-body-mat", scene);
@@ -804,20 +827,32 @@ export async function connectAndStreamWorld(
         // lobby picker this session) resumed you characterless --
         // genuinely triggering this same material's intentional
         // "no character" blue fallback, not a second bug in it.
-        if (p.characterId && p.characterId !== lastPersistedCharacterId) {
-          lastPersistedCharacterId = p.characterId;
-          localStorage.setItem(CHARACTER_STORAGE_KEY, p.characterId);
+        if (c.characterId && c.characterId !== lastPersistedCharacterId) {
+          lastPersistedCharacterId = c.characterId;
+          localStorage.setItem(CHARACTER_STORAGE_KEY, c.characterId);
+        }
+        // Real correction, 2026-10-23: lets a future join RESUME this
+        // EXACT instance (JoinOptions.instanceId, read back at connect
+        // time below) instead of just falling back to the same
+        // characterId's default/idle state -- "disconnecting and
+        // reconnecting puts the player back to where they were exactly
+        // instead of respawning." Scoped per-world (same key this
+        // connection read at startup) since an instanceId only ever
+        // makes sense within the world it was placed/piloted in.
+        if (c.instanceId && c.instanceId !== lastPersistedInstanceId) {
+          lastPersistedInstanceId = c.instanceId;
+          localStorage.setItem(instanceStorageKey, c.instanceId);
         }
 
-        if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
-          resizeLocalPlayerBody(noa, playerBodyMesh, p.bodyWidth, p.bodyHeight, p.bodyDepth);
-          localToken.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
-          localToken.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
+        if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, c.bodyWidth, c.bodyHeight, c.bodyDepth)) {
+          resizeLocalPlayerBody(noa, playerBodyMesh, c.bodyWidth, c.bodyHeight, c.bodyDepth);
+          localToken.mesh.position.y = tokenYOffsetFor(c.bodyHeight);
+          localToken.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
         }
         localToken.update({
-          name: p.characterName || p.name,
-          bars: toTokenBars(p.bars),
-          statusEffects: Array.from(p.statusEffects ?? []),
+          name: c.characterName || p.name,
+          bars: toTokenBars(c.bars),
+          statusEffects: Array.from(c.statusEffects ?? []),
         });
         continue;
       }
@@ -830,9 +865,9 @@ export async function connectAndStreamWorld(
         // character is selected -- a characterless join is a real state
         // (see WorldRoom.ts's onJoin), not an error, and still needs to
         // render as SOMETHING.
-        const hasCharacter = !!p.characterId;
+        const hasCharacter = !!c.characterId;
         material = new BABYLON.StandardMaterial(`remotePlayerMat-${sessionId}`, scene);
-        material.diffuseColor = hasCharacter ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
+        material.diffuseColor = hasCharacter ? new BABYLON.Color3(c.tokenColorR, c.tokenColorG, c.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
         remoteMaterials.set(sessionId, material);
 
         // MVP goal item 4 follow-up: built at THIS player's own current
@@ -840,40 +875,40 @@ export async function connectAndStreamWorld(
         // constants) -- a brand-new remote entity always starts sized
         // correctly, same spirit as the resize-on-change branch below
         // for one already seen before.
-        const mesh = BABYLON.MeshBuilder.CreateBox(`remote-${sessionId}`, { width: p.bodyWidth, height: p.bodyHeight, depth: p.bodyDepth }, scene);
+        const mesh = BABYLON.MeshBuilder.CreateBox(`remote-${sessionId}`, { width: c.bodyWidth, height: c.bodyHeight, depth: c.bodyDepth }, scene);
         mesh.material = material;
-        eid = noa.entities.add([p.x, p.y, p.z], p.bodyWidth, p.bodyHeight, mesh, [0, p.bodyHeight / 2, 0], false, false);
+        eid = noa.entities.add([c.x, c.y, c.z], c.bodyWidth, c.bodyHeight, mesh, [0, c.bodyHeight / 2, 0], false, false);
         remoteEntities.set(sessionId, eid);
         remoteBodyMeshes.set(sessionId, mesh);
-        appliedBodySizes.set(sessionId, [p.bodyWidth, p.bodyHeight, p.bodyDepth]);
+        appliedBodySizes.set(sessionId, [c.bodyWidth, c.bodyHeight, c.bodyDepth]);
         const anchor = createBodyAnchor(mesh);
         remoteTokenAnchors.set(sessionId, anchor);
 
-        token = createCharacterToken(scene, p.characterName || p.name);
+        token = createCharacterToken(scene, c.characterName || p.name);
         // Parented to the scale-cancelling anchor, NOT the body mesh
         // directly -- see PlayerBodyMesh.tokenAnchor's own doc for the
         // real squish/offset-drift bug this fixes. Still follows the
         // box's own noa-driven position for free (the anchor is just
         // an extra link in the SAME parent chain).
         token.mesh.parent = anchor;
-        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(p.bodyHeight), 0);
-        token.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
+        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(c.bodyHeight), 0);
+        token.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
         noa.rendering.addMeshToScene(token.mesh, false); // see the matching comment on the local-token branch above -- same real bug, same fix
         remoteTokens.set(sessionId, token);
       } else {
-        noa.entities.setPosition(eid, [p.x, p.y, p.z]);
-        material.diffuseColor = p.characterId ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
-        if (bodySizeChanged(sessionId, p.bodyWidth, p.bodyHeight, p.bodyDepth)) {
-          resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, p.bodyWidth, p.bodyHeight, p.bodyDepth);
-          token.mesh.position.y = tokenYOffsetFor(p.bodyHeight);
-          token.mesh.scaling.setAll(tokenScaleFor(p.bodyHeight));
+        noa.entities.setPosition(eid, [c.x, c.y, c.z]);
+        material.diffuseColor = c.characterId ? new BABYLON.Color3(c.tokenColorR, c.tokenColorG, c.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
+        if (bodySizeChanged(sessionId, c.bodyWidth, c.bodyHeight, c.bodyDepth)) {
+          resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, c.bodyWidth, c.bodyHeight, c.bodyDepth);
+          token.mesh.position.y = tokenYOffsetFor(c.bodyHeight);
+          token.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
         }
       }
 
       token.update({
-        name: p.characterName || p.name,
-        bars: toTokenBars(p.bars),
-        statusEffects: Array.from(p.statusEffects ?? []),
+        name: c.characterName || p.name,
+        bars: toTokenBars(c.bars),
+        statusEffects: Array.from(c.statusEffects ?? []),
       });
     }
 

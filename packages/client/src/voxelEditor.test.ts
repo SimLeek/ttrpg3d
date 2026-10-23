@@ -55,7 +55,7 @@ describe("installVoxelEditor's Default/Select mode gating (MVP goal items 1-2 fo
   it("Default mode (pointer-locked): fire breaks the targeted block and never consults tokenInteraction at all", () => {
     const { noa, setBlock, fire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
     const onEdit = vi.fn();
-    const tokenInteraction = fakeTokenInteraction({ pickHoveredStatBar: vi.fn(() => ({ characterId: "c1", variableId: "hp" })) });
+    const tokenInteraction = fakeTokenInteraction({ pickHoveredStatBar: vi.fn(() => ({ characterId: "c1", instanceId: "i1", variableId: "hp" })) });
     installVoxelEditor(noa, () => null, onEdit, undefined, tokenInteraction);
 
     fire();
@@ -69,7 +69,7 @@ describe("installVoxelEditor's Default/Select mode gating (MVP goal items 1-2 fo
   it("Default mode: alt-fire places the equipped block and never consults tokenInteraction at all, even with an owned token 'at the crosshair'", () => {
     const { noa, setBlock, altFire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
     const onEdit = vi.fn();
-    const tokenInteraction = fakeTokenInteraction({ pickOwnedToken: vi.fn(() => ({ characterId: "c1" })) });
+    const tokenInteraction = fakeTokenInteraction({ pickOwnedToken: vi.fn(() => ({ characterId: "c1", instanceId: "i1", isPiloted: true })) });
     installVoxelEditor(noa, () => PLACE_BLOCK_ITEM, onEdit, undefined, tokenInteraction);
 
     altFire();
@@ -96,12 +96,12 @@ describe("installVoxelEditor's Default/Select mode gating (MVP goal items 1-2 fo
   it("Select mode: alt-fire on an owned token opens its context menu and never touches block editing, even with a block equipped", () => {
     const { noa, setBlock, altFire } = fakeNoa(false, { position: [1, 2, 3], adjacent: [1, 3, 3] });
     const onEdit = vi.fn();
-    const tokenInteraction = fakeTokenInteraction({ pickOwnedToken: () => ({ characterId: "c1", instanceId: "i1" }) });
+    const tokenInteraction = fakeTokenInteraction({ pickOwnedToken: () => ({ characterId: "c1", instanceId: "i1", isPiloted: false }) });
     installVoxelEditor(noa, () => PLACE_BLOCK_ITEM, onEdit, undefined, tokenInteraction);
 
     altFire();
 
-    expect(tokenInteraction.openContextMenu).toHaveBeenCalledWith("c1", "i1", 0, 0);
+    expect(tokenInteraction.openContextMenu).toHaveBeenCalledWith("c1", "i1", false, 0, 0);
     expect(setBlock).not.toHaveBeenCalled();
     expect(onEdit).not.toHaveBeenCalled();
   });

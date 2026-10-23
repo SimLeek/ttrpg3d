@@ -77,13 +77,20 @@ export const BarState = schema(
 
 /**
  * MVP goal item 4 follow-up (drag-and-drop placement + Tab/Shift+Tab
- * focus cycling): one of a session's OWN characters that's present in
- * the world but not the one currently being controlled. Deliberately
- * mirrors PlayerState's own per-character fields (bars/body size/token
- * color/status effects) rather than reusing PlayerState itself --
- * there's no live "pos" input for one of these (placement/cycling are
- * the only things that ever move it), so it has no isAdmin/accountId/
- * otherCharacters of its own.
+ * focus cycling): one real character instance in this world. Lives in
+ * exactly one of two places at any moment -- an element of
+ * `WorldState.otherCharacters` (idle/placed, nobody currently piloting
+ * it) OR referenced by exactly one session's `PlayerState.
+ * currentInstance` (being piloted right now) -- moved between the two
+ * (`t.ref`, the SAME object, not copied) by WorldRoom.ts's
+ * focusCharacter/onJoin/onLeave, never both at once (confirmed:
+ * `@colyseus/schema` instances can't have two parents simultaneously).
+ * This is a real correction, 2026-10-23: earlier, a piloted character
+ * had NO instance of its own at all, just a separate set of fields
+ * duplicated onto PlayerState directly -- see PlayerState's own doc
+ * for the two real bugs that caused (couldn't reference your own
+ * piloted character from the turn order; disconnecting lost its
+ * position/stats entirely instead of persisting them).
  *
  * Real request: "I can't add multiple instances of the same character.
  * I would want to do that for monsters for example." `characterId`
@@ -134,47 +141,44 @@ export const OtherCharacterState = schema(
   "OtherCharacterState",
 );
 
+/**
+ * Real correction (2026-10-23), replacing this session's own
+ * duplicated characterId/characterName/tokenColor/bars/bodySize/
+ * statusEffects/x/y/z/yaw fields entirely: the character a session is
+ * piloting is now a REAL `OtherCharacterState` instance, held here by
+ * reference (`t.ref`, moved -- not copied field-by-field -- out of
+ * `WorldState.otherCharacters` while piloted, same object identity the
+ * whole time) rather than a separate parallel representation. Real
+ * bugs this fixes, found live:
+ * - "I cannot add my currently controlled character to the turn
+ *   order" -- it had no stable instanceId to add, since it wasn't a
+ *   real instance at all while focused.
+ * - "the controlled player starts in spawn instead [of where they
+ *   were], which is 100% wrong" on a disconnect/refresh/rejoin --
+ *   onLeave used to delete the whole PlayerState outright, discarding
+ *   whatever position/stats this had reached. Now the instance itself
+ *   is just pushed back into `otherCharacters`, untouched, and
+ *   resuming it on rejoin (`currentInstanceId` in `JoinOptions`) picks
+ *   up EXACTLY where it left off -- not a new copy, not respawn.
+ *
+ * ALWAYS present (never `undefined`), even for a genuinely
+ * characterless session -- `currentInstance.characterId === ""` is
+ * that state now (same "render no token" signal
+ * `OtherCharacterState.characterId` already carried), not a second,
+ * separate "no character" representation. This is also what lets
+ * `instanceVariableOverrides` (WorldRoom.ts) be the ONLY override map
+ * now -- the earlier `focusedVariableOverrides` existed purely
+ * because the focused slot had no stable id to key overrides by; it
+ * does now, so that whole map is gone.
+ */
 export const PlayerState = schema(
   {
     name: t.string().default("Player"),
-    x: t.number().default(0),
-    y: t.number().default(0),
-    z: t.number().default(0),
-    yaw: t.number().default(0),
     /** GM admin-override escape hatch (core/mod-boundary plan) -- set once in WorldRoom.onJoin from store.isWorldAdmin, never re-derived from anything the client sends. */
     isAdmin: t.boolean().default(false),
     /** Mirrors GameState.ts's own presence.accountId (GameRoom.ts) -- same "never trusted for anything auth-related beyond a fresh store check" rule. MVP goal item 4 follow-up: needed so `placeCharacter` can verify the sender actually owns the character they're placing. */
     accountId: t.string().default(""),
-    /**
-     * MVP goal items 1-2 (docs/ROADMAP.md): flattened from store.ts's
-     * CharacterRecord once at join (same precedent as isAdmin/respawn-anchor
-     * above, per WorldRoom.ts's onJoin -- never a live per-message lookup).
-     * All default/optional-shaped so a characterless join (no character
-     * selected, or an unknown/stale id) still works and simply renders no
-     * token client-side -- a real state, not an edge case to assume away.
-     */
-    characterId: t.string().default(""),
-    characterName: t.string().default(""),
-    tokenColorR: t.number().default(0),
-    tokenColorG: t.number().default(0),
-    tokenColorB: t.number().default(0),
-    bars: t.array(BarState),
-    /**
-     * MVP goal item 4 follow-up ("finish item 4's MVP scope," real bug
-     * found live: "I tried adjusting the character width/height/depth
-     * and that did nothing") -- flattened once at join from
-     * `character.variableValues.bodyWidth/Height/Depth` (same
-     * "flatten once at join" precedent every other character field
-     * here already uses), re-flattened by `notifyCharacterSheetChanged`
-     * on a live sheet edit. Defaults match `RESERVED_BODY_SIZE_VARIABLES`'
-     * own shared defaults (and noa's own Engine constructor defaults --
-     * a numeric coincidence this migration finally makes a real,
-     * wired connection instead of two unrelated fixed values).
-     */
-    bodyWidth: t.number().default(0.6),
-    bodyHeight: t.number().default(1.8),
-    bodyDepth: t.number().default(0.6),
-    statusEffects: t.array(StatusEffectState),
+    currentInstance: t.ref(OtherCharacterState),
   },
   "PlayerState",
 );
