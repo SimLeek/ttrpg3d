@@ -145,11 +145,16 @@ actual fair setup."*
 ### 4. Waypoint / distance measurement
 
 Ported close to the old game's `battle_mode_manager.gd`, confirmed via
-direct user call ("port close to as-is"), with one concrete change
-already verified safe: **M and N are completely unused anywhere in
-this codebase or in noa-engine's own defaults** (grepped both --
-nothing binds them), so the old keys can be reused without a
-collision, unlike the original worry.
+direct user call ("port close to as-is").
+
+**Correction** (2026-10-23): the earlier claim here that M/N were
+"completely unused anywhere in this codebase" was WRONG -- the grep
+behind it only matched `event.code === "KeyM"`-style comparisons and
+missed `pageManager.ts`'s own `event.code !== "KeyM"` (a negated
+check, different pattern, same collision), which is the real page/
+world-switch hotkey. Resolved by moving pages to **P** instead
+(confirmed free, same thorough re-check this time) -- M stays free
+for this section's own use. N remains confirmed free either way.
 
 - **M** marks a waypoint at the player's current position; **N**
   removes it -- same "walk back to the last waypoint first, then a

@@ -23,6 +23,15 @@
 // here) -- GM status and all data come in via injected callbacks/
 // update(), not a direct noa/room import, so this stays jsdom-testable.
 
+import { SAFE_AREA_LEFT_VAR } from "./panelLayout.js";
+
+// Real request: "whether it was open or not should also persist" --
+// a per-CLIENT UI preference (same spirit as api.ts's
+// CHARACTER_STORAGE_KEY), not Schema-synced room state; different
+// sessions can have the tracker open/closed independently of each
+// other and of whoever's actually running the turn order.
+const TURN_TRACKER_VISIBLE_STORAGE_KEY = "ttrpg3d.turnTrackerVisible";
+
 export interface TurnOrderEntryLike {
   turnEntryId: string;
   label: string;
@@ -50,7 +59,14 @@ export interface TurnTrackerController {
 export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOptions): TurnTrackerController {
   container.innerHTML = `
     <style>
-      .turn-tracker { position: fixed; top: 80px; right: 20px; width: 220px; background: rgba(20,20,24,0.92); border: 1px solid rgba(200,200,200,0.4); border-radius: 6px; font-family: system-ui, sans-serif; color: #eee; font-size: 13px; z-index: 500; display: none; }
+      /* Default position: just right of the left mode-select panel's live
+         edge (real request: "near the left side of the screen just to
+         the right of the buttons panel on the left") -- same
+         SAFE_AREA_LEFT_VAR contract hotbar.ts already reads, so this
+         follows modePanel.ts's own collapse/expand automatically.
+         Overridden by inline left/top once the user actually drags it
+         (see onDocumentMouseMove below). */
+      .turn-tracker { position: fixed; top: 80px; left: calc(var(${SAFE_AREA_LEFT_VAR}, 0px) + 10px); width: 220px; background: rgba(20,20,24,0.92); border: 1px solid rgba(200,200,200,0.4); border-radius: 6px; font-family: system-ui, sans-serif; color: #eee; font-size: 13px; z-index: 500; display: none; }
       .turn-tracker.minimized .turn-tracker-body { display: none; }
       .turn-tracker-title { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(200,200,200,0.3); cursor: grab; user-select: none; border-radius: 6px 6px 0 0; }
       .turn-tracker.minimized .turn-tracker-title { border-radius: 6px; border-bottom: none; }
@@ -91,7 +107,7 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
   const list = container.querySelector<HTMLUListElement>("#turn-tracker-list")!;
   const gmControls = container.querySelector<HTMLDivElement>("#turn-tracker-gm-controls")!;
 
-  let visible = false;
+  let visible = localStorage.getItem(TURN_TRACKER_VISIBLE_STORAGE_KEY) === "true";
   let minimized = false;
   let lastEntries: TurnOrderEntryLike[] = [];
   let lastCurrentIndex = 0;
@@ -127,7 +143,6 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
     if (!draggingPanel) return;
     panel.style.left = `${event.clientX - dragOffsetX}px`;
     panel.style.top = `${event.clientY - dragOffsetY}px`;
-    panel.style.right = "auto";
   }
   function onDocumentMouseUp(): void {
     draggingPanel = false;
@@ -247,6 +262,10 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
     renderList();
   }
   renderAll();
+  // Apply the restored visibility from localStorage -- only need to
+  // act when it was true; false already matches the stylesheet's own
+  // default `display: none`, same as a never-toggled panel.
+  if (visible) panel.style.display = "block";
 
   return {
     update(entries: TurnOrderEntryLike[], currentIndex: number, round: number): void {
@@ -258,6 +277,7 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
     setVisible(nextVisible: boolean): void {
       visible = nextVisible;
       panel.style.display = visible ? "block" : "none";
+      localStorage.setItem(TURN_TRACKER_VISIBLE_STORAGE_KEY, String(visible));
     },
     isVisible: () => visible,
     destroy(): void {

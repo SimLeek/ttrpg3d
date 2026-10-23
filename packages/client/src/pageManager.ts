@@ -176,7 +176,7 @@ export function mountPageManager(container: HTMLElement, options: PageManagerOpt
       setOpen(false);
       return;
     }
-    if (event.code !== "KeyM") return;
+    if (event.code !== "KeyP") return;
     if (!open && !isAdmin()) return; // can't OPEN without being admin; always allowed to close
     setOpen(!open);
     if (open) void refreshWorlds();

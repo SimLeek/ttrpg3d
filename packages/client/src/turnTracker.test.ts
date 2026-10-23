@@ -25,15 +25,30 @@ function entry(turnEntryId: string, label: string, rollValue?: number): TurnOrde
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
+  localStorage.clear();
 });
 
 afterEach(() => {
   tracker?.destroy();
   tracker = null;
   container.remove();
+  localStorage.clear();
 });
 
 describe("mountTurnTracker", () => {
+  it("remembers its own visibility across a remount via localStorage -- real request: \"whether it was open or not should also persist\"", () => {
+    const { tracker: first } = mount();
+    first.setVisible(true);
+    first.destroy();
+    container.remove();
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    const { tracker: second } = mount();
+    expect(second.isVisible()).toBe(true);
+    expect(container.querySelector<HTMLDivElement>("#turn-tracker")!.style.display).toBe("block");
+  });
+
   it("is hidden until setVisible(true) is called", () => {
     mount();
     const panel = container.querySelector<HTMLDivElement>("#turn-tracker")!;
