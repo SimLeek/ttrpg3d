@@ -96,12 +96,28 @@ export const BarState = schema(
  * -- see WorldRoom.ts's `instanceVariableOverrides` doc for why bars/
  * body size are resolved per-instance rather than shared off the one
  * character record.
+ *
+ * Lives on `WorldState.otherCharacters` now (top-level, per-WORLD),
+ * not `PlayerState.otherCharacters` (per-session) -- real feedback:
+ * "the tokens do not persist upon exiting and re-entering games, so
+ * if gms/players refresh, then monsters will disappear... they should
+ * be stored and loaded with the page/world." A session-scoped array
+ * can never survive that session disconnecting no matter what
+ * persistence sits underneath it; these belong to the world, not
+ * whoever happened to place them (store.ts's own
+ * `setPlacedCharactersForWorld`/`WorldRecord.placedCharacters` is the
+ * actual persisted-to-disk half). `placedByAccountId` replaces "is in
+ * MY session's array" as the ownership test this now needs --
+ * `placeCharacter` already requires owning the underlying character to
+ * create one, so this just makes that ownership durable past the
+ * placing session's own lifetime.
  */
 export const OtherCharacterState = schema(
   {
     instanceId: t.string().default(""),
     characterId: t.string().default(""),
     characterName: t.string().default(""),
+    placedByAccountId: t.string().default(""),
     x: t.number().default(0),
     y: t.number().default(0),
     z: t.number().default(0),
@@ -159,8 +175,6 @@ export const PlayerState = schema(
     bodyHeight: t.number().default(1.8),
     bodyDepth: t.number().default(0.6),
     statusEffects: t.array(StatusEffectState),
-    /** MVP goal item 4 follow-up -- this session's own characters present in the world but not currently focused/controlled. See OtherCharacterState's own doc above. */
-    otherCharacters: t.array(OtherCharacterState),
   },
   "PlayerState",
 );
@@ -168,6 +182,8 @@ export const PlayerState = schema(
 export const WorldState = schema(
   {
     players: t.map(PlayerState),
+    /** MVP goal item 4 follow-up -- every placed-but-unfocused character instance in this WORLD (not just one session's own), persisted (store.ts) so they survive a session refreshing/leaving and a room being recreated. See OtherCharacterState's own doc. */
+    otherCharacters: t.array(OtherCharacterState),
     worldBottomY: t.number().default(DEFAULT_WORLD_BOTTOM_Y),
     /** Respawn core primitive -- a plain `{x,y,z}|null` doesn't have a direct Schema equivalent used elsewhere in this codebase yet, so modeled as a presence flag + 3 flat numbers rather than reaching for an unverified optional-ref pattern. */
     hasRespawnAnchor: t.boolean().default(false),

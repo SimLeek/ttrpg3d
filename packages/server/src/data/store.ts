@@ -100,6 +100,44 @@ export interface WorldRecord {
   createdAt: number;
   /** Respawn core primitive's persisted half -- real bug found live: this used to live ONLY in WorldRoom's in-memory Schema state, which Colyseus disposes once the room empties (the normal case when switching pages away and back in solo/small-group testing), silently losing the anchor. Persisted here instead so it survives a room being recreated. Admin-settable only (WorldRoom's setRespawnAnchor handler), null until set. */
   respawnAnchor?: { x: number; y: number; z: number } | null;
+  /**
+   * MVP goal item 4 follow-up -- real bug found live: "the tokens do
+   * not persist upon exiting and re-entering games, so if gms/players
+   * refresh, then monsters will disappear." Same "WorldRoom's
+   * in-memory Schema state alone doesn't survive a room being
+   * recreated" lesson respawnAnchor above already taught this file --
+   * persisted here instead, write-through on every place/remove/
+   * instance-edit/focus-swap (WorldRoom.ts's own
+   * `persistPlacedCharacters`), loaded back in at the next onCreate.
+   * Undefined/missing is a real state (a world nobody's ever placed
+   * anything in), not an error.
+   */
+  placedCharacters?: PlacedCharacterInstanceRecord[];
+}
+
+/**
+ * The persisted half of WorldState.ts's `OtherCharacterState` -- NOT a
+ * 1:1 mirror of every Schema field, only the ones that are actual
+ * SOURCE data rather than derived. `bars`/`bodyWidth`/`Height`/`Depth`
+ * are deliberately absent: those are always RE-RESOLVED from the
+ * character's own current sheet + `variableOverrides` at load time
+ * (WorldRoom.ts's `applyBarsToCharacterTarget`/
+ * `applyBodySizeToCharacterTarget`), same as a live instance already
+ * works -- persisting them too would just be a second, staler copy of
+ * the same derived data.
+ */
+export interface PlacedCharacterInstanceRecord {
+  instanceId: string;
+  characterId: string;
+  placedByAccountId: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  tokenColor: [number, number, number];
+  statusEffects: StatusEffect[];
+  /** Sparse per-instance stat deltas on top of the character's own base variableValues (independent stats -- "multiple instances... for monsters," killing one goblin shouldn't zero out the others). Was ephemeral/in-memory-only before this round; persisting it here is the actual fix for "monsters disappear on refresh" losing their damage too, not just their position. */
+  variableOverrides: Record<string, number>;
 }
 
 export interface StatusEffect {
@@ -424,6 +462,15 @@ export function createStore(baseDir: string) {
       const world = worlds.find((w) => w.id === worldId);
       if (!world) return;
       world.respawnAnchor = anchor;
+      saveWorlds(worlds);
+    },
+
+    /** No-op if the world id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. Whole-list overwrite, same write-through-on-every-change shape as that function -- WorldRoom.ts's own `persistPlacedCharacters` calls this after every place/remove/instance-edit/focus-swap, not a per-instance diff. */
+    setPlacedCharactersForWorld(worldId: string, placed: PlacedCharacterInstanceRecord[]): void {
+      const worlds = loadWorlds();
+      const world = worlds.find((w) => w.id === worldId);
+      if (!world) return;
+      world.placedCharacters = placed;
       saveWorlds(worlds);
     },
 

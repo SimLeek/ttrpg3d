@@ -1,7 +1,7 @@
 import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType } from "./WorldState.js";
-import type { StatusEffect, CharacterRecord } from "../data/store.js";
+import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -42,12 +42,12 @@ interface JoinOptions {
  *
  * `instanceId` (MVP goal item 4 follow-up, "multiple instances of the
  * same character... for monsters"): when present, this edit applies
- * ONLY to that one placed otherCharacters instance, as an ephemeral
+ * ONLY to that one placed otherCharacters instance, as a persisted
  * override that never touches the shared CharacterRecord and never
- * affects any other instance or the focused slot -- see WorldRoom.ts's
- * `instanceVariableOverrides` doc. Omitted (the original behavior):
- * edits the shared record and refreshes the FOCUSED slot of whichever
- * session(s) are playing that character.
+ * affects any other instance or the focused slot -- see
+ * `instanceVariableOverrides`'s own doc. Omitted (the original
+ * behavior): edits the shared record and refreshes the FOCUSED slot
+ * of whichever session(s) are playing that character.
  */
 interface SetCharacterVariableValueMessage {
   characterId: string;
@@ -77,14 +77,19 @@ interface PlaceCharacterMessage {
 }
 
 /**
- * MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling). `direction`
- * decides WHERE the previously-focused character goes back into
- * `otherCharacters` (its tail for "next", its head for "previous") --
- * required for Tab and Shift+Tab to be true inverses of each other
- * around the ring [focused, ...otherCharacters]. Worked out on paper,
- * not guessed: without it, "previous" would just be "next" with extra
- * steps (both ends of the swap land in the same place), so repeatedly
- * pressing Tab then Shift+Tab would NOT return to the original focus.
+ * MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling, and now the
+ * right-click "Control" item). `direction` decides WHERE the
+ * previously-focused character goes back into `otherCharacters` (its
+ * tail for "next", its head for "previous") -- required for Tab and
+ * Shift+Tab to be true inverses of each other around the ring
+ * [focused, ...otherCharacters]. Worked out on paper, not guessed:
+ * without it, "previous" would just be "next" with extra steps (both
+ * ends of the swap land in the same place), so repeatedly pressing Tab
+ * then Shift+Tab would NOT return to the original focus. "Control" (a
+ * direct, non-ring jump to an arbitrary instance) always sends "next"
+ * -- there's no ring position to invert for an arbitrary jump, and
+ * "next" is the same "old focus goes to the tail" behavior Tab itself
+ * already uses, so no third direction value is needed.
  *
  * Keyed by `instanceId`, not `characterId` -- now that multiple
  * instances of the same character can coexist (see OtherCharacterState's
@@ -105,20 +110,21 @@ function flatIndex(i: number, j: number, k: number): number {
   return i * CHUNK_SIZE * CHUNK_SIZE + j * CHUNK_SIZE + k;
 }
 
-/** Mirrors store.ts's own private `newId()` -- intentionally separate, not shared: these ids are EPHEMERAL (room-scoped, never persisted, lost on server restart -- see `instanceVariableOverrides`'s own doc for why that's an accepted limitation for now), unlike store.ts's ids. */
+/** Mirrors store.ts's own private `newId()` -- intentionally separate, not shared: these ids are generated here (never on the client, same "don't trust a client-chosen id" spirit as everything else in this file), independent of store.ts's own id sequence. */
 function newInstanceId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
 /**
  * MVP goal item 4 follow-up (multi-character presence): a session's
- * currently-FOCUSED character (PlayerStateType) and one of its
- * placed-but-unfocused `otherCharacters` entries (OtherCharacterStateType)
- * share this exact field shape (bars + body size), just on two
- * different Schema types -- this is the structural interface both
- * `applyBarsToCharacterTarget`/`applyBodySizeToCharacterTarget` below
- * (and the focus-swap helpers further down) operate against, so the
- * same logic works for either without duplicating it per-type.
+ * currently-FOCUSED character (PlayerStateType) and one of the
+ * world's placed-but-unfocused `otherCharacters` entries
+ * (OtherCharacterStateType) share this exact field shape (bars + body
+ * size), just on two different Schema types -- this is the structural
+ * interface both `applyBarsToCharacterTarget`/
+ * `applyBodySizeToCharacterTarget` below (and the focus-swap helpers
+ * further down) operate against, so the same logic works for either
+ * without duplicating it per-type.
  */
 interface CharacterSheetTarget {
   bars: { clear(): void; push(bar: BarStateType): void };
@@ -130,18 +136,18 @@ interface CharacterSheetTarget {
 /**
  * MVP goal item 4 follow-up ("multiple instances of the same
  * character... for monsters," independent stats): `overrides`, when
- * given, is one placed INSTANCE's own ephemeral variable deltas
+ * given, is one placed INSTANCE's own persisted variable deltas
  * (`instanceVariableOverrides`), merged on top of the character's own
  * base `variableValues` -- never mutating the base record itself. The
  * focused slot and a fresh (not-yet-edited) instance both pass no
  * overrides, resolving straight off the base record, same as always.
  */
-function resolveVariableValues(character: CharacterRecord, overrides?: Readonly<Record<string, number | string>>): Readonly<Record<string, number | string>> {
+function resolveVariableValues(character: CharacterRecord, overrides?: Readonly<Record<string, number>>): Readonly<Record<string, number | string>> {
   return overrides ? { ...character.variableValues, ...overrides } : character.variableValues;
 }
 
 /** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues (optionally merged with one instance's own overrides, see resolveVariableValues) and replaces the target's whole `bars` Schema array -- used at join, after any setCharacterVariableValue edit, and for a placed otherCharacters entry, so every connected session always sees a freshly-derived list rather than a stale one, regardless of focus state. */
-function applyBarsToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number | string>>): void {
+function applyBarsToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number>>): void {
   target.bars.clear();
   for (const resolved of resolveCharacterBars(character.customSheet, resolveVariableValues(character, overrides))) {
     const bar = new BarState();
@@ -161,7 +167,7 @@ const DEFAULT_BODY_HEIGHT = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "b
 const DEFAULT_BODY_DEPTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyDepth")!.default as number;
 
 /** Real bug found live ("I tried adjusting the character width/height/depth and that did nothing"): `RESERVED_BODY_SIZE_VARIABLES` existed as editable sheet data but nothing read it onto anything real. Mirrors applyBarsToCharacterTarget's own shape (including the same optional per-instance `overrides`) -- used at join, after any sheet edit (notifyCharacterSheetChanged below), and for a placed otherCharacters entry, so every connected session always sees the character's CURRENT body size rather than a stale/default one. */
-function applyBodySizeToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number | string>>): void {
+function applyBodySizeToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number>>): void {
   const values = resolveVariableValues(character, overrides);
   target.bodyWidth = typeof values.bodyWidth === "number" ? values.bodyWidth : DEFAULT_BODY_WIDTH;
   target.bodyHeight = typeof values.bodyHeight === "number" ? values.bodyHeight : DEFAULT_BODY_HEIGHT;
@@ -194,12 +200,13 @@ function copyBarsAndStatusEffects(
   }
 }
 
-/** Snapshots a session's CURRENTLY-focused character into a brand-new `OtherCharacterState` -- the first half of a Tab/Shift+Tab focus swap (the player's top-level fields are about to be overwritten by the target character's data, so this has to happen first). Gets a FRESH instanceId (the focused slot never has one of its own) -- a known, accepted limitation: swapping a character OUT then back IN via focus cycling does not preserve any per-instance stat overrides it had before being focused (there weren't any to begin with -- the focused slot always resolves straight off the shared record), so this is only a gap if something else (e.g. a future "focus a monster to puppet it" GM flow) edits an instance's stats, swaps it to focused, then swaps it back out. */
+/** Snapshots a session's CURRENTLY-focused character into a brand-new `OtherCharacterState` -- the first half of a Tab/Shift+Tab/Control focus swap (the player's top-level fields are about to be overwritten by the target character's data, so this has to happen first). Gets a FRESH instanceId (the focused slot never has one of its own) and no override entry (the focused slot always resolves straight off the shared record -- there's nothing to carry over). `placedByAccountId` is the player's own accountId: this snapshot is now a world-level entry like any other, and the session that was just piloting it is who "placed" it, same ownership rule as an explicit drag-and-drop placement. */
 function snapshotFocusedCharacter(player: PlayerStateType): OtherCharacterStateType {
   const snapshot = new OtherCharacterState();
   snapshot.instanceId = newInstanceId();
   snapshot.characterId = player.characterId;
   snapshot.characterName = player.characterName;
+  snapshot.placedByAccountId = player.accountId;
   snapshot.x = player.x;
   snapshot.y = player.y;
   snapshot.z = player.z;
@@ -230,9 +237,22 @@ function isSendersOwnCharacter(sender: PlayerStateType | undefined, characterId:
   return !!sender && sender.characterId === characterId;
 }
 
-/** True if `instanceId` is one of the SENDER'S OWN placed otherCharacters entries -- the instance-edit equivalent of isSendersOwnCharacter above (placeCharacter already required character ownership to create an instance in the first place, so "is it in MY otherCharacters array" is the right self-edit gate here, not a separate character-ownership re-check). */
-function isSendersOwnInstance(sender: PlayerStateType | undefined, instanceId: string): boolean {
-  return !!sender && sender.otherCharacters.some((o) => o.instanceId === instanceId);
+/**
+ * True if `instanceId` names a world-level otherCharacters entry THIS
+ * SENDER placed -- the instance-edit equivalent of
+ * isSendersOwnCharacter above. `otherCharacters` is world-level now
+ * (WorldState.ts, real feedback: "the tokens do not persist upon
+ * exiting and re-entering games... they should be stored and loaded
+ * with the page/world"), so ownership is checked via
+ * `placedByAccountId`, not "is it in my own array" (there's only ONE
+ * array now, shared by everyone in the room).
+ */
+function isSendersOwnInstance(otherCharacters: readonly OtherCharacterStateType[], sender: PlayerStateType | undefined, instanceId: string): boolean {
+  return !!sender && otherCharacters.some((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
+}
+
+function findInstance(otherCharacters: readonly OtherCharacterStateType[], instanceId: string): OtherCharacterStateType | undefined {
+  return otherCharacters.find((o) => o.instanceId === instanceId);
 }
 
 /** The second half of a focus swap -- pulls a (previously-placed) otherCharacters entry's data onto the player's top-level focused fields. Position/yaw included: the newly-focused character should appear where it was last placed/left, same spirit as a fresh join using the respawn anchor. */
@@ -266,53 +286,72 @@ function applyOtherCharacterAsFocused(player: PlayerStateType, other: OtherChara
  * takes some UNRELATED room message to trigger that refresh today.
  *
  * This in-process registry (every room lives in the same Node
- * process) tracks which (room, sessionId) pairs are currently playing
- * each characterId, so a REST edit can reach them directly -- no new
- * message/poll loop, just a same-process function call. Keyed by
+ * process) tracks which (room, sessionId) pairs are currently FOCUSED
+ * on each characterId, so a REST edit can reach them directly -- no
+ * new message/poll loop, just a same-process function call. Keyed by
  * characterId since a character can in principle be active in more
- * than one room at once (two tabs/sessions); cleaned up in onLeave.
- *
- * MVP goal item 4 follow-up (multi-character presence): a session can
- * now be responsible for MORE than one characterId at once -- its
- * currently-focused one, plus any placed-but-unfocused
- * `otherCharacters` entries -- so a single characterId can map to
- * EITHER slot depending on current focus state. `notifyCharacterSheetChanged`
- * below checks both.
+ * than one room at once (two tabs/sessions); cleaned up in onLeave,
+ * and re-pointed at the new characterId on every focus swap
+ * (focusCharacter) -- without that second part, a sheet edit to
+ * whatever you just Tab/Control-switched TO would silently stop
+ * reaching your screen, since this would still think you were playing
+ * whatever you focused BEFORE the swap.
  */
 const activeCharacterSessions = new Map<string, Set<{ room: WorldRoom; sessionId: string }>>();
 
 /**
+ * The world-level counterpart to activeCharacterSessions above --
+ * which ROOMS currently have a placed otherCharacters instance of this
+ * characterId (independent of any particular session; a placed
+ * monster has no "session playing it," it just exists in the world).
+ * `WorldRoom.syncCharacterRoomRegistration` keeps this current after
+ * every otherCharacters mutation; `onDispose` removes this room from
+ * every entry it was part of.
+ */
+const activeCharacterRooms = new Map<string, Set<WorldRoom>>();
+
+/**
  * Called by server.ts's putCharacterSheet, after persisting, to
- * refresh bars for every live session currently playing this
- * character -- across every WorldRoom that has one, not just the
- * current room (same reason setCharacterVariableValue's own handler
- * now also calls this instead of looping its own room only). Checks
- * the focused slot AND every otherCharacters entry for this
- * characterId (MVP goal item 4 follow-up: there can be several placed
- * instances of the same character now, not just one) -- each
+ * refresh bars for every live FOCUSED session AND every placed
+ * otherCharacters instance of this character, across every WorldRoom
+ * that has one (same reason setCharacterVariableValue's own handler
+ * now also calls this instead of looping its own room only). Each
  * instance's OWN overrides (instanceVariableOverrides) stay layered on
  * top of the freshly-edited base record, so a template-level sheet
  * edit cascades the new BASE stats into every goblin while each
  * goblin's own accumulated damage/etc. is undisturbed. No-op (not an
- * error) if the character isn't currently played anywhere.
+ * error) if the character isn't currently played or placed anywhere.
  */
 export function notifyCharacterSheetChanged(characterId: string): void {
-  const sessions = activeCharacterSessions.get(characterId);
-  if (!sessions || sessions.size === 0) return;
   const character = store.getCharacter(characterId);
   if (!character) return;
-  for (const { room, sessionId } of sessions) {
-    const player = room.state.players.get(sessionId);
-    if (!player) continue;
-    if (player.characterId === characterId) {
-      applyBarsToCharacterTarget(player, character);
-      applyBodySizeToCharacterTarget(player, character);
+
+  const sessions = activeCharacterSessions.get(characterId);
+  if (sessions) {
+    for (const { room, sessionId } of sessions) {
+      const player = room.state.players.get(sessionId);
+      if (player?.characterId === characterId) {
+        // focusedVariableOverrides' own doc: a session piloting this
+        // character may have its own live deviation (e.g. damage taken
+        // this session) that a sheet-wide change elsewhere must not
+        // silently overwrite -- same protection otherCharacters
+        // instances already get below.
+        const overrides = room.focusedVariableOverrides.get(sessionId);
+        applyBarsToCharacterTarget(player, character, overrides);
+        applyBodySizeToCharacterTarget(player, character, overrides);
+      }
     }
-    for (const other of player.otherCharacters) {
-      if (other.characterId !== characterId) continue;
-      const overrides = room.instanceVariableOverrides.get(other.instanceId);
-      applyBarsToCharacterTarget(other, character, overrides);
-      applyBodySizeToCharacterTarget(other, character, overrides);
+  }
+
+  const rooms = activeCharacterRooms.get(characterId);
+  if (rooms) {
+    for (const room of rooms) {
+      for (const other of room.state.otherCharacters) {
+        if (other.characterId !== characterId) continue;
+        const overrides = room.instanceVariableOverrides.get(other.instanceId);
+        applyBarsToCharacterTarget(other, character, overrides);
+        applyBodySizeToCharacterTarget(other, character, overrides);
+      }
     }
   }
 }
@@ -347,15 +386,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // tracked server-side rather than trusting a client-sent flag (checked
   // once at join via store.isWorldAdmin, not re-derived per message).
   private adminSessionIds = new Set<string>();
-  /**
-   * This room's own half of the activeCharacterSessions registry above
-   * -- which characterId(s) each currently-connected session is
-   * responsible for, so onLeave can find and remove the right entries.
-   * MVP goal item 4 follow-up: a Set, not a single id, now that a
-   * session can be responsible for its focused character PLUS any
-   * placed `otherCharacters` entries at once.
-   */
-  private sessionCharacterIds = new Map<string, Set<string>>();
+  /** This room's own half of the activeCharacterSessions registry above -- which characterId each currently-connected session is currently FOCUSED on, so onLeave/focusCharacter can find and update the right entry. One characterId per session (whichever is focused right now), not a Set -- otherCharacters moved off PlayerState this round, so a session no longer "holds" more than its one focused characterId at a time. */
+  private sessionCharacterIds = new Map<string, string>();
 
   /**
    * MVP goal item 4 follow-up ("I can't add multiple instances of the
@@ -369,40 +401,98 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
    * each track their own HP independently instead of all sharing one
    * pool.
    *
-   * Deliberately EPHEMERAL -- room-scoped, in-memory only, never
-   * persisted to store.ts. Accepted limitation, not an oversight:
-   * monster instances are inherently per-encounter/per-session in
-   * spirit (unlike a player's own character sheet, which IS meant to
-   * persist), and persisting them would mean a whole new store.ts
-   * entity/REST surface for comparatively little benefit this round.
-   * Cleaned up on `removeCharacterInstance` and whenever a session
-   * disconnects with live instances still in its otherCharacters
-   * (onLeave).
+   * Real feedback, reversing last round's "deliberately ephemeral"
+   * call: "the tokens do not persist upon exiting and re-entering
+   * games... they should be stored and loaded with the page/world."
+   * This in-memory map is now just the LIVE working copy -- the real
+   * source of truth is `store.ts`'s `WorldRecord.placedCharacters`
+   * (each record's own `variableOverrides`), loaded back into this map
+   * at `onCreate` and written back out via `persistPlacedCharacters`
+   * after every mutation.
    */
-  instanceVariableOverrides = new Map<string, Record<string, number | string>>();
+  instanceVariableOverrides = new Map<string, Record<string, number>>();
 
-  /** The otherCharacters entry with this instanceId, across EVERY connected player in this room (not just one session) -- an admin may need to edit someone else's placed instance, same spirit as the admin override already allowed for setCharacterVariableValue/setStatusEffects/setCharacterToken. */
-  private findInstance(instanceId: string): OtherCharacterStateType | undefined {
-    for (const player of this.state.players.values()) {
-      const found = player.otherCharacters.find((o) => o.instanceId === instanceId);
-      if (found) return found;
+  /**
+   * The FOCUSED-slot counterpart to instanceVariableOverrides above --
+   * real request, found live testing multiple instances of the same
+   * character: "if you click your currently controlled character, it
+   * only affects that token... instead of all the others." Editing
+   * your own live bars used to write straight through to the shared
+   * CharacterRecord (`store.updateCharacterVariableValue` +
+   * `notifyCharacterSheetChanged`), which is exactly right for an
+   * actual character-SHEET edit (that's still how the REST sheet
+   * editor behaves), but wrong for "I clicked an HP bar on the body
+   * I'm physically piloting right now" -- that retroactively reset
+   * every OTHER placed instance (and session) of the same character
+   * that didn't have its own deviation yet. Keyed by sessionId, not
+   * characterId/instanceId -- the focused slot has no stable identity
+   * of its own beyond "whichever session is piloting it right now."
+   * Carried across a focus swap in BOTH directions, same spirit as
+   * instanceVariableOverrides' own persistence: swapping AWAY moves
+   * this session's current deltas onto the new otherCharacters
+   * snapshot's own instanceVariableOverrides entry (so they stay
+   * protected once you're no longer the one piloting them); swapping
+   * INTO an instance that already has its own deltas moves them the
+   * other way, into this map, instead of promoting them into the
+   * shared record the way focusCharacter used to. Never persisted to
+   * disk on its own (unlike instance overrides) -- there's nothing to
+   * reload against once nobody's in the focused slot, and unlike a
+   * swap, disconnecting leaves nowhere to carry a live deviation to
+   * (the focused slot isn't an otherCharacters entry, just this
+   * session's own presence) -- onLeave bakes whatever's left here into
+   * the permanent record instead, so a real edit still survives a
+   * refresh, same as before this map existed.
+   */
+  focusedVariableOverrides = new Map<string, Record<string, number>>();
+
+  /** Which characterIds THIS room is currently registered under in the module-level `activeCharacterRooms` map -- tracked so `onDispose` can remove this room from exactly those entries (and only those) when the room is destroyed. */
+  private registeredRoomCharacterIds = new Set<string>();
+
+  /** Keeps `activeCharacterRooms` (module-level) and `registeredRoomCharacterIds` (this room's own bookkeeping of it) in sync for one characterId, by simply re-deriving "does this room still have ANY placed instance of it" from current Schema state -- called after every otherCharacters mutation that could have added or removed the last instance of a given characterId. */
+  private syncCharacterRoomRegistration(characterId: string): void {
+    const stillPresent = this.state.otherCharacters.some((o) => o.characterId === characterId);
+    if (stillPresent) {
+      this.registeredRoomCharacterIds.add(characterId);
+      const rooms = activeCharacterRooms.get(characterId) ?? new Set<WorldRoom>();
+      rooms.add(this);
+      activeCharacterRooms.set(characterId, rooms);
+    } else {
+      this.registeredRoomCharacterIds.delete(characterId);
+      const rooms = activeCharacterRooms.get(characterId);
+      if (!rooms) return;
+      rooms.delete(this);
+      if (rooms.size === 0) activeCharacterRooms.delete(characterId);
     }
-    return undefined;
   }
 
-  /** Registers (room, sessionId) as responsible for characterId in BOTH the per-room and the cross-room registries -- used at join (the focused character) and placeCharacter (a newly-placed otherCharacters entry). A characterId already registered for this session is a no-op (Set-backed). */
+  /** Serializes this room's CURRENT otherCharacters (+ each one's own override deltas) and writes the whole list to store.ts -- called after every place/remove/instance-edit/focus-swap. Whole-list overwrite, not a diff, same shape as store.ts's own setPlacedCharactersForWorld (and setWorldRespawnAnchor before it). */
+  private persistPlacedCharacters(): void {
+    const records: PlacedCharacterInstanceRecord[] = this.state.otherCharacters.map((o) => ({
+      instanceId: o.instanceId,
+      characterId: o.characterId,
+      placedByAccountId: o.placedByAccountId,
+      x: o.x,
+      y: o.y,
+      z: o.z,
+      yaw: o.yaw,
+      tokenColor: [o.tokenColorR, o.tokenColorG, o.tokenColorB],
+      statusEffects: Array.from(o.statusEffects).map((e) => ({ icon: e.icon, label: e.label })),
+      variableOverrides: this.instanceVariableOverrides.get(o.instanceId) ?? {},
+    }));
+    store.setPlacedCharactersForWorld(this.worldId, records);
+  }
+
+  /** Registers (room, sessionId) as the session CURRENTLY FOCUSED on characterId -- used at join and on every focus swap (focusCharacter). Each session only ever has ONE focused characterId at a time (unlike the room-level registry above, which can have several placed instances) -- callers always pair this with unregisterActiveCharacter for whatever characterId the session was PREVIOUSLY focused on. */
   private registerActiveCharacter(sessionId: string, characterId: string): void {
-    const ids = this.sessionCharacterIds.get(sessionId) ?? new Set<string>();
-    ids.add(characterId);
-    this.sessionCharacterIds.set(sessionId, ids);
+    this.sessionCharacterIds.set(sessionId, characterId);
     const sessions = activeCharacterSessions.get(characterId) ?? new Set();
     sessions.add({ room: this, sessionId });
     activeCharacterSessions.set(characterId, sessions);
   }
 
-  /** The inverse of registerActiveCharacter -- used by onLeave (every characterId the session held) and removeCharacterInstance (just the one deleted entry). */
+  /** The inverse of registerActiveCharacter -- used by onLeave and by focusCharacter (for whatever characterId the session is FOCUSED-AWAY-FROM). */
   private unregisterActiveCharacter(sessionId: string, characterId: string): void {
-    this.sessionCharacterIds.get(sessionId)?.delete(characterId);
+    this.sessionCharacterIds.delete(sessionId);
     const sessions = activeCharacterSessions.get(characterId);
     if (!sessions) return;
     for (const entry of sessions) {
@@ -458,6 +548,45 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.state.respawnAnchorX = world.respawnAnchor.x;
       this.state.respawnAnchorY = world.respawnAnchor.y;
       this.state.respawnAnchorZ = world.respawnAnchor.z;
+    }
+
+    // MVP goal item 4 follow-up -- real bug found live: "the tokens do
+    // not persist upon exiting and re-entering games, so if gms/players
+    // refresh, then monsters will disappear." Loads every persisted
+    // instance for this world back into live Schema state, synchronous
+    // (store.ts is a synchronous JSON-file store, same as the
+    // respawnAnchor seeding right above), re-resolving bars/body size
+    // fresh against the character's CURRENT sheet + this instance's own
+    // overrides (never persisted redundantly -- see
+    // PlacedCharacterInstanceRecord's own doc). A character record
+    // deleted since this was last saved is skipped, not a crash -- same
+    // "stale id, not an error" convention as every other lookup here.
+    for (const record of world?.placedCharacters ?? []) {
+      const character = store.getCharacter(record.characterId);
+      if (!character) continue;
+      const other = new OtherCharacterState();
+      other.instanceId = record.instanceId;
+      other.characterId = record.characterId;
+      other.characterName = character.name;
+      other.placedByAccountId = record.placedByAccountId;
+      other.x = record.x;
+      other.y = record.y;
+      other.z = record.z;
+      other.yaw = record.yaw;
+      other.tokenColorR = record.tokenColor[0];
+      other.tokenColorG = record.tokenColor[1];
+      other.tokenColorB = record.tokenColor[2];
+      for (const effect of record.statusEffects) {
+        const effectState = new StatusEffectState();
+        effectState.icon = effect.icon;
+        effectState.label = effect.label;
+        other.statusEffects.push(effectState);
+      }
+      if (Object.keys(record.variableOverrides).length > 0) this.instanceVariableOverrides.set(record.instanceId, record.variableOverrides);
+      applyBarsToCharacterTarget(other, character, record.variableOverrides);
+      applyBodySizeToCharacterTarget(other, character, record.variableOverrides);
+      this.state.otherCharacters.push(other);
+      this.syncCharacterRoomRegistration(record.characterId);
     }
 
     // Admin-only: sets the shared respawn anchor (Schema fields, auto-
@@ -568,7 +697,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     //
     // MVP goal item 4 follow-up ("multiple instances... for monsters"):
     // an `instanceId` routes this edit to ONE placed instance's own
-    // ephemeral override instead -- never touching the shared
+    // persisted override instead -- never touching the shared
     // CharacterRecord, never visible to any other instance or the
     // focused slot. See instanceVariableOverrides's own doc.
     this.onMessage<SetCharacterVariableValueMessage>("setCharacterVariableValue", (client, { characterId, instanceId, variableId, value }) => {
@@ -576,8 +705,8 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       const isAdmin = this.adminSessionIds.has(client.sessionId);
 
       if (instanceId) {
-        if (!isSendersOwnInstance(sender, instanceId) && !isAdmin) return;
-        const entry = this.findInstance(instanceId);
+        if (!isSendersOwnInstance(this.state.otherCharacters, sender, instanceId) && !isAdmin) return;
+        const entry = findInstance(this.state.otherCharacters, instanceId);
         if (!entry || entry.characterId !== characterId) return; // instanceId must actually belong to the claimed characterId -- sanity check, not just trust
         const character = store.getCharacter(characterId);
         if (!character) return;
@@ -585,28 +714,50 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
         this.instanceVariableOverrides.set(instanceId, overrides);
         applyBarsToCharacterTarget(entry, character, overrides);
         applyBodySizeToCharacterTarget(entry, character, overrides);
+        this.persistPlacedCharacters();
         return;
       }
 
-      if (!isSendersOwnCharacter(sender, characterId) && !isAdmin) return;
+      // Real request, found live testing multiple instances of the same
+      // character: "if you click your currently controlled character,
+      // it only affects that token... instead of all the others."
+      // Editing your OWN focused bars now deviates only THIS session's
+      // live copy (focusedVariableOverrides, same shape as an
+      // instance's own overrides) rather than writing through to the
+      // shared CharacterRecord -- a sheet-wide edit (the REST sheet
+      // editor, or an admin editing a DIFFERENT player's focused
+      // character below) is a deliberately separate path; it still
+      // writes the shared record and cascades, since there's no
+      // per-instance deviation to protect there.
+      if (isSendersOwnCharacter(sender, characterId)) {
+        const character = store.getCharacter(characterId);
+        if (!character) return;
+        const overrides = { ...(this.focusedVariableOverrides.get(client.sessionId) ?? {}), [variableId]: value };
+        this.focusedVariableOverrides.set(client.sessionId, overrides);
+        applyBarsToCharacterTarget(sender!, character, overrides);
+        applyBodySizeToCharacterTarget(sender!, character, overrides);
+        return;
+      }
+
+      if (!isAdmin) return;
       store.updateCharacterVariableValue(characterId, variableId, value);
       notifyCharacterSheetChanged(characterId);
     });
 
     // Backs the "Select status effects" context-menu item -- same
     // gating/instanceId routing as setCharacterVariableValue above.
-    // Non-instance path now only ever touches the FOCUSED slot (never
-    // loops over otherCharacters by characterId match any more) --
-    // once instances are independently editable, a base-record edit
-    // shouldn't retroactively repaint every placed instance that
-    // happens to share a characterId.
+    // Non-instance path only ever touches the FOCUSED slot (never loops
+    // over otherCharacters by characterId match) -- once instances are
+    // independently editable, a base-record edit shouldn't
+    // retroactively repaint every placed instance that happens to
+    // share a characterId.
     this.onMessage<SetStatusEffectsMessage>("setStatusEffects", (client, { characterId, instanceId, statusEffects }) => {
       const sender = this.state.players.get(client.sessionId);
       const isAdmin = this.adminSessionIds.has(client.sessionId);
 
       if (instanceId) {
-        if (!isSendersOwnInstance(sender, instanceId) && !isAdmin) return;
-        const entry = this.findInstance(instanceId);
+        if (!isSendersOwnInstance(this.state.otherCharacters, sender, instanceId) && !isAdmin) return;
+        const entry = findInstance(this.state.otherCharacters, instanceId);
         if (!entry || entry.characterId !== characterId) return;
         entry.statusEffects.clear();
         for (const effect of statusEffects) {
@@ -615,6 +766,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
           effectState.label = effect.label;
           entry.statusEffects.push(effectState);
         }
+        this.persistPlacedCharacters();
         return;
       }
 
@@ -640,12 +792,13 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       const isAdmin = this.adminSessionIds.has(client.sessionId);
 
       if (instanceId) {
-        if (!isSendersOwnInstance(sender, instanceId) && !isAdmin) return;
-        const entry = this.findInstance(instanceId);
+        if (!isSendersOwnInstance(this.state.otherCharacters, sender, instanceId) && !isAdmin) return;
+        const entry = findInstance(this.state.otherCharacters, instanceId);
         if (!entry || entry.characterId !== characterId) return;
         entry.tokenColorR = color[0];
         entry.tokenColorG = color[1];
         entry.tokenColorB = color[2];
+        this.persistPlacedCharacters();
         return;
       }
 
@@ -674,13 +827,23 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // want to do that for monsters for example." The old
     // find-an-existing-entry-by-characterId-and-move-it behavior is
     // gone; dragging the same character onto the world twice now
-    // places TWO independent instances, not one moved entry. Placing
-    // the currently-focused character itself still makes no sense (it
-    // already has a live position -- wherever you are) and is
-    // rejected.
+    // places TWO independent instances, not one moved entry. Pushed to
+    // the WORLD-level `otherCharacters` now (real feedback: placed
+    // instances need to survive the placing session disconnecting, not
+    // just exist for as long as it's connected).
+    //
+    // Real correction: a previous round rejected placing the character
+    // you're CURRENTLY focused on ("it already has a live position,
+    // wherever you are") -- that made sense back when characterId alone
+    // was an instance's identity (there was only ever "one Bob" to
+    // place), but it's wrong now: "if you're controlling an instance of
+    // 'bob' and you drag in another 'bob', that should still work."
+    // Placing another instance of your own focused character is just
+    // as valid as placing any other character you own -- no special
+    // case needed any more.
     this.onMessage<PlaceCharacterMessage>("placeCharacter", (client, { characterId, x, y, z }) => {
       const sender = this.state.players.get(client.sessionId);
-      if (!sender || characterId === sender.characterId) return;
+      if (!sender) return;
       const character = store.getCharacter(characterId);
       if (!character || character.ownerAccountId !== sender.accountId) return;
 
@@ -693,6 +856,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       other.instanceId = newInstanceId();
       other.characterId = character.id;
       other.characterName = character.name;
+      other.placedByAccountId = sender.accountId;
       other.tokenColorR = character.token.color[0];
       other.tokenColorG = character.token.color[1];
       other.tokenColorB = character.token.color[2];
@@ -707,67 +871,117 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       other.z = z;
       applyBarsToCharacterTarget(other, character);
       applyBodySizeToCharacterTarget(other, character);
-      sender.otherCharacters.push(other);
-      this.registerActiveCharacter(client.sessionId, characterId);
+      this.state.otherCharacters.push(other);
+      this.syncCharacterRoomRegistration(characterId);
+      this.persistPlacedCharacters();
     });
 
-    // MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling): self-only
-    // (must be one of the SENDER'S OWN placed otherCharacters entries --
-    // no-op, not an error, if it isn't one of theirs at all). Swaps the
-    // currently-focused character's live data into a fresh
-    // otherCharacters entry, and the target's stored data onto the
-    // top-level focused fields -- never a different physics entity
-    // (noa.playerEntity stays the one and only), purely a client-side
-    // teleport+relabel in response to this. Keyed by `instanceId`, not
-    // `characterId` -- see FocusCharacterMessage's own doc for why.
-    // `direction` decides where the old focus goes back in -- see that
-    // same doc for why this has to be explicit, not inferred, for
-    // Tab/Shift+Tab to be true inverses.
+    // MVP goal item 4 follow-up (Tab/Shift+Tab focus cycling, and now
+    // the right-click "Control" item -- same message/handler for both,
+    // "direction" is the only thing that differs, see
+    // FocusCharacterMessage's own doc). Self-only (must be a
+    // world-level otherCharacters entry THIS SENDER placed -- no-op,
+    // not an error, otherwise). Swaps the currently-focused character's
+    // live data into a fresh otherCharacters entry, and the target's
+    // stored data onto the top-level focused fields -- never a
+    // different physics entity (noa.playerEntity stays the one and
+    // only), purely a client-side teleport+relabel in response to
+    // this.
+    //
+    // Real request: "for tab/shift tab/control swapping from context,
+    // those should thus set the character sheet details from the
+    // token" -- `applyOtherCharacterAsFocused` below copies the
+    // target's own current bars straight across, so the focused slot
+    // immediately reflects whatever body you're piloting (the reverse
+    // direction -- a sheet edit refreshing the focused token's bars --
+    // already worked via notifyCharacterSheetChanged, unrelated to
+    // this). This USED to also merge the target's own override deltas
+    // into the character's PERMANENT sheet record, but a later, real
+    // correction found that just as wrong as a direct bar edit cascading
+    // to every other placed instance ("if you click your currently
+    // controlled character, it only affects that token... instead of
+    // all the others") -- see focusedVariableOverrides' own doc.
+    // Swapping now just moves a live deviation between
+    // focusedVariableOverrides and instanceVariableOverrides, in
+    // whichever direction matches which side of the swap it's on; the
+    // shared record is never touched by a swap at all.
+    // Re-points this session's FOCUSED-slot registration at the new
+    // characterId too (activeCharacterSessions) -- without that, a
+    // sheet edit to whatever you just switched TO would stop reaching
+    // this session.
     this.onMessage<FocusCharacterMessage>("focusCharacter", (client, { instanceId, direction }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      const targetIndex = sender.otherCharacters.findIndex((o) => o.instanceId === instanceId);
+      const targetIndex = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
       if (targetIndex === -1) return;
 
-      const target = sender.otherCharacters[targetIndex];
+      const target = this.state.otherCharacters[targetIndex];
+      const previousCharacterId = sender.characterId;
+
+      // Move any live deviation across the swap boundary -- never
+      // through the shared record (see focusedVariableOverrides' own
+      // doc). The outgoing side's deltas (if any) become the fresh
+      // otherCharacters snapshot's own instance override below; the
+      // incoming side's instance deltas (if any) become THIS session's
+      // focused-slot override instead.
+      const previousFocusedOverrides = this.focusedVariableOverrides.get(client.sessionId);
+      const targetOverrides = this.instanceVariableOverrides.get(target.instanceId);
+      this.instanceVariableOverrides.delete(target.instanceId);
+      this.focusedVariableOverrides.delete(client.sessionId);
+      if (targetOverrides) this.focusedVariableOverrides.set(client.sessionId, targetOverrides);
+
       const previouslyFocused = snapshotFocusedCharacter(sender);
       applyOtherCharacterAsFocused(sender, target);
-      sender.otherCharacters.splice(targetIndex, 1);
-      if (direction === "previous") sender.otherCharacters.unshift(previouslyFocused);
-      else sender.otherCharacters.push(previouslyFocused);
+      if (previousFocusedOverrides) this.instanceVariableOverrides.set(previouslyFocused.instanceId, previousFocusedOverrides);
+      this.state.otherCharacters.splice(targetIndex, 1);
+      if (direction === "previous") this.state.otherCharacters.unshift(previouslyFocused);
+      else this.state.otherCharacters.push(previouslyFocused);
+
+      this.unregisterActiveCharacter(client.sessionId, previousCharacterId);
+      this.registerActiveCharacter(client.sessionId, target.characterId);
+      this.syncCharacterRoomRegistration(target.characterId);
+      this.syncCharacterRoomRegistration(previouslyFocused.characterId);
+      this.persistPlacedCharacters();
     });
 
     // MVP goal item 4 follow-up (right-click context menu "Delete
     // instance"): removes the LIVE 3D instance only -- never the
     // character record or its game link (those are PR A's REST-backed
     // deleteCharacter/unlinkCharacterFromGame, a completely separate
-    // action). Self-only. Keyed by `instanceId`, not `characterId` --
-    // see RemoveCharacterInstanceMessage's own doc: this can no longer
-    // even ADDRESS the focused slot (it has no instanceId), so "can't
+    // action). Self-only (must be a world-level entry THIS SENDER
+    // placed). Keyed by `instanceId`, not `characterId` -- see
+    // RemoveCharacterInstanceMessage's own doc: this can no longer even
+    // ADDRESS the focused slot (it has no instanceId), so "can't
     // delete the character you're controlling" (real request: "that
     // keeps at least one controllable instance") is now structural,
     // not a separate check to maintain.
     this.onMessage<RemoveCharacterInstanceMessage>("removeCharacterInstance", (client, { instanceId }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      const index = sender.otherCharacters.findIndex((o) => o.instanceId === instanceId);
+      const index = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
       if (index === -1) return;
 
-      const [removed] = sender.otherCharacters.splice(index, 1);
+      const [removed] = this.state.otherCharacters.splice(index, 1);
       this.instanceVariableOverrides.delete(instanceId);
-      // MVP goal item 4 follow-up: multiple instances (and/or the
-      // focused slot) can share a characterId now -- only unregister
-      // it if THIS was the session's last live representation of that
-      // character, otherwise notifyCharacterSheetChanged would stop
-      // reaching this session for its remaining instance(s).
-      const stillHasCharacter = sender.characterId === removed.characterId || sender.otherCharacters.some((o) => o.characterId === removed.characterId);
-      if (!stillHasCharacter) this.unregisterActiveCharacter(client.sessionId, removed.characterId);
+      this.syncCharacterRoomRegistration(removed.characterId);
+      this.persistPlacedCharacters();
     });
   }
 
   async onDispose() {
     this.storage.close();
     for (const modId of this.loadedModIds) await this.modLoader.unloadMod(modId);
+    // This room is going away -- remove it from every characterId entry
+    // in the module-level activeCharacterRooms registry it was part of
+    // (placed instances themselves are fine, already persisted; this is
+    // purely cleaning up the in-process routing index so it doesn't
+    // leak a reference to a dead room).
+    for (const characterId of this.registeredRoomCharacterIds) {
+      const rooms = activeCharacterRooms.get(characterId);
+      if (!rooms) continue;
+      rooms.delete(this);
+      if (rooms.size === 0) activeCharacterRooms.delete(characterId);
+    }
   }
 
   onJoin(client: Client, options?: JoinOptions) {
@@ -822,26 +1036,32 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   }
 
   onLeave(client: Client) {
-    // MVP goal item 4 follow-up: the Schema side of a disconnecting
-    // session's placed instances is cleaned up for free below (the
-    // whole PlayerState, otherCharacters included, is deleted) -- but
-    // instanceVariableOverrides is a SEPARATE, non-Schema map, so each
-    // instanceId has to be cleared explicitly here first, before that
-    // list disappears.
-    const leavingPlayer = this.state.players.get(client.sessionId);
-    if (leavingPlayer) {
-      for (const other of leavingPlayer.otherCharacters) this.instanceVariableOverrides.delete(other.instanceId);
+    // MVP goal item 4 follow-up: otherCharacters is world-level now (not
+    // per-session), so a disconnecting session's placed instances are
+    // NOT touched here at all -- that's the actual point ("if gms/
+    // players refresh, then monsters will disappear" is exactly the bug
+    // this round fixes). Only the FOCUSED-slot registry needs cleanup.
+    const characterId = this.sessionCharacterIds.get(client.sessionId);
+    // The focused slot itself has nowhere to go on disconnect -- it's
+    // not an otherCharacters entry, just this session's own live
+    // presence, so there's no instance to carry a live deviation into
+    // the way a focus SWAP does (see focusedVariableOverrides' own
+    // doc). Bake whatever it ended up at into the permanent record
+    // instead, same as every edit used to do immediately before that
+    // isolation existed -- otherwise a real edit (take damage, then
+    // refresh) would simply vanish instead of surviving like the rest
+    // of this round's persistence work expects.
+    const overrides = this.focusedVariableOverrides.get(client.sessionId);
+    if (overrides && characterId) {
+      for (const [key, value] of Object.entries(overrides)) {
+        store.updateCharacterVariableValue(characterId, key, value);
+      }
+      this.focusedVariableOverrides.delete(client.sessionId);
+      notifyCharacterSheetChanged(characterId);
     }
     this.state.players.delete(client.sessionId);
     this.adminSessionIds.delete(client.sessionId);
-    // MVP goal item 4 follow-up: a session can now hold more than one
-    // characterId (focused + any placed otherCharacters) -- unregister
-    // all of them, not just one.
-    const characterIds = this.sessionCharacterIds.get(client.sessionId);
-    if (characterIds) {
-      for (const characterId of characterIds) this.unregisterActiveCharacter(client.sessionId, characterId);
-      this.sessionCharacterIds.delete(client.sessionId);
-    }
+    if (characterId) this.unregisterActiveCharacter(client.sessionId, characterId);
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }
 }
