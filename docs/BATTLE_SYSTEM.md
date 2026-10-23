@@ -81,14 +81,26 @@ several independent placed instances (five goblins sharing one
 
 Concretely:
 
-- A character sheet exposes an **"Initiative Roll"** action. Pressing
-  it computes a value (reusing item 0's existing dice-notation
-  evaluator -- a per-sheet dice-formula field is the simplest version
-  that's actually buildable today, since item 0's `[[notation+var]]`
-  variable interpolation isn't built yet either).
-- That action operates on **whichever instance the pressing session is
-  currently piloting** -- `focusCycling.ts`'s Tab/Shift+Tab/Control
-  "currently controlling" concept, which now actually exists.
+- **Real correction**: "Initiative Roll" is NOT its own bespoke,
+  fixed, one-per-sheet feature. The actual building block is making
+  `[[notation]]` (item 0's existing dice notation, used today for
+  inline chat-message evaluation) callable as a general **function**
+  that calls the SAME rolling system chat already uses, returning a
+  plain number -- not a one-off reimplementation scoped just to
+  initiative. Direct correction: "just add `[[]]` roll eval as a
+  function that calls the rolling system we already have... then we
+  can give the result to any other function that uses it as well,
+  which would be an 'initiative' function in this case." Once that
+  primitive exists, "Initiative Roll" is just a sheet action composed
+  from two already-general pieces: evaluate a `[[...]]` expression
+  (the roll), then hand the result to "submit this value for the
+  currently-piloted instance to the turn tracker" -- and the SAME
+  roll-eval primitive is reusable by whatever else ends up wanting a
+  computed number later, not re-derived per feature.
+- That submit-to-tracker step operates on **whichever instance the
+  pressing session is currently piloting** --
+  `focusCycling.ts`'s Tab/Shift+Tab/Control "currently controlling"
+  concept, which now actually exists.
 - The result is sent, as one unit, to the turn tracker: `{instance
   identity, roll value}`. The tracker inserts or updates that
   instance's own entry and keeps the whole list sorted by roll value
@@ -385,11 +397,7 @@ Feature: Waypoint distance measurement
    (no roll value) needs *some* defined position relative to rolled
    entries -- sort to one end, keep it pinned wherever manually placed,
    or something else. Not specified above.
-2. **Initiative-roll formula source**: a plain per-sheet dice-notation
-   string is the simplest version buildable today (item 0's variable
-   interpolation isn't built yet). Whether it needs to be more dynamic
-   than that for v1 is open.
-3. **Sort-direction default**: high-to-low vs. low-to-high -- confirmed
+2. **Sort-direction default**: high-to-low vs. low-to-high -- confirmed
    configurable, not which one is the default.
-4. **"Reset char"/GM-reset keybind**, if any, is explicitly deferred
+3. **"Reset char"/GM-reset keybind**, if any, is explicitly deferred
    ("we'll decide a keybind later") -- not blocking this pass.
