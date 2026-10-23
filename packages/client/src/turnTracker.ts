@@ -267,11 +267,29 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
   // default `display: none`, same as a never-toggled panel.
   if (visible) panel.style.display = "block";
 
+  /**
+   * Real bug found live, 2026-10-23: net.ts polls `update()` every noa
+   * tick (the same "fresh every tick, no .listen()" idiom this file's
+   * own header cites), but `renderAll()` unconditionally tore down and
+   * rebuilt every button/row via `innerHTML = ...` -- 60 times a
+   * second regardless of whether anything actually changed. Replacing
+   * a button's own DOM node out from under an active `:hover` is what
+   * produced the reported "flashes lighter and darker quickly"
+   * flicker. Skips the rebuild entirely when the entries/current
+   * index/round are unchanged from the last call.
+   */
+  function entriesEqual(a: TurnOrderEntryLike[], b: TurnOrderEntryLike[]): boolean {
+    if (a.length !== b.length) return false;
+    return a.every((entry, i) => entry.turnEntryId === b[i].turnEntryId && entry.label === b[i].label && entry.hasRollValue === b[i].hasRollValue && entry.rollValue === b[i].rollValue);
+  }
+
   return {
     update(entries: TurnOrderEntryLike[], currentIndex: number, round: number): void {
+      const unchanged = currentIndex === lastCurrentIndex && round === lastRound && entriesEqual(entries, lastEntries);
       lastEntries = entries;
       lastCurrentIndex = currentIndex;
       lastRound = round;
+      if (unchanged) return;
       renderAll();
     },
     setVisible(nextVisible: boolean): void {

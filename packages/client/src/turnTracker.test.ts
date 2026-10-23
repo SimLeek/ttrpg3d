@@ -78,6 +78,29 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector("#turn-tracker-info")!.textContent).toBe("Round 2 -- B's turn");
   });
 
+  it("does NOT rebuild the DOM when update() is called again with unchanged data -- real bug found live: net.ts polls update() every tick, and an unconditional rebuild replaced button nodes out from under an active :hover, reproduced as \"the button flashes lighter and darker quickly\"", () => {
+    const { tracker } = mount();
+    tracker.update([entry("1", "A"), entry("2", "B")], 0, 1);
+    const rowBefore = container.querySelector<HTMLLIElement>(".turn-tracker-entry")!;
+    const nextBtnBefore = container.querySelector<HTMLButtonElement>("#turn-tracker-next-btn")!;
+
+    tracker.update([entry("1", "A"), entry("2", "B")], 0, 1); // identical data, same shape -- e.g. a tick where nothing changed
+
+    expect(container.querySelector<HTMLLIElement>(".turn-tracker-entry")).toBe(rowBefore); // same node, not torn down and rebuilt
+    expect(container.querySelector<HTMLButtonElement>("#turn-tracker-next-btn")).toBe(nextBtnBefore);
+  });
+
+  it("DOES rebuild when a roll value, the current index, or the round actually changes", () => {
+    const { tracker } = mount();
+    tracker.update([entry("1", "A", 10), entry("2", "B")], 0, 1);
+    const rowBefore = container.querySelector<HTMLLIElement>(".turn-tracker-entry")!;
+
+    tracker.update([entry("1", "A", 11), entry("2", "B")], 0, 1); // roll value changed
+
+    expect(container.querySelector<HTMLLIElement>(".turn-tracker-entry")).not.toBe(rowBefore);
+    expect(container.querySelector(".turn-tracker-entry-roll")!.textContent).toBe("11");
+  });
+
   it("shows a roll value for entries that have one, and nothing for entries that don't", () => {
     const { tracker } = mount();
     tracker.update([entry("1", "RolledGoblin", 14), entry("2", "ManualAdd")], 0, 1);
