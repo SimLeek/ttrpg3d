@@ -548,10 +548,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       other.characterId = record.characterId;
       other.characterName = character.name;
       other.placedByAccountId = record.placedByAccountId;
-      other.x = record.x;
-      other.y = record.y;
-      other.z = record.z;
-      other.yaw = record.yaw;
+      // Real bug found live, 2026-10-23: a client-side NaN from the
+      // PlayerState/OtherCharacterState refactor got persisted to disk
+      // before the "pos" handler's own validation (above) existed --
+      // JSON.stringify turns NaN into null, so a record already
+      // corrupted this way loads back as `null`, not `NaN`, and would
+      // otherwise reproduce the exact same "infinite blue space"
+      // symptom forever. Self-heals any already-corrupted record on
+      // load by falling back to a safe spawn position instead of
+      // propagating the bad value -- the same fallback a genuinely
+      // fresh join gets.
+      const [sx, sy, sz] = Number.isFinite(record.x) && Number.isFinite(record.y) && Number.isFinite(record.z) ? [record.x, record.y, record.z] : spawnPositionFor(this.worldId, this.worldGen);
+      other.x = sx;
+      other.y = sy;
+      other.z = sz;
+      other.yaw = Number.isFinite(record.yaw) ? record.yaw : 0;
       other.tokenColorR = record.tokenColor[0];
       other.tokenColorG = record.tokenColor[1];
       other.tokenColorB = record.tokenColor[2];
@@ -682,6 +693,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.onMessage<PlayerInput>("pos", (client, { x, y, z, yaw }) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
+      // Real bug found live, 2026-10-23: a client-side NaN (the
+      // PlayerState/OtherCharacterState refactor briefly teleported a
+      // resuming player to [undefined, undefined, undefined]) got sent
+      // here, written straight into Schema state, then PERSISTED on
+      // that session's leave (persistPlacedCharacters) -- corrupting
+      // this instance's position on disk permanently (JSON.stringify
+      // turns NaN into null), reproduced as "infinite blue
+      // space... character disappears" on every subsequent resume,
+      // even after the client bug itself was fixed. Never trust a
+      // client-reported position blindly (same "never trusted
+      // blindly" convention every other id/value in this file already
+      // follows) -- silently dropping a non-finite update is a safe
+      // no-op, leaving the last good position in place instead of
+      // corrupting it.
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(yaw)) return;
       player.currentInstance.x = x;
       player.currentInstance.y = y;
       player.currentInstance.z = z;
