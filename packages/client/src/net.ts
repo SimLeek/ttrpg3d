@@ -648,6 +648,7 @@ export async function connectAndStreamWorld(
   });
 
   let lastPersistedCharacterId: string | null = null;
+  let lastLocalBodyColor: [number, number, number] | null = null;
   noa.on("tick", () => {
     // GM-only chat tab's seeThroughWalls checkbox (chatPanel.ts): poll
     // the room's own Schema-synced value fresh every tick, same idiom
@@ -707,18 +708,35 @@ export async function connectAndStreamWorld(
         // tabbing through, so changing to blue because selected/
         // controlled, and changing to blue shouldn't even be a thing."
         // The local body's own material was a FIXED blue, set ONCE at
-        // creation (playerBodyMesh.ts's installPlayerBodyMesh) and
-        // never touched again -- a leftover from before per-character
-        // custom colors existed. Remote players' and otherCharacters'
-        // boxes already reassign their material color every tick from
-        // their own tokenColor; the local one just never did, so an
-        // edited color was already applied server-side but invisible
-        // while you were the one focused on it -- only showing up once
-        // Tab/Control made it an otherCharacters entry instead (which
-        // DOES respect the real color). Characterless join keeps the
-        // original fixed blue (still useful for telling yourself apart
-        // from a nearby remote player when there's no real color to use).
-        playerBodyMesh.material.diffuseColor = p.characterId ? new BABYLON.Color3(p.tokenColorR, p.tokenColorG, p.tokenColorB) : new BABYLON.Color3(0.3, 0.5, 0.9);
+        // creation (playerBodyMesh.ts's installPlayerBodyMesh). The
+        // natural fix -- reassigning `.diffuseColor` on that SAME
+        // material object every tick, the exact pattern remote players'/
+        // otherCharacters' materials already use successfully -- turned
+        // out NOT to work, confirmed by direct experiment, not a guess:
+        // a live console check showed the property correctly holding
+        // the target character's color the entire time, yet the mesh
+        // kept rendering the original creation-time blue regardless.
+        // Swapping in a BRAND NEW StandardMaterial with that same color
+        // renders correctly immediately. The likely difference: this is
+        // the only body box attached to a PRE-EXISTING entity
+        // (`noa.playerEntity`, via a raw `addComponent` call) rather
+        // than a fresh entity from `noa.entities.add()` like every
+        // remote/other box -- something about that path appears to pin
+        // the mesh's initial material in a way plain property mutation
+        // can't undo. Rather than chase that further, swap in a fresh
+        // material whenever the color actually needs to change (not
+        // every tick -- that leaks a new material object per frame).
+        const localBodyR = p.characterId ? p.tokenColorR : 0.3;
+        const localBodyG = p.characterId ? p.tokenColorG : 0.5;
+        const localBodyB = p.characterId ? p.tokenColorB : 0.9;
+        if (!lastLocalBodyColor || lastLocalBodyColor[0] !== localBodyR || lastLocalBodyColor[1] !== localBodyG || lastLocalBodyColor[2] !== localBodyB) {
+          lastLocalBodyColor = [localBodyR, localBodyG, localBodyB];
+          const freshMaterial = new BABYLON.StandardMaterial("local-player-body-mat", scene);
+          freshMaterial.diffuseColor = new BABYLON.Color3(localBodyR, localBodyG, localBodyB);
+          playerBodyMesh.mesh.material?.dispose();
+          playerBodyMesh.mesh.material = freshMaterial;
+          playerBodyMesh.material = freshMaterial;
+        }
 
         // Real bug found live: "the currently controlled character is
         // always blue" after a hard refresh. Root cause wasn't this
