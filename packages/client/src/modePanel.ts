@@ -11,10 +11,11 @@
 // Default/Select are real, wired to game.ts's RunningGame.setPointerLock
 // (default = pointer-locked FPS-style look; select = cursor free to
 // click UI). Distance-measurement and Turn-tracker are the real Phase 9
-// (battle system) modes -- VISIBLE here but deliberately STUBBED
-// (disabled, no handler) per explicit scope decision: their real
-// behavior isn't built yet, and building it is a much larger, separate
-// task, not something to half-wire just because this panel exists.
+// (battle system) modes. "Turns" is now real (docs/BATTLE_SYSTEM.md
+// phase 1, turnTracker.ts) -- toggles that widget's own visibility.
+// "Distance" stays deliberately STUBBED (disabled, no handler) --
+// the waypoint/distance system is a later phase of the same doc, not
+// built yet.
 //
 // Collapsible (real user request, same session chat's own drag-resize
 // correction landed in) -- publishes its OWN live width to
@@ -35,6 +36,8 @@ export interface ModePanelOptions {
   setPointerLock: (locked: boolean) => void;
   /** See game.ts's RunningGame.onPointerLockChange -- keeps this panel's own highlight correct even when the BROWSER force-exits lock via Escape, not just when one of this panel's own buttons is clicked. */
   onPointerLockChange: (cb: (locked: boolean) => void) => () => void;
+  /** docs/BATTLE_SYSTEM.md phase 1 -- toggles the turn tracker widget's own visibility (net.ts's WorldConnection.toggleTurnTracker). The widget owns its own visible/hidden state; this button doesn't track or reflect it. */
+  onToggleTurnTracker: () => void;
 }
 
 export interface ModePanelController {
@@ -60,7 +63,7 @@ export function mountModePanel(container: HTMLElement, options: ModePanelOptions
       <button class="mode-btn" id="mode-default" type="button" title="Pointer-locked FPS-style look">Default</button>
       <button class="mode-btn" id="mode-select" type="button" title="Free cursor to click UI">Select</button>
       <button class="mode-btn" id="mode-distance" type="button" disabled title="Coming with the battle system">Distance</button>
-      <button class="mode-btn" id="mode-turns" type="button" disabled title="Coming with the battle system">Turns</button>
+      <button class="mode-btn" id="mode-turns" type="button" title="Show/hide the turn-order tracker">Turns</button>
       <button class="mode-toggle" id="mode-toggle" type="button" title="Collapse/expand mode panel">&#x25C0;</button>
     </div>
   `;
@@ -69,6 +72,7 @@ export function mountModePanel(container: HTMLElement, options: ModePanelOptions
   const toggle = container.querySelector<HTMLButtonElement>("#mode-toggle")!;
   const defaultBtn = container.querySelector<HTMLButtonElement>("#mode-default")!;
   const selectBtn = container.querySelector<HTMLButtonElement>("#mode-select")!;
+  const turnsBtn = container.querySelector<HTMLButtonElement>("#mode-turns")!;
 
   function render(locked: boolean): void {
     defaultBtn.classList.toggle("active", locked);
@@ -78,6 +82,7 @@ export function mountModePanel(container: HTMLElement, options: ModePanelOptions
 
   defaultBtn.addEventListener("click", () => options.setPointerLock(true));
   selectBtn.addEventListener("click", () => options.setPointerLock(false));
+  turnsBtn.addEventListener("click", () => options.onToggleTurnTracker());
 
   let collapsed = false;
   function publishWidth(): void {

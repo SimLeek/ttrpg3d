@@ -20,6 +20,7 @@ import { mountPageManager } from "./pageManager.js";
 import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type CharacterTokenBarData, type HoveredBar } from "./characterToken.js";
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
+import { mountTurnTracker, type TurnTrackerController } from "./turnTracker.js";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, type PlayerBodyMesh } from "./playerBodyMesh.js";
 import { CHARACTER_STORAGE_KEY } from "./api.js";
@@ -104,9 +105,19 @@ interface RemotePlayerLike {
 }
 
 /** The shape of `room.state` this file actually reads -- `players` (per-session) alongside the world-level `otherCharacters` array (see OtherCharacterLike's own doc for why this moved off PlayerState). */
+interface TurnOrderEntryLike {
+  turnEntryId: string;
+  label: string;
+  hasRollValue: boolean;
+  rollValue: number;
+}
+
 interface WorldStateLike {
   players?: Map<string, RemotePlayerLike>;
   otherCharacters?: OtherCharacterLike[];
+  turnOrder?: TurnOrderEntryLike[];
+  turnOrderCurrentIndex?: number;
+  turnOrderRound?: number;
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -125,6 +136,8 @@ export interface WorldConnection {
   leave(): void;
   /** GM-only chat tab (chatPanel.ts, via game.ts's RunningGame.setSeeThroughWalls) -- sends the admin-gated room message; WorldRoom.ts re-checks admin status server-side regardless of what this client claims. */
   setSeeThroughWalls(enabled: boolean): void;
+  /** modePanel.ts's "Turns" button, via game.ts -- toggles the turn tracker widget's own visibility. The widget owns its visibility state itself; this just flips it. */
+  toggleTurnTracker(): void;
 }
 
 export async function connectAndStreamWorld(
@@ -341,8 +354,32 @@ export async function connectAndStreamWorld(
       if (target) playerController.teleportTo([target.x, target.y, target.z]);
       room!.send("focusCharacter", { instanceId, direction: "next" });
     },
+    // docs/BATTLE_SYSTEM.md's UI/interaction reference -- Roll20's own
+    // "right-click a token, Add to Turn Order" pattern. `label` is
+    // ignored server-side when a real instanceId/characterId are both
+    // given (WorldRoom.ts's addToTurnOrder uses the instance's own
+    // real name instead) -- sent anyway only because the message shape
+    // requires it.
+    onAddToTurnOrder: (characterId, instanceId) => {
+      room!.send("addToTurnOrder", { label: "", instanceId, characterId });
+    },
   });
   let lastMenuOpenScreen = { x: 0, y: 0 };
+
+  // docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1 -- same
+  // floating-overlay mount pattern as the context menu just above.
+  // isGM reuses this file's own isAdmin() (defined earlier) rather
+  // than re-deriving admin status a second way.
+  const turnTrackerContainer = document.createElement("div");
+  document.body.appendChild(turnTrackerContainer);
+  const turnTracker = mountTurnTracker(turnTrackerContainer, {
+    isGM: isAdmin,
+    onAdd: (label) => room!.send("addToTurnOrder", { label }),
+    onRemove: (turnEntryId) => room!.send("removeFromTurnOrder", { turnEntryId }),
+    onClearAll: () => room!.send("clearTurnOrder"),
+    onNextTurn: () => room!.send("nextTurn"),
+    onReorder: (turnEntryId, newIndex) => room!.send("reorderTurnOrder", { turnEntryId, newIndex }),
+  });
 
   const statInputContainer = document.createElement("div");
   statInputContainer.style.cssText = "position:fixed;z-index:1001;";
@@ -673,6 +710,13 @@ export async function connectAndStreamWorld(
     const state = room.state as WorldStateLike | undefined;
     const players = state?.players;
     if (!players) return;
+    // docs/BATTLE_SYSTEM.md's turn-order tracker -- same fresh-every-
+    // tick poll idiom as seeThroughWalls just above.
+    turnTracker.update(
+      Array.from(state?.turnOrder ?? []).map((e) => ({ turnEntryId: e.turnEntryId, label: e.label, hasRollValue: e.hasRollValue, rollValue: e.rollValue })),
+      state?.turnOrderCurrentIndex ?? 0,
+      state?.turnOrderRound ?? 1,
+    );
     const seen = new Set<string>();
     for (const [sessionId, p] of players) {
       seen.add(sessionId);
@@ -991,6 +1035,8 @@ export async function connectAndStreamWorld(
       contextMenu.destroy();
       contextMenuContainer.remove();
       statInputContainer.remove();
+      turnTracker.destroy();
+      turnTrackerContainer.remove();
       for (const token of remoteTokens.values()) token.dispose();
       for (const material of remoteMaterials.values()) material.dispose();
       room.leave();
@@ -998,6 +1044,10 @@ export async function connectAndStreamWorld(
 
     setSeeThroughWalls(enabled: boolean): void {
       room.send("setSeeThroughWalls", { enabled });
+    },
+
+    toggleTurnTracker(): void {
+      turnTracker.setVisible(!turnTracker.isVisible());
     },
   };
 }

@@ -113,6 +113,36 @@ export interface WorldRecord {
    * anything in), not an error.
    */
   placedCharacters?: PlacedCharacterInstanceRecord[];
+  /**
+   * docs/BATTLE_SYSTEM.md's turn-order tracker -- same "in-memory
+   * Schema state alone doesn't survive a room being recreated, and
+   * must survive a disconnect/refresh/rejoin too" lesson
+   * placedCharacters above already taught this file. Write-through on
+   * every add/remove/clear/reorder/next-turn (WorldRoom.ts's own
+   * `persistTurnOrder`), loaded back in at the next onCreate.
+   * Undefined/missing is a real state (no turn order ever started in
+   * this world), not an error.
+   */
+  turnOrder?: {
+    entries: TurnOrderEntryRecord[];
+    currentIndex: number;
+    round: number;
+  };
+}
+
+/**
+ * The persisted half of WorldState.ts's `TurnOrderEntryState` -- a 1:1
+ * mirror, unlike PlacedCharacterInstanceRecord, since nothing here is
+ * derived/re-resolvable from elsewhere at load time (no bars/body-size
+ * equivalent to re-resolve against a character sheet).
+ */
+export interface TurnOrderEntryRecord {
+  turnEntryId: string;
+  label: string;
+  instanceId: string;
+  characterId: string;
+  hasRollValue: boolean;
+  rollValue: number;
 }
 
 /**
@@ -471,6 +501,15 @@ export function createStore(baseDir: string) {
       const world = worlds.find((w) => w.id === worldId);
       if (!world) return;
       world.placedCharacters = placed;
+      saveWorlds(worlds);
+    },
+
+    /** No-op if the world id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. Whole-state overwrite, same write-through-on-every-change shape as setPlacedCharactersForWorld -- WorldRoom.ts's own `persistTurnOrder` calls this after every add/remove/clear/reorder/next-turn. */
+    setTurnOrderForWorld(worldId: string, turnOrder: { entries: TurnOrderEntryRecord[]; currentIndex: number; round: number }): void {
+      const worlds = loadWorlds();
+      const world = worlds.find((w) => w.id === worldId);
+      if (!world) return;
+      world.turnOrder = turnOrder;
       saveWorlds(worlds);
     },
 

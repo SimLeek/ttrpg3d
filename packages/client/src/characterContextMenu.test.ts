@@ -12,6 +12,7 @@ function mount(overrides: Partial<CharacterContextMenuCallbacks> = {}) {
     onSelectStatusEffects: vi.fn(),
     onDeleteInstance: vi.fn(),
     onControl: vi.fn(),
+    onAddToTurnOrder: vi.fn(),
     ...overrides,
   };
   menu = mountCharacterContextMenu(container, callbacks);
@@ -107,6 +108,25 @@ describe("mountCharacterContextMenu", () => {
     expect(btn.disabled).toBe(true);
     btn.click();
     expect(callbacks.onDeleteInstance).not.toHaveBeenCalled();
+  });
+
+  it("'Add to Turn Order' is enabled when opened with a real instanceId, and calls the callback with the character id AND instance id, then closes (docs/BATTLE_SYSTEM.md's Roll20-style right-click-to-add)", () => {
+    const { menu, callbacks } = mount();
+    menu.open(10, 10, "char-13", "inst-13");
+    const btn = container.querySelector<HTMLButtonElement>("#ctx-add-turn-order")!;
+    expect(btn.disabled).toBe(false);
+    btn.click();
+    expect(callbacks.onAddToTurnOrder).toHaveBeenCalledWith("char-13", "inst-13");
+    expect(menu.isOpen()).toBe(false);
+  });
+
+  it("'Add to Turn Order' is disabled when opened with instanceId=undefined (the focused slot has no instance id yet -- phase 2), and clicking it does nothing", () => {
+    const { menu, callbacks } = mount();
+    menu.open(10, 10, "char-14", undefined);
+    const btn = container.querySelector<HTMLButtonElement>("#ctx-add-turn-order")!;
+    expect(btn.disabled).toBe(true);
+    btn.click();
+    expect(callbacks.onAddToTurnOrder).not.toHaveBeenCalled();
   });
 
   it("claims input capture while open, releases it on close", () => {

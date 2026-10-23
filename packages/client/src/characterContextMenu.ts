@@ -33,6 +33,15 @@ export interface CharacterContextMenuCallbacks {
   onDeleteInstance(instanceId: string): void;
   /** MVP goal item 4 follow-up -- real request: "Add context menu item: control - switches current control to this token." Same `instanceId`-defined gate as Delete (switching away from the character you're already controlling, via this menu, never comes up -- it structurally has no instanceId to open the menu with in the first place). */
   onControl(instanceId: string): void;
+  /**
+   * docs/BATTLE_SYSTEM.md's UI/interaction reference -- Roll20's own
+   * "right-click a token, Add to Turn Order" pattern, directly ported
+   * here rather than reinvented. Same `instanceId`-defined gate as
+   * Control/Delete: the focused slot has no instanceId yet (see
+   * WorldState.ts's TurnOrderEntryState doc), so this button is
+   * disabled for it, same as those two already are.
+   */
+  onAddToTurnOrder(characterId: string, instanceId: string): void;
 }
 
 export interface CharacterContextMenuController {
@@ -63,6 +72,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
       <button type="button" id="ctx-edit-token">Edit token properties</button>
       <button type="button" id="ctx-status-effects">Select status effects</button>
       <button type="button" id="ctx-control">Control</button>
+      <button type="button" id="ctx-add-turn-order">Add to Turn Order</button>
       <button type="button" id="ctx-delete-instance">Delete instance</button>
     </div>
   `;
@@ -72,6 +82,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
   const editTokenBtn = container.querySelector<HTMLButtonElement>("#ctx-edit-token")!;
   const statusEffectsBtn = container.querySelector<HTMLButtonElement>("#ctx-status-effects")!;
   const controlBtn = container.querySelector<HTMLButtonElement>("#ctx-control")!;
+  const addTurnOrderBtn = container.querySelector<HTMLButtonElement>("#ctx-add-turn-order")!;
   const deleteInstanceBtn = container.querySelector<HTMLButtonElement>("#ctx-delete-instance")!;
 
   let open = false;
@@ -128,6 +139,10 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
     if (activeInstanceId && !controlBtn.disabled) callbacks.onControl(activeInstanceId);
     close();
   });
+  addTurnOrderBtn.addEventListener("click", () => {
+    if (activeCharacterId && activeInstanceId && !addTurnOrderBtn.disabled) callbacks.onAddToTurnOrder(activeCharacterId, activeInstanceId);
+    close();
+  });
   deleteInstanceBtn.addEventListener("click", () => {
     if (activeInstanceId && !deleteInstanceBtn.disabled) callbacks.onDeleteInstance(activeInstanceId);
     close();
@@ -146,6 +161,8 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
       deleteInstanceBtn.title = canDelete ? "" : "Can't delete the character you're currently controlling";
       controlBtn.disabled = !canDelete;
       controlBtn.title = canDelete ? "" : "Already controlling this character";
+      addTurnOrderBtn.disabled = !canDelete;
+      addTurnOrderBtn.title = canDelete ? "" : "Can't add the character you're currently controlling yet (docs/BATTLE_SYSTEM.md phase 2)";
       requestCapture(CAPTURE_REASON);
       justOpenedThisTick = true;
       setTimeout(() => (justOpenedThisTick = false), 0);

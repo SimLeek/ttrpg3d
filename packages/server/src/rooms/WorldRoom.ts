@@ -1,7 +1,7 @@
 import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType } from "./WorldState.js";
-import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord } from "../data/store.js";
+import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType } from "./WorldState.js";
+import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord, TurnOrderEntryRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -104,6 +104,32 @@ interface FocusCharacterMessage {
 /** MVP goal item 4 follow-up (right-click "Delete instance"). Keyed by `instanceId`, same reason as FocusCharacterMessage -- also means this can no longer even ADDRESS the focused slot (which has no instanceId), so "can't delete the character you're controlling" is now structural, not a separate check. */
 interface RemoveCharacterInstanceMessage {
   instanceId: string;
+}
+
+/**
+ * docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1 (manual Add --
+ * initiative-roll-driven adds are phase 2, not this message).
+ * `instanceId`/`characterId` are both optional and go together: a
+ * manual Add can reference an existing placed otherCharacters
+ * instance (both set, `label` ignored in favor of its real name), or
+ * be a bare free-text label with no live token at all (both omitted)
+ * -- see TurnOrderEntryState's own doc for why "the character someone
+ * is currently piloting" can't be referenced here yet.
+ */
+interface AddToTurnOrderMessage {
+  label: string;
+  instanceId?: string;
+  characterId?: string;
+}
+
+interface RemoveFromTurnOrderMessage {
+  turnEntryId: string;
+}
+
+/** Moves the entry to `newIndex` in the list (drag-to-reorder) -- clamped server-side, never trusts the client's own bounds-checking. */
+interface ReorderTurnOrderMessage {
+  turnEntryId: string;
+  newIndex: number;
 }
 
 function flatIndex(i: number, j: number, k: number): number {
@@ -482,6 +508,38 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     store.setPlacedCharactersForWorld(this.worldId, records);
   }
 
+  /** Serializes this room's CURRENT turn order and writes it to store.ts -- same whole-state-overwrite shape as persistPlacedCharacters above, called after every add/remove/clear/reorder/next-turn. */
+  private persistTurnOrder(): void {
+    const entries: TurnOrderEntryRecord[] = this.state.turnOrder.map((e) => ({
+      turnEntryId: e.turnEntryId,
+      label: e.label,
+      instanceId: e.instanceId,
+      characterId: e.characterId,
+      hasRollValue: e.hasRollValue,
+      rollValue: e.rollValue,
+    }));
+    store.setTurnOrderForWorld(this.worldId, { entries, currentIndex: this.state.turnOrderCurrentIndex, round: this.state.turnOrderRound });
+  }
+
+  /** Removes one turn-order entry by its own id, keeping `turnOrderCurrentIndex` pointing at the SAME logical entry (shifting it back by one if the removed entry was earlier in the list; clamping if it WAS the current entry and was also the last one). Shared by removeFromTurnOrder and removeTurnOrderEntriesByInstanceId below -- same adjustment either way. */
+  private removeTurnOrderEntryById(turnEntryId: string): void {
+    const index = this.state.turnOrder.findIndex((e) => e.turnEntryId === turnEntryId);
+    if (index === -1) return;
+    this.state.turnOrder.splice(index, 1);
+    if (index < this.state.turnOrderCurrentIndex) this.state.turnOrderCurrentIndex--;
+    else if (index === this.state.turnOrderCurrentIndex && this.state.turnOrderCurrentIndex >= this.state.turnOrder.length) {
+      this.state.turnOrderCurrentIndex = Math.max(0, this.state.turnOrder.length - 1);
+    }
+    this.persistTurnOrder();
+  }
+
+  /** removeCharacterInstance's own cleanup -- a turn-order entry can't outlive the live instance it points to. A bare-label entry (no instanceId) is never touched by this, same as it's never touched by any other instance-scoped operation. */
+  private removeTurnOrderEntriesByInstanceId(instanceId: string): void {
+    for (const entry of [...this.state.turnOrder]) {
+      if (entry.instanceId === instanceId) this.removeTurnOrderEntryById(entry.turnEntryId);
+    }
+  }
+
   /** Registers (room, sessionId) as the session CURRENTLY FOCUSED on characterId -- used at join and on every focus swap (focusCharacter). Each session only ever has ONE focused characterId at a time (unlike the room-level registry above, which can have several placed instances) -- callers always pair this with unregisterActiveCharacter for whatever characterId the session was PREVIOUSLY focused on. */
   private registerActiveCharacter(sessionId: string, characterId: string): void {
     this.sessionCharacterIds.set(sessionId, characterId);
@@ -587,6 +645,25 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       applyBodySizeToCharacterTarget(other, character, record.variableOverrides);
       this.state.otherCharacters.push(other);
       this.syncCharacterRoomRegistration(record.characterId);
+    }
+
+    // docs/BATTLE_SYSTEM.md's turn-order tracker -- same load-back
+    // shape as placedCharacters just above, survives a room being
+    // recreated and a disconnect/refresh/rejoin (nothing here
+    // references a sessionId, see TurnOrderEntryState's own doc).
+    if (world?.turnOrder) {
+      for (const record of world.turnOrder.entries) {
+        const entry = new TurnOrderEntryState();
+        entry.turnEntryId = record.turnEntryId;
+        entry.label = record.label;
+        entry.instanceId = record.instanceId;
+        entry.characterId = record.characterId;
+        entry.hasRollValue = record.hasRollValue;
+        entry.rollValue = record.rollValue;
+        this.state.turnOrder.push(entry);
+      }
+      this.state.turnOrderCurrentIndex = world.turnOrder.currentIndex;
+      this.state.turnOrderRound = world.turnOrder.round;
     }
 
     // Admin-only: sets the shared respawn anchor (Schema fields, auto-
@@ -975,6 +1052,80 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.instanceVariableOverrides.delete(instanceId);
       this.syncCharacterRoomRegistration(removed.characterId);
       this.persistPlacedCharacters();
+      // docs/BATTLE_SYSTEM.md: a turn-order entry can't outlive the
+      // live instance it points to -- there's nothing left to track
+      // position/stats for or Reset Turn against.
+      this.removeTurnOrderEntriesByInstanceId(instanceId);
+    });
+
+    // docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1. GM-only --
+    // "Add" is explicitly the GM's manual-override path there, same
+    // tier as Next Turn below, consistent within this phase (phase 2's
+    // initiative rolls are the non-GM add path, not built yet).
+    this.onMessage<AddToTurnOrderMessage>("addToTurnOrder", (client, { label, instanceId, characterId }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const entry = new TurnOrderEntryState();
+      entry.turnEntryId = newInstanceId();
+      if (instanceId && characterId) {
+        const existing = findInstance(this.state.otherCharacters, instanceId);
+        if (!existing || existing.characterId !== characterId) return; // instanceId must actually belong to the claimed characterId -- sanity check, not just trust
+        entry.instanceId = instanceId;
+        entry.characterId = characterId;
+        entry.label = existing.characterName;
+      } else {
+        entry.label = label;
+      }
+      this.state.turnOrder.push(entry);
+      this.persistTurnOrder();
+    });
+
+    this.onMessage<RemoveFromTurnOrderMessage>("removeFromTurnOrder", (client, { turnEntryId }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      this.removeTurnOrderEntryById(turnEntryId);
+    });
+
+    this.onMessage("clearTurnOrder", (client) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      this.state.turnOrder.clear();
+      this.state.turnOrderCurrentIndex = 0;
+      this.state.turnOrderRound = 1;
+      this.persistTurnOrder();
+    });
+
+    this.onMessage<ReorderTurnOrderMessage>("reorderTurnOrder", (client, { turnEntryId, newIndex }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const oldIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === turnEntryId);
+      if (oldIndex === -1) return;
+      const clampedNewIndex = Math.max(0, Math.min(newIndex, this.state.turnOrder.length - 1));
+      if (clampedNewIndex === oldIndex) return;
+      // Keep `turnOrderCurrentIndex` pointing at the SAME logical entry
+      // through the move, not wherever that array slot ends up next --
+      // a reorder must never silently change whose turn it is.
+      const currentEntryId = this.state.turnOrder[this.state.turnOrderCurrentIndex]?.turnEntryId;
+      const [moved] = this.state.turnOrder.splice(oldIndex, 1);
+      this.state.turnOrder.splice(clampedNewIndex, 0, moved);
+      if (currentEntryId) {
+        const newCurrentIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === currentEntryId);
+        if (newCurrentIndex !== -1) this.state.turnOrderCurrentIndex = newCurrentIndex;
+      }
+      this.persistTurnOrder();
+    });
+
+    // GM-only, confirmed directly ("Only the GM should be able to
+    // click next turn") -- a deliberate change from the old game's own
+    // turn_tracker.gd, which had no permission check at all. No-op on
+    // an empty order (nothing to advance through).
+    this.onMessage("nextTurn", (client) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      if (this.state.turnOrder.length === 0) return;
+      this.state.turnOrderCurrentIndex++;
+      if (this.state.turnOrderCurrentIndex >= this.state.turnOrder.length) {
+        this.state.turnOrderCurrentIndex = 0;
+        this.state.turnOrderRound++;
+      }
+      this.persistTurnOrder();
+      // Reset Turn's own snapshot-on-advance (docs/BATTLE_SYSTEM.md
+      // section 3) lands in a later pass, not this one.
     });
   }
 

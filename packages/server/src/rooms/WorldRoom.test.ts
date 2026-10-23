@@ -824,6 +824,231 @@ describe("WorldRoom", () => {
     });
   });
 
+  describe("turn-order tracker, phase 1: manual add/remove/clear/reorder/next-turn (docs/BATTLE_SYSTEM.md)", () => {
+    const owner = trackedAccount(`WorldRoom-test-turnorder-owner-${Date.now()}`);
+    const game = trackedGame(`WorldRoom-test-turnorder-game-${Date.now()}`, owner.id);
+    // Same "a shared world fixture leaks one test's state into the next"
+    // lesson the multi-character-presence block above already learned --
+    // a fresh world per test keeps each one's turn order isolated.
+    let world: ReturnType<typeof trackedWorld>;
+    beforeEach(() => {
+      world = trackedWorld(game.id, `Turn Order Test World ${Date.now()}-${Math.random().toString(36).slice(2)}`, "limestone_slab", SLAB_PARAMS);
+    });
+
+    it("addToTurnOrder (GM) with a bare label creates an entry with no live binding", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+
+      adminClient.send("addToTurnOrder", { label: "Orc Captain" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(1);
+      expect(room.state.turnOrder[0]).toMatchObject({ label: "Orc Captain", instanceId: "", characterId: "" });
+      expect(room.state.turnOrder[0].turnEntryId).not.toBe("");
+    });
+
+    it("addToTurnOrder (GM) referencing a real placed instance uses its own name, ignoring the given label", async () => {
+      const focused = trackedCharacterOwner();
+      const goblin = store.createCharacter(owner.id, "RealGoblin", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(adminClient.sessionId)!;
+      adminClient.send("placeCharacter", { characterId: goblin.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const instance = room.state.otherCharacters.find((o) => o.characterId === goblin.id)!;
+
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: instance.instanceId, characterId: goblin.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder[0]).toMatchObject({ label: "RealGoblin", instanceId: instance.instanceId, characterId: goblin.id });
+    });
+
+    it("addToTurnOrder is refused from a non-admin session", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const stranger = await colyseus.connectTo(room);
+
+      stranger.send("addToTurnOrder", { label: "Sneaky Add" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(0);
+    });
+
+    it("nextTurn (GM-only) advances the current index without touching the round, and wraps with a round increment", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      adminClient.send("addToTurnOrder", { label: "C" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrderCurrentIndex).toBe(0);
+      expect(room.state.turnOrderRound).toBe(1);
+
+      adminClient.send("nextTurn");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrderCurrentIndex).toBe(1);
+      expect(room.state.turnOrderRound).toBe(1);
+
+      adminClient.send("nextTurn");
+      adminClient.send("nextTurn"); // wraps from C back to A
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrderCurrentIndex).toBe(0);
+      expect(room.state.turnOrderRound).toBe(2);
+    });
+
+    it("nextTurn is refused from a non-admin session, and is a no-op on an empty order", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const stranger = await colyseus.connectTo(room);
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      stranger.send("nextTurn");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrderCurrentIndex).toBe(0); // unaffected
+
+      adminClient.send("clearTurnOrder");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn"); // nothing to advance through
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrderCurrentIndex).toBe(0);
+      expect(room.state.turnOrderRound).toBe(1);
+    });
+
+    it("removeFromTurnOrder (GM) shifts the current index back by one when removing an entry BEFORE the current turn", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      adminClient.send("addToTurnOrder", { label: "C" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn"); // now B's turn (index 1)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const bId = room.state.turnOrder[1].turnEntryId;
+      const aId = room.state.turnOrder[0].turnEntryId;
+
+      adminClient.send("removeFromTurnOrder", { turnEntryId: aId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder.map((e) => e.turnEntryId)).toEqual([bId, room.state.turnOrder[1].turnEntryId]);
+      expect(room.state.turnOrderCurrentIndex).toBe(0); // still B's turn, just shifted down
+      expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(bId);
+    });
+
+    it("removeFromTurnOrder (GM) clamps the current index when removing the LAST entry while it was also the current one", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn"); // now B's turn (index 1, the last one)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const bId = room.state.turnOrder[1].turnEntryId;
+
+      adminClient.send("removeFromTurnOrder", { turnEntryId: bId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(1);
+      expect(room.state.turnOrderCurrentIndex).toBe(0); // clamped, not left pointing past the end
+    });
+
+    it("removeFromTurnOrder is refused from a non-admin session", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const stranger = await colyseus.connectTo(room);
+      adminClient.send("addToTurnOrder", { label: "A" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const entryId = room.state.turnOrder[0].turnEntryId;
+
+      stranger.send("removeFromTurnOrder", { turnEntryId: entryId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(1);
+    });
+
+    it("clearTurnOrder (GM) resets entries, current index, and round together", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      adminClient.send("addToTurnOrder", { label: "C" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn");
+      adminClient.send("nextTurn");
+      adminClient.send("nextTurn"); // wraps -- round 2
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      adminClient.send("clearTurnOrder");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(0);
+      expect(room.state.turnOrderCurrentIndex).toBe(0);
+      expect(room.state.turnOrderRound).toBe(1);
+    });
+
+    it("reorderTurnOrder (GM) moves an entry while keeping turnOrderCurrentIndex pointing at the SAME logical entry", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      adminClient.send("addToTurnOrder", { label: "C" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn"); // now B's turn (index 1)
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const bId = room.state.turnOrder[1].turnEntryId;
+      const aId = room.state.turnOrder[0].turnEntryId;
+
+      // Move A (index 0) to the end -- B should now be at index 0.
+      adminClient.send("reorderTurnOrder", { turnEntryId: aId, newIndex: 2 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder[0].turnEntryId).toBe(bId);
+      expect(room.state.turnOrderCurrentIndex).toBe(0);
+      expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(bId); // still B's turn
+    });
+
+    it("removeCharacterInstance cascades to remove any turn-order entry pointing at that instance", async () => {
+      const focused = trackedCharacterOwner();
+      const goblin = store.createCharacter(owner.id, "ToRemoveFromTracker", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(adminClient.sessionId)!;
+      adminClient.send("placeCharacter", { characterId: goblin.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const instance = room.state.otherCharacters.find((o) => o.characterId === goblin.id)!;
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: instance.instanceId, characterId: goblin.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrder).toHaveLength(1);
+
+      adminClient.send("removeCharacterInstance", { instanceId: instance.instanceId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(0);
+    });
+
+    it("the turn order survives the room being recreated -- real requirement: a mid-combat disconnect/refresh/rejoin must not drop anyone from it", async () => {
+      const persistWorld = trackedWorld(game.id, `Turn Order Persistence World ${Date.now()}`, "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: persistWorld.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrderCurrentIndex).toBe(1);
+
+      const secondRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: persistWorld.id });
+
+      expect(secondRoom.state.turnOrder.map((e) => e.label)).toEqual(["A", "B"]);
+      expect(secondRoom.state.turnOrderCurrentIndex).toBe(1);
+      expect(secondRoom.state.turnOrderRound).toBe(1);
+    });
+
+    function trackedCharacterOwner() {
+      return store.createCharacter(owner.id, `Focused-${Date.now()}-${Math.random().toString(36).slice(2)}`, [1, 0, 0]);
+    }
+  });
+
   describe("mod load mechanism (MVP goal item 3, docs/ROADMAP.md)", () => {
     it("a world whose PARENT GAME has the example-noop mod enabled has it actually registered when the world's room is created (per-GAME scope, not per-world -- real correction, 2026-10-17)", async () => {
       const owner = trackedAccount(`WorldRoom-test-mod-owner-${Date.now()}`);

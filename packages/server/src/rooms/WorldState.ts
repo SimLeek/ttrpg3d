@@ -179,6 +179,35 @@ export const PlayerState = schema(
   "PlayerState",
 );
 
+/**
+ * docs/BATTLE_SYSTEM.md -- one row in the turn-order tracker. Phase 1
+ * (manual Add/Remove/Clear/Next Turn, built now) always has a STABLE
+ * identity: either `instanceId` (an existing, already-placed
+ * `OtherCharacterState` entry) or neither (a free-text `label` with no
+ * live token at all -- same flexibility the old game's own "Add" had,
+ * e.g. "Orc Captain" with nothing backing it). Deliberately does NOT
+ * reference a session/PlayerState directly -- a Colyseus `sessionId`
+ * is not stable across a disconnect/rejoin, and turn order has to
+ * survive that (docs/BATTLE_SYSTEM.md's own persistence requirement,
+ * "player b mid combat has an internet glitch... should they be
+ * removed from combat? No."). That means a character someone is
+ * CURRENTLY piloting (the focused slot, which has no `instanceId` of
+ * its own) can't be referenced here yet -- initiative rolls (phase 2,
+ * "I can tab between them, press 'initiative roll'...") have to solve
+ * that separately, not assumed solved by this shape.
+ */
+export const TurnOrderEntryState = schema(
+  {
+    turnEntryId: t.string().default(""),
+    label: t.string().default(""),
+    instanceId: t.string().default(""),
+    characterId: t.string().default(""),
+    hasRollValue: t.boolean().default(false),
+    rollValue: t.number().default(0),
+  },
+  "TurnOrderEntryState",
+);
+
 export const WorldState = schema(
   {
     players: t.map(PlayerState),
@@ -192,6 +221,11 @@ export const WorldState = schema(
     respawnAnchorZ: t.number().default(0),
     /** GM-only panel (gmPanel.ts): whether players can see through walls in third person (blockShaders.ts's xray-cutout shader). Room-level, not per-player -- same tier as worldBottomY/hasRespawnAnchor above. Seeded from the world's parent GameRecord.seeThroughWalls at WorldRoom.onCreate, then live-toggleable via the admin-gated "setSeeThroughWalls" message -- auto-synced to every connected client the instant it changes, no reload needed (unlike mods). */
     seeThroughWalls: t.boolean().default(true),
+    /** docs/BATTLE_SYSTEM.md's turn-order tracker -- world-level (not per-session), persisted (store.ts), so it survives a disconnect/refresh/rejoin the same way otherCharacters already does. */
+    turnOrder: t.array(TurnOrderEntryState),
+    /** Index into `turnOrder` of whoever's turn it notionally is. Meaningless (0) when `turnOrder` is empty -- not a separate "is combat running" flag; see TurnOrderEntryState's own doc for why phase 1 keeps this simple. */
+    turnOrderCurrentIndex: t.number().default(0),
+    turnOrderRound: t.number().default(1),
   },
   "WorldState",
 );
@@ -202,3 +236,4 @@ export type PlayerMap = MapSchema<PlayerStateType>;
 export type StatusEffectStateType = InstanceType<typeof StatusEffectState>;
 export type BarStateType = InstanceType<typeof BarState>;
 export type OtherCharacterStateType = InstanceType<typeof OtherCharacterState>;
+export type TurnOrderEntryStateType = InstanceType<typeof TurnOrderEntryState>;
