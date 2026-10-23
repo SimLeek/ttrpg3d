@@ -592,7 +592,14 @@ export async function connectAndStreamWorld(
    */
   function resolveHoveredBar(screenPoint: { x: number; y: number }): { characterId: string; tokenKey: string; instanceId?: string; variableId: string } | undefined {
     const result = pickToken(scene, trackedTokens, screenPoint);
-    if (!result?.owned) return undefined;
+    // Real gap, long-standing (docs/ROADMAP.md item 2 follow-up): "I
+    // can't select root's bob from another tab though I can select if
+    // it's the same character... better ownership check." WorldRoom.ts's
+    // own setCharacterVariableValue/setStatusEffects/setCharacterToken/
+    // focusCharacter handlers already admin-gate correctly server-side
+    // (same escape hatch setRespawnAnchor uses) -- the gap was purely
+    // this client-side `owned` check never considering GM mode at all.
+    if (!result || (!result.owned && !gmOverride.isActive())) return undefined;
     const token = remoteTokens.get(result.tokenKey);
     if (!token) return undefined;
     if (result.pickedMesh !== token.mesh) return undefined; // hit the body box (the coarser extraHitboxMeshes target), not the billboard plane -- not precise enough for bar editing
@@ -618,7 +625,10 @@ export async function connectAndStreamWorld(
     {
       pickOwnedToken: () => {
         const result = pickToken(scene, trackedTokens, currentPickScreenPoint());
-        return result?.owned ? { characterId: result.characterId, instanceId: result.instanceId } : undefined;
+        // Same GM-mode escape hatch as resolveHoveredBar above -- this is
+        // what lets the right-click context menu open on someone else's
+        // token at all while GM mode is active.
+        return result && (result.owned || gmOverride.isActive()) ? { characterId: result.characterId, instanceId: result.instanceId } : undefined;
       },
       pickHoveredStatBar: () => {
         const resolved = resolveHoveredBar(currentPickScreenPoint());
@@ -908,7 +918,10 @@ export async function connectAndStreamWorld(
     rebuildTrackedTokens();
     const screenPoint = currentPickScreenPoint();
     const picked = pickToken(scene, trackedTokens, screenPoint);
-    const nextHovered = picked?.owned ? picked.tokenKey : undefined;
+    // Same GM-mode escape hatch as resolveHoveredBar/pickOwnedToken above --
+    // without it, a GM got no hover affordance at all on a token they can
+    // now actually right-click/edit while GM mode is active.
+    const nextHovered = picked && (picked.owned || gmOverride.isActive()) ? picked.tokenKey : undefined;
     if (nextHovered !== hoveredTokenKey) {
       if (hoveredTokenKey) setHighlight(hoveredTokenKey, false);
       if (nextHovered) setHighlight(nextHovered, true);
