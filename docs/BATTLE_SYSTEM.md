@@ -17,12 +17,20 @@ That has one concrete, load-bearing consequence that shapes every
 feature below: **turn order is advisory, not enforced.** Nothing in
 this system blocks a character from acting because it isn't their
 turn. The old Godot game already worked this way (`turn_tracker.gd`'s
-`next_turn()` has no permission/gating check at all -- anyone can
-advance it) and that's being kept on purpose, not just inherited by
-default. The system's job is to track and display whose turn it
-notionally is, and to protect against the one real problem that
-causes in practice (see "Per-turn fairness snapshot" below) -- not to
-adjudicate rules.
+`next_turn()` has no permission/gating check at all) and that's being
+kept on purpose, not just inherited by default. The system's job is to
+track and display whose turn it notionally is, and to protect against
+the one real problem that causes in practice (see "Reset Turn" below)
+-- not to adjudicate rules.
+
+**Standing design principle, going forward, not just for this doc**
+(direct user instruction, 2026-10-23): assume every player's
+connection is unreliable -- they WILL randomly refresh the page or
+disconnect-and-rejoin mid-session. Default to treating that as a
+no-op for whatever state they were part of, not a reason to drop them
+from it, unless there's a real reason otherwise. Turn order's own
+persistence requirement below is the concrete instance of this for
+this doc specifically.
 
 ## Core features (in scope for this pass)
 
@@ -33,59 +41,96 @@ old game's `turn_tracker_menu.gd` already had, styled closer to
 Roll20's own turn-order tracker (explicit reference point, per user
 call) than redesigned from scratch:
 
-- **Add** a token to the order (any character present in the world).
-- **Add Me** -- adds whichever character the clicking session is
-  currently piloting (`focusCycling.ts`'s "currently controlling"
-  concept, which now actually exists -- it didn't when the old game
-  built this).
+- **Add** a token to the order manually (any character/instance
+  present in the world) -- the GM's manual-override path; most entries
+  are expected to arrive via "Initiative rolls" below instead.
 - **Remove** a single entry (old game's per-row "x").
 - **Clear All**.
 - **Next Turn** -- advances `current_index`, wrapping back to 0 and
   incrementing a round counter on wrap (direct port of the old game's
-  logic). Triggers the fairness snapshot below. *Assumed: any
-  connected session can press this, matching the old game's own
-  no-permission-check behavior -- confirm, or restrict to GM-only, if
-  that assumption is wrong.*
+  logic). Triggers the Reset Turn snapshot below. **GM-only** --
+  confirmed by direct user call ("Only the GM should be able to click
+  next turn"), a deliberate change from the old game's own
+  no-permission-check behavior, not a port of it.
 - Header shows round number + whose turn it notionally is.
+- Reordering (drag a row to change order) stays available for manual
+  correction, on top of the automatic roll-value sort "Initiative
+  rolls" below produces.
+- **Persists across a disconnect/refresh/rejoin** -- who's in the
+  order, whose turn it is, and the round number all survive a session
+  dropping and reconnecting (see the Philosophy section above: a mid-
+  combat internet glitch must not remove that player from combat).
 
-Reordering (drag a row to change initiative order) is standard for a
-Roll20-style tracker and should be included, even though the old
-game's version didn't have it -- the old version never needed it
-because it had no real players using it as anything but a prop.
+### 2. Initiative rolls → turn order
 
-### 2. Per-turn fairness snapshot + undo
+Real correction replacing an earlier, wrong "Add Me" framing: a plain
+"add yourself" button doesn't work once one character sheet can back
+several independent placed instances (five goblins sharing one
+"Goblin" sheet). The real flow, in the user's own words:
 
-The actual real-world problem this is solving, in the user's own
-words: *"if it's A's turn, and someone moves their character around to
-see something then forgets where they went, they can press ctrl+z...
-so that A can start their turn in an actual fair setup."*
+> there should be a function in the character sheet that will take a
+> number and send that to the turn order given the currently
+> controlled token, and put the instance of that token in the 3d game
+> as the one in the turn order, so if we have 5 goblins with 1
+> character sheet, I can tab between them, press 'initiative roll',
+> the roll will be calculated, and then that roll will be sent to the
+> initiative function, and then that function will send both that
+> token instance and the roll result value to the turn tracker, and
+> that turn tracker can then be organized based on that roll return
+> value for each instance, high to low or low to high.
 
-- Every time **Next Turn** fires, snapshot EVERY character currently
-  in the turn order (position + relevant stat values -- "the original
-  position/stats of the characters should be kept, or at least a
-  diff" -- diff-vs-full is an implementation choice, not a requirement,
-  as long as the revert below is correct). This is a snapshot of the
-  WHOLE board at the moment a new turn starts, not just the character
-  whose turn it now is.
-- **Ctrl+Z**, pressed by a session piloting character X, reverts X
-  (position + stats) to its state at the START of the CURRENT turn --
-  i.e., undoes any drift that happened since the last Next Turn, not a
-  general-purpose multi-step undo history.
-- The GM has the same capability applied to EVERY character at once in
-  one action (a bulk revert), for the case where not everyone
-  remembers to self-correct. Whether this reuses the same Ctrl+Z
-  keybind (scoped by admin status) or is a separate explicit button
-  ("Reset All to Turn Start") is an implementation detail to settle
-  during design, not fixed here.
-- This mechanic is scoped to while the turn tracker is actively
-  running an order -- it has no meaning (and no snapshot to revert to)
-  outside that.
-- Standard web-app guard needed either way: Ctrl+Z must not fire while
-  focus is in a text input (chat box, a stat-edit `<input>`, etc.),
-  same `isCaptured()`/`document.activeElement` guard this codebase
-  already uses for Tab (`focusCycling.ts`) and Escape (`hotbar.ts`).
+Concretely:
 
-### 3. Waypoint / distance measurement
+- A character sheet exposes an **"Initiative Roll"** action. Pressing
+  it computes a value (reusing item 0's existing dice-notation
+  evaluator -- a per-sheet dice-formula field is the simplest version
+  that's actually buildable today, since item 0's `[[notation+var]]`
+  variable interpolation isn't built yet either).
+- That action operates on **whichever instance the pressing session is
+  currently piloting** -- `focusCycling.ts`'s Tab/Shift+Tab/Control
+  "currently controlling" concept, which now actually exists.
+- The result is sent, as one unit, to the turn tracker: `{instance
+  identity, roll value}`. The tracker inserts or updates that
+  instance's own entry and keeps the whole list sorted by roll value
+  (high-to-low or low-to-high -- a per-tracker configurable setting,
+  GM's choice, not a hardcoded direction).
+- Manually-`Add`ed entries (no roll value) sort as a separate concern
+  from the above -- exact interaction left open below.
+
+### 3. Reset Turn (replaces the earlier Ctrl+Z framing entirely)
+
+**Real correction**: Ctrl+Z was the wrong mechanism. A real Ctrl+Z, if
+ever built, should be a genuine multi-step undo history -- not a
+single special-cased "revert to turn start" action wearing that
+keybind. That real undo history is now `docs/DEFERRED.md` work, not
+part of this pass. **No keybind at all for this feature right now** --
+plain buttons and a context-menu item; a keybind can be decided later
+once there's a reason to.
+
+The actual problem being solved, unchanged from before: *"if it's A's
+turn, and someone moves their character around to see something then
+forgets where they went... so that A can start their turn in an
+actual fair setup."*
+
+- Every time **Next Turn** fires, snapshot every character currently
+  in the turn order (position + relevant stat values) as of that
+  moment. **Stored as a diff against live state**, not a full copy --
+  confirmed by direct user call ("would need less storage and would
+  rarely cause issues").
+- **"Reset char"**: a right-click context-menu item on a token's own
+  ROW in the turn-tracker widget (a separate context menu from the
+  existing 3D-world token right-click menu, scoped to the tracker
+  itself) -- reverts that one character/instance (position + stats) to
+  its state at the start of the current turn. Chosen over a keybind on
+  purpose: "the context menu makes more sense since there can only be
+  so many buttons."
+- **A GM-only button**, visible only to GMs, that applies the same
+  revert to EVERY character in the order at once -- for when not
+  everyone remembers to self-correct individually.
+- Scoped to while the turn tracker is actively running an order --
+  there's no snapshot to revert to otherwise.
+
+### 4. Waypoint / distance measurement
 
 Ported close to the old game's `battle_mode_manager.gd`, confirmed via
 direct user call ("port close to as-is"), with one concrete change
@@ -102,19 +147,45 @@ collision, unlike the original worry.
 - A selectable distance metric (Manhattan / Euclidean / Minkowski-n),
   matching `GameSettings`' old equivalent.
 - Waypoints snap to voxel-grid centers by default.
-- Visuals: yellow sphere markers + cylinder "line" segments between
-  consecutive waypoints, each segment carrying a live 3D billboard
-  distance label (not a flat 2D HUD number) -- plus one live segment
-  from the last placed waypoint to the player's CURRENT position,
-  updated continuously, not just on waypoint placement.
+- **Every consecutive pair of waypoints gets its own distance label on
+  the segment between them** -- real correction: this is NOT just
+  about a single live segment from the last waypoint to the player.
+  With waypoints W1, W2, W3 placed in order: the W1-W2 segment shows
+  its own distance, the W2-W3 segment shows its own distance, each
+  independently, same as the old game's per-segment labels. On top of
+  that, there's additionally one more live segment from the LAST
+  placed waypoint to the player's current position, continuously
+  updating as they move (this one line is the only "live" one; every
+  waypoint-to-waypoint segment is fixed once both its endpoints are
+  placed).
+- Visuals: yellow sphere markers + cylinder "line" segments, each
+  segment carrying a 3D billboard distance label.
+- **Reuse this project's existing billboard mechanism** (real
+  direction: "we should try to use the same billboard system or close
+  to it") -- `characterToken.ts`'s `@babylonjs/gui`-based billboard
+  plane is the thing to extend for these distance labels, not a
+  separate one-off text-rendering approach. Also check the old Godot
+  game's own billboard node type (`Label3D`/`Sprite3D`-equivalent) for
+  anything worth matching beyond "it's a billboard."
 - LMB/RMB stay free for their existing jobs (block edit / item use,
   voxelEditor.ts) -- M/N only, matching the old game's own split.
-- **Upgrade over the old game** (roadmap's own prior wording, now
-  concrete): a real **Finalize** action that commits/clears the
-  current waypoint chain explicitly, instead of the old game's only
-  reset path being "end turn happens to clear it."
+- **Finalize**: bound to **Enter** ("I don't think anything else is
+  using it at this point"). Confirmed true for the global/uncaptured
+  case, but Enter IS already used while focus is inside a text input
+  -- `chatPanel.ts`'s compose box sends on Enter, and `openStatEditor`'s
+  bar-value `<input>` commits on Enter. The Finalize handler MUST use
+  the same `isCaptured()`/`document.activeElement` guard this codebase
+  already applies to Tab (`focusCycling.ts`) and Escape (`hotbar.ts`),
+  or it will hijack Enter while someone's typing in chat or editing a
+  stat value.
+- **Waypoints are automatically active whenever a turn order is
+  running**, not a separately-toggled mode -- real direction: "these
+  waypoints should be on whenever turn order is on." The **GM can
+  disable them** for a given turn order (a toggle, GM-only) -- useful
+  for a pure roleplay/conversation-turn-order use case where distance
+  measurement isn't relevant, as opposed to actual combat.
 
-### 4. Character-size-aware waypoint markers
+### 5. Character-size-aware waypoint markers
 
 Marker/line scale (and the wireframe-box variant mentioned in the
 porting checklist) should account for a character's actual body size
@@ -125,8 +196,14 @@ data already exists for other reasons).
 
 ## Explicitly OUT of scope for this pass
 
-Tracked in `docs/BACKLOG.md` under "From item 6" instead of here:
+Tracked in `docs/DEFERRED.md` under "From item 6" instead of here:
 
+- **A general-purpose, multi-step Ctrl+Z undo history.** Real
+  correction: the earlier draft of this doc wrongly scoped Ctrl+Z as a
+  single "revert to turn start" action. If a real undo history is
+  ever built, it should actually be one -- not this. "Reset Turn"
+  above is the actual feature; it's buttons/context-menu items, no
+  keybind, for now.
 - **Auto-triggering an encounter** (some trigger condition starts
   battle mode automatically, with AI/end-condition behavior). Real
   user call: "while it's fun, it's not quite vtt." The original old-
@@ -148,20 +225,20 @@ system (item 4) -- so no NEW battle-specific UI is needed for it here.
 ```gherkin
 Feature: Turn-order tracker
 
-  Scenario: Adding the currently-controlled character to the order
-    Given the turn tracker is open and empty
-    When I click "Add Me"
-    Then my currently-focused character appears as the last entry in the order
-
-  Scenario: Advancing to the next turn
+  Scenario: Advancing to the next turn (GM only)
     Given the turn order has characters [A, B, C] and it is A's turn
-    When anyone clicks "Next Turn"
+    When the GM clicks "Next Turn"
     Then it becomes B's turn
     And the round number is unchanged
 
+  Scenario: A non-GM session cannot advance the turn
+    Given the turn order has characters [A, B, C] and it is A's turn
+    When a non-GM session attempts to advance the turn
+    Then nothing changes -- it is still A's turn
+
   Scenario: Wrapping the order increments the round
     Given the turn order has characters [A, B, C] and it is C's turn
-    When anyone clicks "Next Turn"
+    When the GM clicks "Next Turn"
     Then it becomes A's turn
     And the round number increases by 1
 
@@ -171,37 +248,59 @@ Feature: Turn-order tracker
     Then the action succeeds normally
     And nothing in the system blocks or flags it
 
-Feature: Per-turn fairness snapshot and undo
+  Scenario: Turn order survives a disconnect and rejoin
+    Given a turn order is running with character B mid-combat
+    When the session controlling B disconnects and rejoins
+    Then B is still in the turn order, in the same position, unaffected
+
+Feature: Initiative rolls
+
+  Scenario: Rolling initiative adds the currently-piloted instance
+    Given a session is currently piloting one specific placed instance
+      of a character
+    When that session presses "Initiative Roll" on that character's sheet
+    Then a roll value is computed
+    And that specific instance (not just the character) is added to the
+      turn order with that roll value
+
+  Scenario: Several instances of the same character each get their own entry
+    Given one character sheet backs five separately placed goblin instances
+    When a session tabs between them and presses "Initiative Roll" for each
+    Then the turn order contains five separate entries, one per instance,
+      each with its own independently rolled value
+
+  Scenario: The turn order sorts by roll value
+    Given multiple instances have been added via "Initiative Roll" with
+      different values
+    When the sort direction is set to high-to-low
+    Then the turn order lists them from highest roll value to lowest
+
+Feature: Reset Turn
 
   Scenario: A snapshot is taken on every turn advance
     Given the turn order is running
-    When "Next Turn" is clicked
+    When the GM clicks "Next Turn"
     Then every character currently in the turn order has its position and
-      relevant stats captured as "the start of the new current turn"
+      relevant stats captured (as a diff against live state) for "the
+      start of the new current turn"
 
-  Scenario: A player reverts their own drift
+  Scenario: A player resets their own character via the turn-order menu
     Given it became A's turn one minute ago
     And a session controlling character B moved B away from where B was
       when A's turn started
-    When that session presses Ctrl+Z
+    When that session right-clicks B's row in the turn tracker and
+      selects "Reset char"
     Then B's position and stats revert to what they were when A's turn started
 
-  Scenario: The GM reverts everyone at once
+  Scenario: The GM resets everyone at once
     Given it became A's turn, and several characters have since drifted
-    When the GM triggers the bulk revert
+    When the GM clicks the GM-only "reset everyone" button
     Then every character's position and stats revert to what they were
       when A's turn started
 
-  Scenario: Ctrl+Z does nothing outside an active turn order
-    Given no turn order is currently running
-    When a session presses Ctrl+Z
-    Then nothing happens (there is no turn-start snapshot to revert to)
-
-  Scenario: Ctrl+Z while typing is not intercepted
-    Given a session's focus is in the chat compose box
-    When that session presses Ctrl+Z
-    Then the browser's normal text-undo behavior happens
-    And no character position/stat revert is triggered
+  Scenario: The GM-only reset-everyone button is not visible to non-GMs
+    Given a non-GM session has the turn tracker open
+    Then that session does not see a "reset everyone" button at all
 
 Feature: Waypoint distance measurement
 
@@ -211,11 +310,24 @@ Feature: Waypoint distance measurement
     Then a yellow waypoint marker is placed at their current position,
       snapped to the nearest voxel-grid center
 
-  Scenario: Live distance to the last waypoint
-    Given a waypoint has been placed
+  Scenario: Distance is shown between two placed waypoints
+    Given waypoints W1 and W2 have both been placed, in that order
+    Then a line segment with its own live-updating 3D distance label
+      connects W1 to W2, independent of the player's current position
+
+  Scenario: Each additional waypoint adds its own segment and label
+    Given waypoints W1 and W2 already exist with a labeled segment
+      between them
+    When the player places a third waypoint, W3
+    Then a second segment with its own distance label connects W2 to W3
+    And the W1-to-W2 segment and label are unchanged
+
+  Scenario: A live segment also tracks the player from the last waypoint
+    Given at least one waypoint has been placed
     When the player moves
     Then a line segment and a live, updating 3D distance label are shown
-      from that waypoint to the player's current position
+      from the LAST placed waypoint to the player's current position,
+      separate from any waypoint-to-waypoint segments
 
   Scenario: Removing a waypoint requires standing on it
     Given a waypoint exists and the player has walked away from it
@@ -229,46 +341,55 @@ Feature: Waypoint distance measurement
 
   Scenario: Finalizing the current waypoint chain
     Given one or more waypoints are placed
-    When the player uses the Finalize action
+    When the player presses Enter outside of any text input
     Then the current waypoint chain is committed/cleared explicitly,
       without needing to end the current turn to do it
+
+  Scenario: Enter does not finalize while typing
+    Given a player's focus is in the chat compose box or a stat-edit input
+    When they press Enter
+    Then that input's own normal Enter behavior happens
+    And no waypoint chain is finalized
+
+  Scenario: Waypoints turn on automatically with the turn order
+    Given no turn order is currently running
+    When the GM starts a turn order
+    Then the waypoint/distance system becomes active for all players
+
+  Scenario: The GM can disable waypoints for a turn order
+    Given a turn order is running with waypoints active
+    When the GM disables waypoints for this turn order
+    Then M/N/distance labels stop functioning until re-enabled,
+      while the turn order itself keeps running
 ```
 
-## UI/interaction reference: Roll20's turn tracker
+## UI/interaction reference
 
-Explicit reference point (user call: "Roll20 (Recommended)"), for
-anyone designing the actual widget: Roll20's turn-order tracker is a
-small floating, draggable window (not docked/fixed), showing entries
-in order with the active entry visually distinguished, a round
-counter, and drag-to-reorder on the entries themselves. Tokens are
-added to it either by dragging them in or via a right-click "Add to
-Turn Order" action on the token itself. This project's own old game
-already converged on the same non-modal/draggable/add-remove/round-
-counter shape independently (`turn_tracker_menu.gd`) -- Roll20 is the
-reference for *polish and interaction details* (drag-to-reorder, the
-add-from-token-context-menu pattern, matching this project's own
-existing right-click character context menu) more than a wholesale
-redesign.
+- **Turn tracker**: Roll20's own turn-order tracker (explicit
+  reference point, user call: "Roll20 (Recommended)") -- a small
+  floating, draggable window (not docked/fixed), entries in order with
+  the active entry visually distinguished, a round counter, drag-to-
+  reorder. This project's own old game already converged on the same
+  non-modal/draggable/add-remove/round-counter shape independently
+  (`turn_tracker_menu.gd`) -- Roll20 is the reference for *polish and
+  interaction details* more than a wholesale redesign.
+- **Distance labels**: this project's own existing character-token
+  billboard (`characterToken.ts`, `@babylonjs/gui`-based billboard
+  plane) is the mechanism to reuse/extend, per direct user call --
+  check the old Godot game's own billboard node setup for anything
+  else worth matching.
 
 ## Open questions / assumptions still worth confirming
 
-These are called out so they don't get silently decided during
-implementation -- flag if any assumption here is wrong before building
-against it:
-
-1. **Who can press "Next Turn"?** Assumed: anyone connected (matches
-   the old game's own no-permission-check behavior). Could instead be
-   GM-only.
-2. **Ctrl+Z scope mechanism**: same keybind scoped by admin status, vs.
-   a separate explicit GM-only "Reset All to Turn Start" button/action.
-   Both satisfy the requirement; this is a UI decision, not a
-   behavioral one.
-3. **Snapshot storage**: full per-character snapshot vs. a diff against
-   current live state. Pick whichever is simpler to implement
-   correctly first; either satisfies the Gherkin above.
-4. **Turn-order persistence**: does the tracker's state (who's in it,
-   whose turn it is, the round number) need to survive a room
-   restart/refresh the way placed character instances now do
-   (this round's own persistence work), or is it acceptable for it to
-   reset on room recreation? Not addressed above -- needs its own
-   call before implementation.
+1. **Manual `Add` vs. roll-value sorting**: an entry added manually
+   (no roll value) needs *some* defined position relative to rolled
+   entries -- sort to one end, keep it pinned wherever manually placed,
+   or something else. Not specified above.
+2. **Initiative-roll formula source**: a plain per-sheet dice-notation
+   string is the simplest version buildable today (item 0's variable
+   interpolation isn't built yet). Whether it needs to be more dynamic
+   than that for v1 is open.
+3. **Sort-direction default**: high-to-low vs. low-to-high -- confirmed
+   configurable, not which one is the default.
+4. **"Reset char"/GM-reset keybind**, if any, is explicitly deferred
+   ("we'll decide a keybind later") -- not blocking this pass.

@@ -374,9 +374,10 @@ see [COMPLETED.md#phase-8--lighting--voxel-tick-system](COMPLETED.md#phase-8--li
       second position-forcing mechanism for this. Full M/N/distance-
       metric/visual behavior spec now in `docs/BATTLE_SYSTEM.md`.
 - [ ] `scripts/battle/turn_tracker.gd` (51L) — **REDESIGN**, Colyseus
-      `Schema` room state. Full requirements (Add/Add Me/Next
-      Turn/Clear All/reorder, the per-turn fairness snapshot + Ctrl+Z
-      revert) in `docs/BATTLE_SYSTEM.md`.
+      `Schema` room state, persisting across disconnect/rejoin. Full
+      requirements (GM-only Next Turn, initiative-roll-driven
+      additions, Clear All/reorder, the "Reset Turn" snapshot + per-
+      character/GM-bulk reset) in `docs/BATTLE_SYSTEM.md`.
 - [ ] `scripts/ui/turn_tracker_menu.gd` (250L) — **REDESIGN**; also fix two
       known old bugs while rebuilding: minimized state is too tall (should
       shrink to just the title bar), and minimized title text should read
@@ -402,10 +403,13 @@ see [COMPLETED.md#phase-8--lighting--voxel-tick-system](COMPLETED.md#phase-8--li
       YOUR OWN last position on death) -- still open.
 - [x] **Resolved** (2026-10-23, see `docs/BATTLE_SYSTEM.md`): turn order
       stays advisory/unenforced, same as the old repo -- but gains a
-      real per-turn position/stat snapshot + Ctrl+Z revert (individual
-      and GM-bulk) as the actual fairness mechanism instead of
-      enforcement.
-- [ ] **DEFERRED** (`docs/BACKLOG.md`, "From item 6") — turn-based
+      real per-turn position/stat snapshot + "Reset Turn" (a per-
+      character turn-tracker context-menu item, plus a GM-only bulk
+      button) as the actual fairness mechanism instead of enforcement.
+      No keybind for any of this right now -- a real Ctrl+Z, if ever
+      built, should be a genuine multi-step undo history instead
+      (`docs/DEFERRED.md`), not this feature wearing that keybind.
+- [ ] **DEFERRED** (`docs/DEFERRED.md`, "From item 6") — turn-based
       encounter auto-trigger on running into an enemy. Old TODO left the
       trigger condition, AI turn-mode switch, and end-of-encounter
       condition all unspecified; real user call (2026-10-23): "not quite
@@ -416,7 +420,7 @@ see [COMPLETED.md#phase-8--lighting--voxel-tick-system](COMPLETED.md#phase-8--li
       call. No new battle-specific UI needed for this.
 - [ ] **DEFER** — line-of-sight lines from enemy to player. Blocked on
       Phase 10's AI entity existing; connects to the vision-cone work
-      there. Also now tracked in `docs/BACKLOG.md` ("From item 6") --
+      there. Also now tracked in `docs/DEFERRED.md` ("From item 6") --
       real user call (2026-10-23): helpful, but out of MVP scope, may
       be needed for some games later.
 - [ ] Note: waypoint cleanup across world-switch/death-respawn was never

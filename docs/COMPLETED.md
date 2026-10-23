@@ -395,7 +395,7 @@ never previously logged here despite being done:
   its own local test-chat panel standing in for "post to chat" (an
   out-of-game test harness, not just a read-only viewer). The
   `ModContext` game-state split this page's mods would eventually need
-  is tracked in `docs/BACKLOG.md`, not here -- unexercised by any real
+  is tracked in `docs/DEFERRED.md`, not here -- unexercised by any real
   mod yet, so not actually blocking this page's own done-ness.
 - **In-game "Characters" tab + character-sheet popup/popout** -- a
   many-to-many game<->character link (`GameCharacterLink`, with

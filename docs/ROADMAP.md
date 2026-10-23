@@ -102,12 +102,12 @@ discussion (2026-10-15), in dependency order:
      between two games.
    - A safe/sandboxed scripting system for calculated variables, and
      mod-based sheet importers, were both originally scoped here --
-     **moved to `docs/BACKLOG.md`** (2026-10-21, real correction: "I
+     **moved to `docs/DEFERRED.md`** (2026-10-21, real correction: "I
      wouldn't call those small follow ups. We'll probably only do a
      portion of them... we should probably move them to a backlog/
      deferred page... so we can come back to those later while getting
      a working system now"). The `ModContext` game-state split is in
-     `docs/BACKLOG.md` too.
+     `docs/DEFERRED.md` too.
    - ~~Player body size as a permanent character-sheet variable~~,
      ~~HP/MP generalized to arbitrary billboard bars~~, ~~chat shows
      the character's name~~, ~~standalone `/characters` page + its
@@ -158,10 +158,12 @@ discussion (2026-10-15), in dependency order:
    [docs/BATTLE_SYSTEM.md](BATTLE_SYSTEM.md)** -- this used to be a
    single paragraph here, intentionally shrunk once that doc existed
    to hold the detail instead (same "roadmap stays scannable" reasoning
-   as `docs/BACKLOG.md`/`docs/PORTING_CHECKLIST.md`). Core call that
+   as `docs/DEFERRED.md`/`docs/PORTING_CHECKLIST.md`). Core call that
    doc makes explicit: turn order stays advisory/unenforced, like the
-   old game's, but gains a per-turn position/stat snapshot + Ctrl+Z
-   revert as the actual fairness mechanism instead.
+   old game's, but gains a GM-triggered per-turn position/stat
+   snapshot + "Reset Turn" (a per-character context-menu item, plus a
+   GM-only bulk button -- no keybind) as the actual fairness mechanism
+   instead.
 7. **Default blocks as a real mod** -- pull the current built-in voxel
    type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
    hardcoded in the shared package) out into an actual mod file, using
