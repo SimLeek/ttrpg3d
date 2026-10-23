@@ -331,8 +331,14 @@ export function notifyCharacterSheetChanged(characterId: string): void {
     for (const { room, sessionId } of sessions) {
       const player = room.state.players.get(sessionId);
       if (player?.characterId === characterId) {
-        applyBarsToCharacterTarget(player, character);
-        applyBodySizeToCharacterTarget(player, character);
+        // focusedVariableOverrides' own doc: a session piloting this
+        // character may have its own live deviation (e.g. damage taken
+        // this session) that a sheet-wide change elsewhere must not
+        // silently overwrite -- same protection otherCharacters
+        // instances already get below.
+        const overrides = room.focusedVariableOverrides.get(sessionId);
+        applyBarsToCharacterTarget(player, character, overrides);
+        applyBodySizeToCharacterTarget(player, character, overrides);
       }
     }
   }
@@ -405,6 +411,39 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
    * after every mutation.
    */
   instanceVariableOverrides = new Map<string, Record<string, number>>();
+
+  /**
+   * The FOCUSED-slot counterpart to instanceVariableOverrides above --
+   * real request, found live testing multiple instances of the same
+   * character: "if you click your currently controlled character, it
+   * only affects that token... instead of all the others." Editing
+   * your own live bars used to write straight through to the shared
+   * CharacterRecord (`store.updateCharacterVariableValue` +
+   * `notifyCharacterSheetChanged`), which is exactly right for an
+   * actual character-SHEET edit (that's still how the REST sheet
+   * editor behaves), but wrong for "I clicked an HP bar on the body
+   * I'm physically piloting right now" -- that retroactively reset
+   * every OTHER placed instance (and session) of the same character
+   * that didn't have its own deviation yet. Keyed by sessionId, not
+   * characterId/instanceId -- the focused slot has no stable identity
+   * of its own beyond "whichever session is piloting it right now."
+   * Carried across a focus swap in BOTH directions, same spirit as
+   * instanceVariableOverrides' own persistence: swapping AWAY moves
+   * this session's current deltas onto the new otherCharacters
+   * snapshot's own instanceVariableOverrides entry (so they stay
+   * protected once you're no longer the one piloting them); swapping
+   * INTO an instance that already has its own deltas moves them the
+   * other way, into this map, instead of promoting them into the
+   * shared record the way focusCharacter used to. Never persisted to
+   * disk on its own (unlike instance overrides) -- there's nothing to
+   * reload against once nobody's in the focused slot, and unlike a
+   * swap, disconnecting leaves nowhere to carry a live deviation to
+   * (the focused slot isn't an otherCharacters entry, just this
+   * session's own presence) -- onLeave bakes whatever's left here into
+   * the permanent record instead, so a real edit still survives a
+   * refresh, same as before this map existed.
+   */
+  focusedVariableOverrides = new Map<string, Record<string, number>>();
 
   /** Which characterIds THIS room is currently registered under in the module-level `activeCharacterRooms` map -- tracked so `onDispose` can remove this room from exactly those entries (and only those) when the room is destroyed. */
   private registeredRoomCharacterIds = new Set<string>();
@@ -679,7 +718,28 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
         return;
       }
 
-      if (!isSendersOwnCharacter(sender, characterId) && !isAdmin) return;
+      // Real request, found live testing multiple instances of the same
+      // character: "if you click your currently controlled character,
+      // it only affects that token... instead of all the others."
+      // Editing your OWN focused bars now deviates only THIS session's
+      // live copy (focusedVariableOverrides, same shape as an
+      // instance's own overrides) rather than writing through to the
+      // shared CharacterRecord -- a sheet-wide edit (the REST sheet
+      // editor, or an admin editing a DIFFERENT player's focused
+      // character below) is a deliberately separate path; it still
+      // writes the shared record and cascades, since there's no
+      // per-instance deviation to protect there.
+      if (isSendersOwnCharacter(sender, characterId)) {
+        const character = store.getCharacter(characterId);
+        if (!character) return;
+        const overrides = { ...(this.focusedVariableOverrides.get(client.sessionId) ?? {}), [variableId]: value };
+        this.focusedVariableOverrides.set(client.sessionId, overrides);
+        applyBarsToCharacterTarget(sender!, character, overrides);
+        applyBodySizeToCharacterTarget(sender!, character, overrides);
+        return;
+      }
+
+      if (!isAdmin) return;
       store.updateCharacterVariableValue(characterId, variableId, value);
       notifyCharacterSheetChanged(characterId);
     });
@@ -830,12 +890,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     //
     // Real request: "for tab/shift tab/control swapping from context,
     // those should thus set the character sheet details from the
-    // token" -- the target instance's own override deltas get merged
-    // into the character's PERMANENT sheet record before it becomes
-    // the focused slot, so "the character sheet" now reflects whatever
-    // body you're piloting (the reverse direction -- a sheet edit
-    // refreshing the focused token's bars -- already worked via
-    // notifyCharacterSheetChanged; this is what makes it bidirectional).
+    // token" -- `applyOtherCharacterAsFocused` below copies the
+    // target's own current bars straight across, so the focused slot
+    // immediately reflects whatever body you're piloting (the reverse
+    // direction -- a sheet edit refreshing the focused token's bars --
+    // already worked via notifyCharacterSheetChanged, unrelated to
+    // this). This USED to also merge the target's own override deltas
+    // into the character's PERMANENT sheet record, but a later, real
+    // correction found that just as wrong as a direct bar edit cascading
+    // to every other placed instance ("if you click your currently
+    // controlled character, it only affects that token... instead of
+    // all the others") -- see focusedVariableOverrides' own doc.
+    // Swapping now just moves a live deviation between
+    // focusedVariableOverrides and instanceVariableOverrides, in
+    // whichever direction matches which side of the swap it's on; the
+    // shared record is never touched by a swap at all.
     // Re-points this session's FOCUSED-slot registration at the new
     // characterId too (activeCharacterSessions) -- without that, a
     // sheet edit to whatever you just switched TO would stop reaching
@@ -849,16 +918,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       const target = this.state.otherCharacters[targetIndex];
       const previousCharacterId = sender.characterId;
 
+      // Move any live deviation across the swap boundary -- never
+      // through the shared record (see focusedVariableOverrides' own
+      // doc). The outgoing side's deltas (if any) become the fresh
+      // otherCharacters snapshot's own instance override below; the
+      // incoming side's instance deltas (if any) become THIS session's
+      // focused-slot override instead.
+      const previousFocusedOverrides = this.focusedVariableOverrides.get(client.sessionId);
       const targetOverrides = this.instanceVariableOverrides.get(target.instanceId);
-      if (targetOverrides) {
-        for (const [key, value] of Object.entries(targetOverrides)) {
-          store.updateCharacterVariableValue(target.characterId, key, value);
-        }
-        this.instanceVariableOverrides.delete(target.instanceId);
-      }
+      this.instanceVariableOverrides.delete(target.instanceId);
+      this.focusedVariableOverrides.delete(client.sessionId);
+      if (targetOverrides) this.focusedVariableOverrides.set(client.sessionId, targetOverrides);
 
       const previouslyFocused = snapshotFocusedCharacter(sender);
       applyOtherCharacterAsFocused(sender, target);
+      if (previousFocusedOverrides) this.instanceVariableOverrides.set(previouslyFocused.instanceId, previousFocusedOverrides);
       this.state.otherCharacters.splice(targetIndex, 1);
       if (direction === "previous") this.state.otherCharacters.unshift(previouslyFocused);
       else this.state.otherCharacters.push(previouslyFocused);
@@ -867,12 +941,6 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.registerActiveCharacter(client.sessionId, target.characterId);
       this.syncCharacterRoomRegistration(target.characterId);
       this.syncCharacterRoomRegistration(previouslyFocused.characterId);
-      // The merge above may have changed the character's BASE record --
-      // cascade that into any OTHER still-placed instance of it too
-      // (siblings with no override of their own pick up the new base;
-      // ones with their own override are unaffected, same as any other
-      // sheet-level edit).
-      if (targetOverrides) notifyCharacterSheetChanged(target.characterId);
       this.persistPlacedCharacters();
     });
 
@@ -973,9 +1041,26 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // NOT touched here at all -- that's the actual point ("if gms/
     // players refresh, then monsters will disappear" is exactly the bug
     // this round fixes). Only the FOCUSED-slot registry needs cleanup.
+    const characterId = this.sessionCharacterIds.get(client.sessionId);
+    // The focused slot itself has nowhere to go on disconnect -- it's
+    // not an otherCharacters entry, just this session's own live
+    // presence, so there's no instance to carry a live deviation into
+    // the way a focus SWAP does (see focusedVariableOverrides' own
+    // doc). Bake whatever it ended up at into the permanent record
+    // instead, same as every edit used to do immediately before that
+    // isolation existed -- otherwise a real edit (take damage, then
+    // refresh) would simply vanish instead of surviving like the rest
+    // of this round's persistence work expects.
+    const overrides = this.focusedVariableOverrides.get(client.sessionId);
+    if (overrides && characterId) {
+      for (const [key, value] of Object.entries(overrides)) {
+        store.updateCharacterVariableValue(characterId, key, value);
+      }
+      this.focusedVariableOverrides.delete(client.sessionId);
+      notifyCharacterSheetChanged(characterId);
+    }
     this.state.players.delete(client.sessionId);
     this.adminSessionIds.delete(client.sessionId);
-    const characterId = this.sessionCharacterIds.get(client.sessionId);
     if (characterId) this.unregisterActiveCharacter(client.sessionId, characterId);
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }

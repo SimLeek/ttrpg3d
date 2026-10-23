@@ -292,7 +292,7 @@ describe("WorldRoom", () => {
       expect(store.getCharacter(joined.characterId)?.ownerAccountId).toBe(freshOwner.id);
     });
 
-    it("setCharacterVariableValue writes back through store.getCharacter and re-resolves the live Schema bar when sent by the character's own owner", async () => {
+    it("setCharacterVariableValue re-resolves the live Schema bar immediately, but only bakes it into store.getCharacter once the session actually leaves -- real correction: editing your own focused character used to write straight through, which retroactively changed every OTHER placed instance of the same character that had no override of its own yet", async () => {
       const character = store.createCharacter(owner.id, "Statted", [1, 0, 0]);
       const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
       store.updateCharacterSheet(character.id, null, customSheet, { hp: 10 });
@@ -303,6 +303,13 @@ describe("WorldRoom", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(room.state.players.get(client.sessionId)!.bars[0].value).toBe(3);
+      expect(store.getCharacter(character.id)?.variableValues.hp).toBe(10); // NOT written through yet -- still isolated to this live session
+
+      // Leaving bakes the final value in, same as before this correction --
+      // a real edit still survives a refresh, it just no longer leaks to
+      // siblings WHILE the session editing it is still connected.
+      await client.leave();
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(store.getCharacter(character.id)?.variableValues.hp).toBe(3);
     });
 
@@ -567,11 +574,22 @@ describe("WorldRoom", () => {
       expect(player.characterId).toBe(focused.id);
     });
 
-    it("focusCharacter (the same handler 'Control' uses) merges the target instance's own override deltas into the character's PERMANENT sheet record, and clears the now-dead instance's override -- real request: swapping should 'set the character sheet details from the token'", async () => {
+    it("focusCharacter (the same handler 'Control' uses) carries the target instance's own override deltas into the focused slot WITHOUT touching the character's PERMANENT sheet record -- real correction: this used to merge them into the shared record, which is exactly the 'affects all the others' bug a direct bar edit on your own focused character had too", async () => {
       const focused = store.createCharacter(owner.id, "ControlSwitcher", [1, 0, 0]);
       const goblinSheet = store.createCharacter(owner.id, "ControlledGoblin", [0, 1, 0]);
-      const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
-      store.updateCharacterSheet(goblinSheet.id, null, customSheet, { hp: 10 });
+      const customSheet = {
+        name: "Sheet",
+        pages: [],
+        variables: [
+          { id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 },
+          { id: "mp", label: "MP", type: "xOfY" as const, default: 5, max: 5 },
+        ],
+        bars: [
+          { variableId: "hp", color: [1, 0, 0] as [number, number, number] },
+          { variableId: "mp", color: [0, 0, 1] as [number, number, number] },
+        ],
+      };
+      store.updateCharacterSheet(goblinSheet.id, null, customSheet, { hp: 10, mp: 5 });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
       const player = room.state.players.get(client.sessionId)!;
@@ -588,14 +606,23 @@ describe("WorldRoom", () => {
 
       expect(player.characterId).toBe(goblinSheet.id);
       expect(player.bars[0].value).toBe(3); // the token's own bar reflects the damage, as before
-      expect(store.getCharacter(goblinSheet.id)?.variableValues.hp).toBe(3); // NEW this round: the permanent sheet record now reflects it too
+      expect(store.getCharacter(goblinSheet.id)?.variableValues.hp).toBe(10); // the permanent sheet record is NEVER touched by a swap
 
-      // Confirm a LATER sheet edit still reaches this session -- the
-      // focused-slot registry has to have been re-pointed at the new
-      // characterId, not left on whatever was focused before the swap.
-      store.updateCharacterSheet(goblinSheet.id, null, customSheet, { hp: 7 });
+      // Confirm the deviation truly moved into the focused slot, not just
+      // disappeared: a later sheet edit to a DIFFERENT variable this
+      // session has no deviation of its own for still reaches it (the
+      // focused-slot registry really was re-pointed at the new
+      // characterId), while the overridden hp stays protected.
+      store.updateCharacterSheet(goblinSheet.id, null, customSheet, { hp: 7, mp: 2 });
       notifyCharacterSheetChanged(goblinSheet.id);
-      expect(player.bars[0].value).toBe(7);
+      expect(player.bars[1].value).toBe(2); // mp -- no override, cascades through
+      expect(player.bars[0].value).toBe(3); // hp -- still this session's own deviation, untouched by the sheet edit
+
+      // Leaving bakes the live hp deviation into the permanent record,
+      // same as a direct edit on your own focused character does.
+      await client.leave();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(store.getCharacter(goblinSheet.id)?.variableValues.hp).toBe(3);
     });
 
     it("removeCharacterInstance deletes ONE specific placed instance but never the character record itself, and leaves other instances of the SAME character untouched (right-click 'Delete instance' -- not deleteCharacter/unlinkCharacterFromGame)", async () => {
@@ -693,18 +720,27 @@ describe("WorldRoom", () => {
       expect(store.getCharacter(goblinSheet.id)?.variableValues.hp).toBe(10); // the shared record itself is never touched by an instance-scoped edit
     });
 
-    it("setCharacterVariableValue WITHOUT an instanceId still edits the shared character record as before, and does not touch a placed instance's own independent value", async () => {
+    it("setCharacterVariableValue WITHOUT an instanceId updates the focused slot's own live bar immediately, but does NOT touch a placed instance's own independent value OR the shared character record while this session stays connected -- real correction: editing your own focused character used to write straight through, which retroactively changed every OTHER placed instance of the same character with no override of its own yet", async () => {
       const focused = store.createCharacter(owner.id, "SharedEditOwner", [1, 0, 0]);
       const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
       store.updateCharacterSheet(focused.id, null, customSheet, { hp: 10 });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const client = await colyseus.connectTo(room, { accountId: owner.id, characterId: focused.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("placeCharacter", { characterId: focused.id, x: player.x, y: player.y, z: player.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const sibling = room.state.otherCharacters.find((o) => o.characterId === focused.id)!;
 
       client.send("setCharacterVariableValue", { characterId: focused.id, variableId: "hp", value: 4 });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      const player = room.state.players.get(client.sessionId)!;
-      expect(player.bars[0].value).toBe(4); // the focused slot, exactly as before this round
+      expect(player.bars[0].value).toBe(4); // the focused slot updates immediately
+      expect(room.state.otherCharacters.find((o) => o.instanceId === sibling.instanceId)!.bars[0].value).toBe(10); // a separately placed copy of the SAME character is untouched
+      expect(store.getCharacter(focused.id)?.variableValues.hp).toBe(10); // and the shared record isn't written through while still connected
+
+      // Leaving bakes the final value in, same as before this correction.
+      await client.leave();
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(store.getCharacter(focused.id)?.variableValues.hp).toBe(4);
     });
 
