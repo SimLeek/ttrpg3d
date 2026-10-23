@@ -116,6 +116,8 @@ interface TurnOrderEntryLike {
   label: string;
   hasRollValue: boolean;
   rollValue: number;
+  instanceId: string;
+  characterId: string;
 }
 
 interface WorldStateLike {
@@ -321,6 +323,22 @@ export async function connectAndStreamWorld(
     return state?.otherCharacters?.find((o) => o.instanceId === instanceId);
   }
 
+  /**
+   * Mirrors WorldRoom.ts's own `isSendersOwnInstance` client-side --
+   * true for the LOCAL session's own piloted instance, or an
+   * `otherCharacters` entry THIS account placed. Backs the turn
+   * tracker's per-row "can I remove this" check and its right-click
+   * context menu gate (real correction, 2026-10-23: "if it's the
+   * player owning their own characters, then sure, they should be
+   * able to remove their specific characters").
+   */
+  function ownsInstance(instanceId: string): boolean {
+    if (!instanceId) return false;
+    const state = room!.state as WorldStateLike | undefined;
+    if (state?.players?.get(room!.sessionId)?.currentInstance.instanceId === instanceId) return true;
+    return !!state?.otherCharacters?.some((o) => o.instanceId === instanceId && o.placedByAccountId === accountId);
+  }
+
   const contextMenuContainer = document.createElement("div");
   document.body.appendChild(contextMenuContainer);
   const contextMenu = mountCharacterContextMenu(contextMenuContainer, {
@@ -384,17 +402,37 @@ export async function connectAndStreamWorld(
 
   // docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1 -- same
   // floating-overlay mount pattern as the context menu just above.
-  // isGM reuses this file's own isAdmin() (defined earlier) rather
-  // than re-deriving admin status a second way.
+  // Real correction, 2026-10-23: isGM now requires the G-key
+  // gmOverride toggle too, not just real admin status -- "the gm
+  // should be able to see what players will see" (toggle G off,
+  // see/use the same read-only-minus-your-own-characters list a real
+  // player does), rather than an admin account ALWAYS seeing Next
+  // Turn/Clear All/the manual add row regardless of that toggle.
   const turnTrackerContainer = document.createElement("div");
   document.body.appendChild(turnTrackerContainer);
   const turnTracker = mountTurnTracker(turnTrackerContainer, {
-    isGM: isAdmin,
+    isGM: () => isAdmin() && gmOverride.isActive(),
+    canRemoveEntry: (entry) => ownsInstance(entry.instanceId),
     onAdd: (label) => room!.send("addToTurnOrder", { label }),
     onRemove: (turnEntryId) => room!.send("removeFromTurnOrder", { turnEntryId }),
     onClearAll: () => room!.send("clearTurnOrder"),
     onNextTurn: () => room!.send("nextTurn"),
     onReorder: (turnEntryId, newIndex) => room!.send("reorderTurnOrder", { turnEntryId, newIndex }),
+    // Real request: "let's get the context menu working for the turn
+    // order characters, so if I select a turn order character that I
+    // own, I should be able to click control." Reuses the SAME
+    // mounted characterContextMenu.ts instance the 3D tokens open --
+    // opens only for an owned instance (or GM mode, same escape hatch
+    // every other token-interaction gate in this file already uses);
+    // a bare-label ("Add non-character...") entry has no instanceId
+    // and never opens anything.
+    onRowContextMenu: (entry, x, y) => {
+      if (!entry.instanceId) return;
+      if (!ownsInstance(entry.instanceId) && !gmOverride.isActive()) return;
+      const isPiloted = room!.state.players.get(room!.sessionId)?.currentInstance.instanceId === entry.instanceId;
+      lastMenuOpenScreen = { x, y };
+      contextMenu.open(x, y, entry.characterId, entry.instanceId, isPiloted);
+    },
   });
 
   const statInputContainer = document.createElement("div");
@@ -739,7 +777,7 @@ export async function connectAndStreamWorld(
     // docs/BATTLE_SYSTEM.md's turn-order tracker -- same fresh-every-
     // tick poll idiom as seeThroughWalls just above.
     turnTracker.update(
-      Array.from(state?.turnOrder ?? []).map((e) => ({ turnEntryId: e.turnEntryId, label: e.label, hasRollValue: e.hasRollValue, rollValue: e.rollValue })),
+      Array.from(state?.turnOrder ?? []).map((e) => ({ turnEntryId: e.turnEntryId, label: e.label, hasRollValue: e.hasRollValue, rollValue: e.rollValue, instanceId: e.instanceId, characterId: e.characterId })),
       state?.turnOrderCurrentIndex ?? 0,
       state?.turnOrderRound ?? 1,
     );

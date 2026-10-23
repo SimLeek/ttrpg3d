@@ -905,33 +905,49 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.removeTurnOrderEntriesByInstanceId(instanceId);
     });
 
-    // docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1. GM-only --
-    // "Add" is explicitly the GM's manual-override path there, same
-    // tier as Next Turn below, consistent within this phase (phase 2's
-    // initiative rolls are the non-GM add path, not built yet).
-    // `findAnyInstance` (not `findInstance`) -- real correction,
-    // 2026-10-23: "I cannot add my currently controlled character to
-    // the turn order... even though I should be able to." A currently-
-    // piloted instance is just as real and addable as an idle one now.
+    // docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1. Real
+    // correction, 2026-10-23: a character-scoped add is now allowed
+    // for whoever OWNS that instance (admin OR isSendersOwnInstance),
+    // not admin-only -- "if it's the player owning their own
+    // characters, then sure, they should be able to... add their
+    // characters." A bare-label (non-character) add stays admin-only
+    // -- that's the "Add non-character..." free-text fallback for
+    // traps/environmental effects with no owner to check, same tier as
+    // Next Turn/Clear All below. `findAnyInstance` (not `findInstance`)
+    // -- a currently-piloted instance is just as real and addable as
+    // an idle one ("I cannot add my currently controlled character to
+    // the turn order... even though I should be able to").
     this.onMessage<AddToTurnOrderMessage>("addToTurnOrder", (client, { label, instanceId, characterId }) => {
-      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const sender = this.state.players.get(client.sessionId);
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
       const entry = new TurnOrderEntryState();
       entry.turnEntryId = newInstanceId();
       if (instanceId && characterId) {
+        if (!isSendersOwnInstance(sender, this.state.otherCharacters, instanceId) && !isAdmin) return;
         const existing = this.findAnyInstance(instanceId);
         if (!existing || existing.characterId !== characterId) return; // instanceId must actually belong to the claimed characterId -- sanity check, not just trust
         entry.instanceId = instanceId;
         entry.characterId = characterId;
         entry.label = existing.characterName;
       } else {
+        if (!isAdmin) return;
         entry.label = label;
       }
       this.state.turnOrder.push(entry);
       this.persistTurnOrder();
     });
 
+    // Real correction, 2026-10-23: same ownership relaxation as
+    // addToTurnOrder above -- a player can remove their OWN
+    // character's entry, but a bare-label (non-character) entry, or
+    // someone else's character, still requires admin.
     this.onMessage<RemoveFromTurnOrderMessage>("removeFromTurnOrder", (client, { turnEntryId }) => {
-      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const sender = this.state.players.get(client.sessionId);
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
+      const entry = this.state.turnOrder.find((e) => e.turnEntryId === turnEntryId);
+      if (!entry) return;
+      const ownsEntry = !!entry.instanceId && isSendersOwnInstance(sender, this.state.otherCharacters, entry.instanceId);
+      if (!ownsEntry && !isAdmin) return;
       this.removeTurnOrderEntryById(turnEntryId);
     });
 

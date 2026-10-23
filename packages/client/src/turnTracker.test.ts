@@ -7,6 +7,7 @@ let tracker: TurnTrackerController | null = null;
 function mount(overrides: Partial<TurnTrackerOptions> = {}) {
   const options: TurnTrackerOptions = {
     isGM: () => true,
+    canRemoveEntry: () => false,
     onAdd: vi.fn(),
     onRemove: vi.fn(),
     onClearAll: vi.fn(),
@@ -18,8 +19,8 @@ function mount(overrides: Partial<TurnTrackerOptions> = {}) {
   return { tracker, options };
 }
 
-function entry(turnEntryId: string, label: string, rollValue?: number): TurnOrderEntryLike {
-  return { turnEntryId, label, hasRollValue: rollValue !== undefined, rollValue: rollValue ?? 0 };
+function entry(turnEntryId: string, label: string, rollValue?: number, instanceId = "", characterId = ""): TurnOrderEntryLike {
+  return { turnEntryId, label, hasRollValue: rollValue !== undefined, rollValue: rollValue ?? 0, instanceId, characterId };
 }
 
 beforeEach(() => {
@@ -129,6 +130,49 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector("#turn-tracker-clear-btn")).toBeNull();
     expect(container.querySelector(".turn-tracker-entry-remove")).toBeNull();
     expect(container.querySelector<HTMLLIElement>(".turn-tracker-entry")!.draggable).toBe(false);
+  });
+
+  it("the manual add row's placeholder reads 'Add non-character...' -- real request: distinguish it from the context-menu's per-character 'Add to Turn Order'", () => {
+    mount({ isGM: () => true });
+    expect(container.querySelector<HTMLInputElement>("#turn-tracker-add-input")!.placeholder).toBe("Add non-character...");
+  });
+
+  it("a non-GM player can still remove an entry for a character they OWN -- real correction: \"if it's the player owning their own characters, then sure, they should be able to remove their specific characters\" -- but NOT see Next Turn/Clear All/the add row/drag-to-reorder, which stay GM-only", () => {
+    const { tracker, options } = mount({ isGM: () => false, canRemoveEntry: (e) => e.instanceId === "mine" });
+    tracker.update([entry("1", "MyGoblin", undefined, "mine"), entry("2", "SomeoneElses", undefined, "not-mine")], 0, 1);
+
+    const rows = container.querySelectorAll<HTMLLIElement>(".turn-tracker-entry");
+    expect(rows[0].querySelector(".turn-tracker-entry-remove")).not.toBeNull(); // owned -- removable
+    expect(rows[1].querySelector(".turn-tracker-entry-remove")).toBeNull(); // not owned, not GM -- not removable
+    expect(rows[0].draggable).toBe(false); // reordering stays GM-only regardless of ownership
+    expect(container.querySelector("#turn-tracker-next-btn")).toBeNull();
+    expect(container.querySelector("#turn-tracker-clear-btn")).toBeNull();
+    expect(container.querySelector("#turn-tracker-add-input")).toBeNull();
+
+    rows[0].querySelector<HTMLButtonElement>(".turn-tracker-entry-remove")!.click();
+    expect(options.onRemove).toHaveBeenCalledWith("1");
+  });
+
+  it("right-clicking a row calls onRowContextMenu with that entry and the click's screen position", () => {
+    const { tracker, options } = mount({ onRowContextMenu: vi.fn() });
+    tracker.update([entry("1", "A", undefined, "inst-1", "char-1")], 0, 1);
+    const row = container.querySelector<HTMLLIElement>(".turn-tracker-entry")!;
+
+    row.dispatchEvent(new MouseEvent("contextmenu", { clientX: 50, clientY: 60, cancelable: true }));
+
+    expect(options.onRowContextMenu).toHaveBeenCalledWith(expect.objectContaining({ turnEntryId: "1", instanceId: "inst-1", characterId: "char-1" }), 50, 60);
+  });
+
+  it("the update() isGM-change detection still refreshes GM controls when the data itself hasn't changed -- real correction: isGM now follows the G-key toggle, which can flip with no corresponding turn-order data change", () => {
+    let gm = false;
+    const { tracker } = mount({ isGM: () => gm });
+    tracker.update([entry("1", "A")], 0, 1);
+    expect(container.querySelector("#turn-tracker-next-btn")).toBeNull();
+
+    gm = true;
+    tracker.update([entry("1", "A")], 0, 1); // identical entries/currentIndex/round -- only isGM changed
+
+    expect(container.querySelector("#turn-tracker-next-btn")).not.toBeNull();
   });
 
   it("clicking Add with a non-empty label calls onAdd and clears the input", () => {

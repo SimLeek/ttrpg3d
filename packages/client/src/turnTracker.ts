@@ -37,15 +37,38 @@ export interface TurnOrderEntryLike {
   label: string;
   hasRollValue: boolean;
   rollValue: number;
+  /** Real correction, 2026-10-23: empty for a bare-label ("Add non-character...") entry, a real OtherCharacterState id otherwise -- lets canRemoveEntry/onRowContextMenu address the right thing. */
+  instanceId: string;
+  characterId: string;
 }
 
 export interface TurnTrackerOptions {
+  /**
+   * Real correction, 2026-10-23: "the gm should be able to see what
+   * players will see" -- tied to the G-key `gmOverride` toggle (NOT
+   * just real admin status), so an admin previewing the player view
+   * (G off) sees the same read-only-minus-their-own-characters list a
+   * real player does. Gates Next Turn/Clear All/the manual "Add non-
+   * character..." row/drag-to-reorder.
+   */
   isGM: () => boolean;
+  /** Real correction, 2026-10-23: "if it's the player owning their own characters, then sure, they should be able to remove their specific characters" -- a non-GM player can still remove an entry for a character they own, independent of isGM. Always false for a bare-label entry (nothing to check ownership of). */
+  canRemoveEntry: (entry: TurnOrderEntryLike) => boolean;
   onAdd(label: string): void;
   onRemove(turnEntryId: string): void;
   onClearAll(): void;
   onNextTurn(): void;
   onReorder(turnEntryId: string, newIndex: number): void;
+  /**
+   * Real request: "let's get the context menu working for the turn
+   * order characters, so if I select a turn order character that I
+   * own, I should be able to click control." Reuses the SAME floating
+   * characterContextMenu.ts instance the 3D tokens already open --
+   * net.ts decides whether to actually open it (owned, or GM) and
+   * with what `isPiloted` value, this file just reports the right-
+   * click and which entry it was on.
+   */
+  onRowContextMenu?: (entry: TurnOrderEntryLike, screenX: number, screenY: number) => void;
 }
 
 export interface TurnTrackerController {
@@ -167,7 +190,7 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
     }
     gmControls.innerHTML = `
       <div class="turn-tracker-add-row">
-        <input type="text" id="turn-tracker-add-input" placeholder="Add entry..." maxlength="60" />
+        <input type="text" id="turn-tracker-add-input" placeholder="Add non-character..." maxlength="60" />
         <button type="button" id="turn-tracker-add-btn">Add</button>
       </div>
       <div class="turn-tracker-actions">
@@ -205,6 +228,8 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
       const li = document.createElement("li");
       li.className = "turn-tracker-entry" + (index === lastCurrentIndex ? " current" : "");
       li.dataset.turnEntryId = entry.turnEntryId;
+      // Drag-to-reorder stays GM-only (reordering the WHOLE order is a
+      // GM-tier concern, unlike removing just your own entry below).
       if (isGM) li.draggable = true;
 
       const label = document.createElement("span");
@@ -219,7 +244,10 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
         li.appendChild(roll);
       }
 
-      if (isGM) {
+      // Real correction, 2026-10-23: "if it's the player owning their
+      // own characters, then sure, they should be able to remove
+      // their specific characters" -- independent of isGM now.
+      if (isGM || options.canRemoveEntry(entry)) {
         const removeBtn = document.createElement("button");
         removeBtn.type = "button";
         removeBtn.className = "turn-tracker-entry-remove";
@@ -227,7 +255,9 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
         removeBtn.textContent = "✕";
         removeBtn.addEventListener("click", () => options.onRemove(entry.turnEntryId));
         li.appendChild(removeBtn);
+      }
 
+      if (isGM) {
         li.addEventListener("dragstart", () => {
           draggingTurnEntryId = entry.turnEntryId;
         });
@@ -241,6 +271,15 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
           draggingTurnEntryId = null;
         });
       }
+
+      // Real request: "let's get the context menu working for the
+      // turn order characters" -- reuses the same right-click
+      // convention the 3D tokens already use; net.ts decides whether
+      // there's actually anything ownable/controllable here.
+      li.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        options.onRowContextMenu?.(entry, event.clientX, event.clientY);
+      });
 
       list.appendChild(li);
     });
@@ -280,15 +319,24 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
    */
   function entriesEqual(a: TurnOrderEntryLike[], b: TurnOrderEntryLike[]): boolean {
     if (a.length !== b.length) return false;
-    return a.every((entry, i) => entry.turnEntryId === b[i].turnEntryId && entry.label === b[i].label && entry.hasRollValue === b[i].hasRollValue && entry.rollValue === b[i].rollValue);
+    return a.every((entry, i) => entry.turnEntryId === b[i].turnEntryId && entry.label === b[i].label && entry.hasRollValue === b[i].hasRollValue && entry.rollValue === b[i].rollValue && entry.instanceId === b[i].instanceId);
   }
+
+  // Real correction, 2026-10-23: isGM() now follows the G-key toggle
+  // ("the gm should be able to see what players will see"), which can
+  // flip at any moment with no corresponding turn-order DATA change --
+  // tracked separately so update()'s unchanged-skip (the flicker fix
+  // above) doesn't also suppress a GM-controls refresh on toggle.
+  let lastIsGM = options.isGM();
 
   return {
     update(entries: TurnOrderEntryLike[], currentIndex: number, round: number): void {
-      const unchanged = currentIndex === lastCurrentIndex && round === lastRound && entriesEqual(entries, lastEntries);
+      const isGMNow = options.isGM();
+      const unchanged = currentIndex === lastCurrentIndex && round === lastRound && isGMNow === lastIsGM && entriesEqual(entries, lastEntries);
       lastEntries = entries;
       lastCurrentIndex = currentIndex;
       lastRound = round;
+      lastIsGM = isGMNow;
       if (unchanged) return;
       renderAll();
     },

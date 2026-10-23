@@ -904,11 +904,39 @@ describe("WorldRoom", () => {
       expect(room.state.turnOrder[0]).toMatchObject({ label: "RealGoblin", instanceId: instance.instanceId, characterId: goblin.id });
     });
 
-    it("addToTurnOrder is refused from a non-admin session", async () => {
+    it("addToTurnOrder is refused from a non-admin session for a bare label -- real correction, 2026-10-23: a non-character ('Add non-character...') add stays admin-only even though character-owned adds are now relaxed below", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const stranger = await colyseus.connectTo(room);
 
       stranger.send("addToTurnOrder", { label: "Sneaky Add" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(0);
+    });
+
+    it("addToTurnOrder (a non-admin session) is allowed for a character THEY OWN (piloted or idle-placed) -- real correction, 2026-10-23: \"if it's the player owning their own characters, then sure, they should be able to... add their characters\"", async () => {
+      const playerAccount = trackedAccount(`WorldRoom-test-turnorder-selfadd-${Date.now()}`);
+      const piloted = store.createCharacter(playerAccount.id, "SelfPiloted", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: playerAccount.id, characterId: piloted.id });
+      const player = room.state.players.get(client.sessionId)!;
+
+      client.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: piloted.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder).toHaveLength(1);
+      expect(room.state.turnOrder[0]).toMatchObject({ label: "SelfPiloted", instanceId: player.currentInstance.instanceId, characterId: piloted.id });
+    });
+
+    it("addToTurnOrder (a non-admin session) is refused for a character they DON'T own, even with a real instanceId/characterId", async () => {
+      const ownerForOther = trackedAccount(`WorldRoom-test-turnorder-notmine-owner-${Date.now()}`);
+      const notMine = store.createCharacter(ownerForOther.id, "NotMine", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const otherClient = await colyseus.connectTo(room, { accountId: ownerForOther.id, characterId: notMine.id });
+      const otherPlayer = room.state.players.get(otherClient.sessionId)!;
+      const stranger = await colyseus.connectTo(room);
+
+      stranger.send("addToTurnOrder", { label: "ignored", instanceId: otherPlayer.currentInstance.instanceId, characterId: notMine.id });
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(room.state.turnOrder).toHaveLength(0);
@@ -993,7 +1021,7 @@ describe("WorldRoom", () => {
       expect(room.state.turnOrderCurrentIndex).toBe(0); // clamped, not left pointing past the end
     });
 
-    it("removeFromTurnOrder is refused from a non-admin session", async () => {
+    it("removeFromTurnOrder is refused from a non-admin session for a bare-label entry (nothing to own)", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
       const stranger = await colyseus.connectTo(room);
@@ -1005,6 +1033,32 @@ describe("WorldRoom", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(room.state.turnOrder).toHaveLength(1);
+    });
+
+    it("removeFromTurnOrder (a non-admin session) is allowed for their OWN character's entry, but refused for someone else's -- real correction, 2026-10-23: \"if it's the player owning their own characters, then sure, they should be able to remove their specific characters\"", async () => {
+      const playerAccount = trackedAccount(`WorldRoom-test-turnorder-selfremove-${Date.now()}`);
+      const mine = store.createCharacter(playerAccount.id, "SelfRemovable", [1, 0, 0]);
+      const otherAccount = trackedAccount(`WorldRoom-test-turnorder-selfremove-other-${Date.now()}`);
+      const notMine = store.createCharacter(otherAccount.id, "NotRemovable", [0, 1, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: playerAccount.id, characterId: mine.id });
+      const otherClient = await colyseus.connectTo(room, { accountId: otherAccount.id, characterId: notMine.id });
+      const player = room.state.players.get(client.sessionId)!;
+      const otherPlayer = room.state.players.get(otherClient.sessionId)!;
+      client.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: mine.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: otherPlayer.currentInstance.instanceId, characterId: notMine.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const [mineEntryId, notMineEntryId] = room.state.turnOrder.map((e) => e.turnEntryId);
+
+      client.send("removeFromTurnOrder", { turnEntryId: notMineEntryId }); // not theirs -- refused
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrder).toHaveLength(2);
+
+      client.send("removeFromTurnOrder", { turnEntryId: mineEntryId }); // their own -- allowed
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrder.map((e) => e.turnEntryId)).toEqual([notMineEntryId]);
     });
 
     it("clearTurnOrder (GM) resets entries, current index, and round together", async () => {
