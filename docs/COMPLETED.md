@@ -381,10 +381,89 @@ via console logging, never guessed:
 
 **Known gaps, carried into `docs/ROADMAP.md`'s item 2 follow-ups**:
 context-menu actions ("Edit token properties", "Select status effects")
-are intentionally minimal placeholders, not final UI; the client-side
-`owned` ownership check is a literal characterId match with no
-admin/GM override yet, even though the server-side handlers already
-admin-gate correctly.
+are intentionally minimal placeholders, not final UI. The client-side
+`owned` ownership check being a literal characterId match with no
+admin/GM override is now fixed -- see "GM token override" below.
+
+## MVP goal item 4 follow-up — Multiple character instances, persistence, GM token override
+
+PR #33 (multi-character presence) + PR #34 (this round) + a follow-up
+GM-override fix, built directly on real playtest feedback after each
+merge, not speculative scope:
+
+- **Drag-and-drop character placement onto the 3D world**
+  (`characterPlacement.ts` + `WorldRoom.ts`'s `placeCharacter` handler),
+  **multiple independent instances of the same character**
+  (`OtherCharacterState.instanceId`, real request: "I can't add
+  multiple instances of the same character. I would want to do that
+  for monsters"), and **Tab/Shift+Tab + a right-click "Control" item**
+  to cycle/jump control between an account's own placed instances
+  (`focusCycling.ts`, `characterContextMenu.ts`, `WorldRoom.ts`'s
+  `focusCharacter` handler, shared by both UI paths).
+- **Placed instances now persist per-WORLD, not per-session**: moved
+  `otherCharacters` from `PlayerState` onto `WorldState` (top-level,
+  shared by the whole room) specifically because a session-scoped
+  array can never survive that session disconnecting -- real feedback:
+  "the tokens do not persist upon exiting and re-entering games... they
+  should be stored and loaded with the page/world." `store.ts`'s
+  `PlacedCharacterInstanceRecord`/`WorldRecord.placedCharacters` is the
+  actual disk-backed half, loaded back in `WorldRoom.onCreate`.
+- **Each instance's own stat/color/status-effect deviations are
+  independent**, not a shared pool -- `instanceVariableOverrides`
+  (reversing an earlier "deliberately ephemeral" call, per explicit
+  user steer, once persistence existed to make it safe).
+- **Your own currently-focused character's live edits are ALSO
+  isolated** (`focusedVariableOverrides`) -- real correction found
+  live: editing your own focused character's bar used to write
+  straight through to the shared `CharacterRecord`, retroactively
+  resetting every sibling instance/session with no override of its
+  own yet, and a focus swap had the same problem in reverse. A real
+  edit still survives a disconnect (baked into the permanent record in
+  `onLeave`, since the focused slot has nowhere else to carry it to).
+- **GM token override**: `net.ts`'s `pickOwnedToken`/`resolveHoveredBar`
+  (and the matching hover-highlight check) now also accept a pick
+  while `gmOverride.isActive()` -- same G-key-toggled escape hatch
+  `voxelEditor.ts`'s block-edit bypass already uses. Closes the
+  long-standing item-2 gap above. Also found while fixing it:
+  `focusCharacter`/`removeCharacterInstance` never had the admin bypass
+  their sibling instance-scoped handlers already had, so opening the
+  client-side gate would have left "Control"/"Delete instance"
+  silently no-op for a GM on someone else's instance -- both fixed
+  together.
+- **Real bugs found live, each confirmed by direct evidence, not
+  guessed**:
+  - Default/Select mode bleed-through (right-click in Default mode
+    opened the context menu instead of placing a block; leftover
+    floating stat/color/status-effect UI never dismissed) -- fixed by
+    making `voxelEditor.ts`'s click handlers a clean either/or on
+    `noa.container.hasPointerLock`.
+  - `placeCharacter` used to silently reject placing the character you
+    were already focused on (a stale rule from before multiple
+    instances existed) -- real correction: "if you're controlling an
+    instance of 'bob' and you drag in another 'bob', that should still
+    work."
+  - "Control" teleported the wrong thing: its callback sent the
+    `focusCharacter` message but never called
+    `playerController.teleportTo(...)` like Tab/Shift+Tab already did,
+    so the local physics entity stayed put while the Schema fields
+    relabeled it with the target's data.
+  - The local player's own body box was stuck rendering its
+    creation-time fixed blue regardless of the focused character's
+    real color. Root cause (confirmed by direct experiment, not a
+    guess): the material OBJECT attached to `noa.playerEntity` (via a
+    raw `addComponent` call, unlike every remote/other box's fresh
+    `noa.entities.add()` entity) never visually reflected a
+    `.diffuseColor` property reassignment, even though a live console
+    check confirmed the property held the correct value continuously.
+    Swapping in a brand-new `StandardMaterial` whenever the target
+    color changes (disposing the old one) fixed it.
+  - A hard refresh while already in-game resumed whichever character
+    was last stored in `localStorage`'s `CHARACTER_STORAGE_KEY`, which
+    was only ever written at the original lobby pick -- never updated
+    when Tab/Shift+Tab/Control changed the actually-focused character,
+    so a refresh after switching silently resumed the wrong one (or
+    characterless). Fixed by keeping that key in sync with the local
+    player's live `characterId` every tick it actually changes.
 
 ## MVP goal items 3 + 9 — Mod load/unload mechanism, GM-only settings UI
 
