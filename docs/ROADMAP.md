@@ -106,79 +106,20 @@ discussion (2026-10-15), in dependency order:
      wouldn't call those small follow ups. We'll probably only do a
      portion of them... we should probably move them to a backlog/
      deferred page... so we can come back to those later while getting
-     a working system now"). Of the items below, body size, drag-and-
-     drop placement, Tab/Shift+Tab cycling, and deleting a character
-     are this item's actual MVP-scope finish, being built now
-     (2026-10-21) -- chat-sender-name stays partial/blocked and the
-     ModContext split is in `docs/BACKLOG.md` too (see their own notes
-     below).
-   - ~~**NEW -- player body size becomes a permanent character-sheet
-     variable**~~ -- **DONE**. `bodyWidth`/`bodyHeight`/`bodyDepth` are
-     live, reserved sheet variables driving each character's actual
-     body-box dimensions AND its physics collision box (`net.ts` calls
-     `resizeLocalPlayerBody`/`resizeEntityBody` whenever a synced
-     player's/instance's body size changes, resolved server-side via
-     `applyBodySizeToCharacterTarget`; `playerBodyMesh.ts`'s
-     `resizeEntityBody` calls noa's `entities.setEntitySize`, not just
-     the visual mesh).
-   - ~~**NEW -- HP/MP become DEFAULT (not permanent/fixed) character-sheet
-     variables, linked to the billboard bars**~~ -- **DONE** (2026-10-21,
-     PR #29). Generalized further than originally scoped: not just HP/MP
-     specifically but an arbitrary, per-sheet-configured list of
-     `{variableId, color}` bars (any `xOfY` variable, any count, any
-     color) -- `characterToken.ts`'s billboard renders whichever bars
-     the sheet defines, capped at 4 reserved slots. The old fixed
-     `CharacterRecord.hp/maxHp/mp/maxMp` fields are gone entirely.
-   - ~~**NEW -- chat should show the character's name, not the
-     account's**~~ -- **DONE** (2026-10-21, PR #29), accepted in this
-     manual-dropdown shape by explicit user call (2026-10-22) rather
-     than building the automatic-from-currently-controlling version
-     this bullet originally scoped: `chatSend` takes an optional
-     `asCharacterId`, and the compose row has a "post as" dropdown
-     defaulting to "My username." A real "currently controlling"
-     concept does now exist (Tab/Shift+Tab, below) if automatic
-     derivation is ever wanted later, but it's not planned work.
-   - ~~**NEW -- a third top-level page, scoped to the ACCOUNT (not a
-     game), for viewing/testing character sheets outside any game**~~
-     -- **DONE** (2026-10-21, PR #29): the standalone `/characters`
-     page, with its own local test-chat panel standing in for "post to
-     chat" (an out-of-game test harness, not just a read-only viewer --
-     the sub-bullet below is DONE along with it).
-     - ~~**An out-of-game test harness, not just a read-only viewer**~~
-       -- **DONE** (2026-10-21, PR #29). The ModContext game-state
-       split this page's mods would eventually need is tracked in
-       `docs/BACKLOG.md` now, not here -- unexercised by any real mod
-       yet, so not actually blocking this page's own done-ness.
-   - ~~**NEW -- an in-game "Characters" tab + character-sheet popup/
-     popout**~~ -- **DONE** (2026-10-21, PR #29, following real
-     requests the same day). A many-to-many game<->character link
-     (`GameCharacterLink`, with optional folders and a `visibility:
-     "all" | string[]` list), a "Characters" tab inside `chatPanel.ts`
-     (tab order Chat, Characters, GM) listing characters visible to the
-     account in the current game, and a centered popup (+ a "Pop out"
-     into a real separate browser window) showing that character's
-     sheet -- `canEdit: false` for a shared character you don't own or
-     admin.
-   - ~~**NEW -- drag a character from the Characters tab onto the 3D
-     world to place/move their token**~~ -- **DONE** (PR #33/#34, see
-     [COMPLETED.md](COMPLETED.md#mvp-goal-item-4-follow-up--multiple-character-instances-persistence-gm-token-override)).
-     Also gained, beyond the original scope: placing creates a genuinely
-     SEPARATE, independent instance each time (even for the same
-     character -- "multiple instances... for monsters"), and every
-     placed instance now persists per-world, not just for the placing
-     session.
-   - ~~**NEW -- Tab/Shift+Tab cycles control + camera focus between the
-     player's own character instances present in the world**~~ --
-     **DONE** (PR #33/#34, same COMPLETED.md entry as the bullet
-     above), plus a right-click "Control" item for a direct jump
-     (not just ring order), and the chat-sender-name item's own
-     "currently controlling" concept it was waiting on now exists --
-     see that item's own note on why it's staying a manual dropdown
-     anyway.
-   - ~~**NEW -- deleting a character**~~ -- **DONE**. A real `DELETE
-     /characters/:id` endpoint (`server.ts`, backed by
-     `store.deleteCharacter`), with a confirmation step wired from both
-     the standalone `/characters` page and the in-game Characters tab.
+     a working system now"). The `ModContext` game-state split is in
+     `docs/BACKLOG.md` too.
+   - ~~Player body size as a permanent character-sheet variable~~,
+     ~~HP/MP generalized to arbitrary billboard bars~~, ~~chat shows
+     the character's name~~, ~~standalone `/characters` page + its
+     out-of-game test harness~~, ~~in-game "Characters" tab +
+     character-sheet popup/popout~~, ~~drag-and-drop character
+     placement onto the 3D world~~, ~~Tab/Shift+Tab + "Control" cycle
+     control between an account's own character instances~~, ~~deleting
+     a character~~ -- all **DONE**, see
+     [COMPLETED.md](COMPLETED.md#mvp-goal-item-4-partial--character-pagestabs-body-size-chat-sender-name-character-deletion)
+     and
+     [COMPLETED.md](COMPLETED.md#mvp-goal-item-4-follow-up--multiple-character-instances-persistence-gm-token-override)
+     for the full detail on each.
 5. ~~**Full panel UI chrome**~~ -- **DONE** (2026-10-16, see
    [COMPLETED.md](COMPLETED.md#mvp-goal-item-3--panel-ui-chrome) for
    the full implementation) for the chrome itself: all 4 panels exist

@@ -385,6 +385,53 @@ are intentionally minimal placeholders, not final UI. The client-side
 `owned` ownership check being a literal characterId match with no
 admin/GM override is now fixed -- see "GM token override" below.
 
+## MVP goal item 4 (partial) — Character pages/tabs, body size, chat sender name, character deletion
+
+PR #29 (2026-10-21) plus a couple of directly-related follow-ups,
+never previously logged here despite being done:
+
+- **Standalone `/characters` page**, scoped to the ACCOUNT (not a
+  game) -- for viewing/testing character sheets outside any game, with
+  its own local test-chat panel standing in for "post to chat" (an
+  out-of-game test harness, not just a read-only viewer). The
+  `ModContext` game-state split this page's mods would eventually need
+  is tracked in `docs/BACKLOG.md`, not here -- unexercised by any real
+  mod yet, so not actually blocking this page's own done-ness.
+- **In-game "Characters" tab + character-sheet popup/popout** -- a
+  many-to-many game<->character link (`GameCharacterLink`, with
+  optional folders and a `visibility: "all" | string[]` list), a tab
+  inside `chatPanel.ts` (tab order Chat, Characters, GM) listing
+  characters visible to the account in the current game, and a
+  centered popup (+ a "Pop out" into a real separate browser window)
+  showing that character's sheet -- `canEdit: false` for a shared
+  character you don't own or admin.
+- **HP/MP generalized into an arbitrary, per-sheet-configured list of
+  billboard bars** -- not just HP/MP specifically, any `xOfY`
+  variable, any count, any color (`{variableId, color}`), capped at 4
+  reserved slots. The old fixed `CharacterRecord.hp/maxHp/mp/maxMp`
+  fields are gone entirely.
+- **Chat shows the character's name, not the account's** -- `chatSend`
+  takes an optional `asCharacterId`, and the compose row has a "post
+  as" dropdown defaulting to "My username." Accepted in this
+  manual-dropdown shape (2026-10-22 user call) rather than
+  automatically deriving it from whichever character the account is
+  currently controlling -- a real "currently controlling" concept does
+  exist now (Tab/Shift+Tab, below) if that's ever wanted later.
+- **Player body size is a live, reserved character-sheet variable** --
+  `bodyWidth`/`bodyHeight`/`bodyDepth` drive each character's actual
+  body-box dimensions AND its physics collision box (`net.ts` calls
+  `resizeLocalPlayerBody`/`resizeEntityBody` whenever a synced
+  player's/instance's body size changes, resolved server-side via
+  `applyBodySizeToCharacterTarget`; `playerBodyMesh.ts`'s
+  `resizeEntityBody` calls noa's `entities.setEntitySize`, not just the
+  visual mesh).
+- **Deleting a character** -- a real `DELETE /characters/:id` endpoint
+  (`server.ts`, backed by `store.deleteCharacter`), with a confirmation
+  step wired from both the standalone `/characters` page and the
+  in-game Characters tab -- distinct from that tab's own "Unlink,"
+  which only removes the game<->character LINK, not the character
+  itself.
+
 ## MVP goal item 4 follow-up — Multiple character instances, persistence, GM token override
 
 PR #33 (multi-character presence) + PR #34 (this round) + a follow-up
