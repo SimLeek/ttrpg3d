@@ -6,6 +6,23 @@ system (`docs/ROADMAP.md`) ships first. Pull an item back into
 ROADMAP.md's active phase list when it's actually time to build it,
 rather than building it opportunistically alongside unrelated work.
 
+## From item 6 (turn-based battle system)
+
+Full requirements for item 6 itself now live in `docs/BATTLE_SYSTEM.md`
+-- these two pieces are explicitly NOT part of that first pass:
+
+- **Auto-triggering an encounter** -- some trigger condition
+  automatically starts battle mode, with AI involvement and an
+  end-condition. Real user call (2026-10-23): "while it's fun, it's
+  not quite vtt." The original old-game TODO this would have ported
+  from left trigger/AI/end-condition all unspecified anyway -- there's
+  no existing design to even start from.
+- **Line-of-sight lines.** Real user call (2026-10-23): "actually
+  helpful even before that, but out of scope for the MVP stuff...
+  might come up as a needed feature for some games later." Also
+  blocked on Phase 10 (AI/vision cones) existing first, per
+  `docs/PORTING_CHECKLIST.md`.
+
 ## From item 4 (full character-sheet authoring system)
 
 - **Mod-based sheet importers** (Excel sheets from paid westmarches

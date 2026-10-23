@@ -148,13 +148,20 @@ discussion (2026-10-15), in dependency order:
    - Quick actions (top panel) is built but still genuinely empty --
      content is item 4's own character-sheet-template scope, not this
      item's.
-6. **A turn-based battle system**, more detailed than the old Godot
-   game's (which deliberately didn't even enforce turn order -- see
-   Phase 9 below) -- its own UI lives inside the left mode-select panel
-   (item 5 above) and it integrates with chat/dice (item 0) and the
-   full character-sheet system (item 4 specifically -- real stats to
-   act on, not just item 1's minimal record), so it's sequenced after
-   chat, tokens, and the full character-sheet system all exist.
+6. **A turn-based battle system** -- its own UI lives inside the left
+   mode-select panel (item 5 above) and it integrates with chat/dice
+   (item 0) and the full character-sheet system (item 4 specifically
+   -- real stats to act on, not just item 1's minimal record), so it's
+   sequenced after chat, tokens, and the full character-sheet system
+   all exist. **Full requirements (2026-10-23 pass, Gherkin + UI
+   reference + explicit scope boundaries) now live in
+   [docs/BATTLE_SYSTEM.md](BATTLE_SYSTEM.md)** -- this used to be a
+   single paragraph here, intentionally shrunk once that doc existed
+   to hold the detail instead (same "roadmap stays scannable" reasoning
+   as `docs/BACKLOG.md`/`docs/PORTING_CHECKLIST.md`). Core call that
+   doc makes explicit: turn order stays advisory/unenforced, like the
+   old game's, but gains a per-turn position/stat snapshot + Ctrl+Z
+   revert as the actual fairness mechanism instead.
 7. **Default blocks as a real mod** -- pull the current built-in voxel
    type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
    hardcoded in the shared package) out into an actual mod file, using
@@ -300,7 +307,7 @@ play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 6 | **⭐ MVP: Mod system v2** -- per-game data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 3/7/8/9 above: the load/unload mechanism + GM-only management tab are DONE (items 3, 9); default-blocks mod (item 7) and default-generators mod (item 8) are not started; also dynamic mod loading/packaging beyond today's per-game enable/disable, Uint16 wire-format widening (needed before 7/8 can allocate real mod voxel ids) |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
 | 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
-| 9 | **⭐ MVP: Battle mode / turn tracker, server-authoritative, more detailed than the old game's** -- also where the distance math lands; full scope (item 5 in the MVP goal section above) depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | NOT STARTED | everything |
+| 9 | **⭐ MVP: Battle mode / turn tracker** -- tracker state is server-authoritative/synced, but turn order itself stays advisory/unenforced (see `docs/BATTLE_SYSTEM.md`); also where the distance math lands. Full requirements are item 6 in the MVP goal section above (was mis-labeled "item 5" here before 2026-10-23), which depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | NOT STARTED | everything |
 | 10 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED | everything |
 | 11+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED | everything |
 

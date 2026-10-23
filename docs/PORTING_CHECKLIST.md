@@ -371,35 +371,54 @@ see [COMPLETED.md#phase-8--lighting--voxel-tick-system](COMPLETED.md#phase-8--li
       `PlayerController.teleportTo` (core/mod-boundary PR,
       `packages/client/src/movement/PlayerController.ts`) for that, the
       same entry point `respawnControl.ts` already calls; don't build a
-      second position-forcing mechanism for this.
+      second position-forcing mechanism for this. Full M/N/distance-
+      metric/visual behavior spec now in `docs/BATTLE_SYSTEM.md`.
 - [ ] `scripts/battle/turn_tracker.gd` (51L) — **REDESIGN**, Colyseus
-      `Schema` room state.
+      `Schema` room state. Full requirements (Add/Add Me/Next
+      Turn/Clear All/reorder, the per-turn fairness snapshot + Ctrl+Z
+      revert) in `docs/BATTLE_SYSTEM.md`.
 - [ ] `scripts/ui/turn_tracker_menu.gd` (250L) — **REDESIGN**; also fix two
       known old bugs while rebuilding: minimized state is too tall (should
       shrink to just the title bar), and minimized title text should read
       "`<X>`'s turn"/"Your Turn" directly instead of a static label plus
-      duplicated info below.
-- [ ] **NEW** — character size system, entirely unbuilt: mod-provided
-      `PlayerInfo` size (plain voxel-count number), size-scaled wireframe
-      waypoint markers (tiny/small/medium/large/huge), sub-voxel waypoint
-      snapping for small characters, size-scaled wireframe box around the
-      player in battle mode, a temporary target-reticle box on whatever's
-      aimed at.
+      duplicated info below. Styled closer to Roll20's own tracker than
+      redesigned from scratch -- see `docs/BATTLE_SYSTEM.md`.
+- [ ] **NEW** — character size system: `bodyWidth`/`bodyHeight`/
+      `bodyDepth` already exist as real, live per-character sheet
+      variables (this round's earlier work) -- the PlayerInfo-voxel-
+      count framing below is superseded by that, not a separate system
+      to build. Size-scaled waypoint markers are confirmed in scope for
+      this phase (`docs/BATTLE_SYSTEM.md`); sub-voxel waypoint snapping
+      for small characters, a size-scaled wireframe box around the
+      player, and a temporary target-reticle box on whatever's aimed at
+      are NOT yet addressed by that doc -- still open, re-scope when
+      actually building this phase.
 - [ ] **NEW** — respawn/last-safe-position should update to the player's
       last marked battle-mode waypoint when their turn ends. Needs
       combatants linked to real entities (old repo's `is_local_player` flag
-      was a start, not finished).
-- [ ] **Decide with the user**: should turn order actually be enforced this
-      time? (Old repo deliberately didn't enforce it — this is a product
-      decision, not an engineering default, per the architecture plan.)
-- [ ] **NEW** — turn-based encounter auto-trigger on running into an enemy.
-      Old TODO left the trigger condition, AI turn-mode switch, and
-      end-of-encounter condition all unspecified — needs a real design pass,
-      not just a port.
-- [ ] **NEW** — dice roller, Tab character-action menu (spells/abilities,
-      likely a character-sheet mod extending inventory). Never built.
+      was a start, not finished). NOT addressed by `docs/BATTLE_SYSTEM.md`'s
+      per-turn fairness snapshot (a different mechanic -- that reverts
+      DRIFT during someone else's turn, this is about what happens to
+      YOUR OWN last position on death) -- still open.
+- [x] **Resolved** (2026-10-23, see `docs/BATTLE_SYSTEM.md`): turn order
+      stays advisory/unenforced, same as the old repo -- but gains a
+      real per-turn position/stat snapshot + Ctrl+Z revert (individual
+      and GM-bulk) as the actual fairness mechanism instead of
+      enforcement.
+- [ ] **DEFERRED** (`docs/BACKLOG.md`, "From item 6") — turn-based
+      encounter auto-trigger on running into an enemy. Old TODO left the
+      trigger condition, AI turn-mode switch, and end-of-encounter
+      condition all unspecified; real user call (2026-10-23): "not quite
+      vtt."
+- [x] **Resolved** (2026-10-23): dice roller / Tab character-action menu
+      is NOT a gap -- already substantially covered by chat/dice (item 0)
+      and the character-sheet system (item 4), confirmed by direct user
+      call. No new battle-specific UI needed for this.
 - [ ] **DEFER** — line-of-sight lines from enemy to player. Blocked on
-      Phase 10's AI entity existing; connects to the vision-cone work there.
+      Phase 10's AI entity existing; connects to the vision-cone work
+      there. Also now tracked in `docs/BACKLOG.md` ("From item 6") --
+      real user call (2026-10-23): helpful, but out of MVP scope, may
+      be needed for some games later.
 - [ ] Note: waypoint cleanup across world-switch/death-respawn was never
       re-verified even in the old repo after force-enabled-intangible was
       removed — don't assume it's solid, re-check when porting.
