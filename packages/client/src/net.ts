@@ -255,8 +255,15 @@ export async function connectAndStreamWorld(
   let appliedInitialSpawn = false;
   noa.on("tick", () => {
     if (appliedInitialSpawn) return;
-    const players = (room.state as { players?: Map<string, { x: number; y: number; z: number }> } | undefined)?.players;
-    const me = players?.get(room.sessionId);
+    // Real bug found live, 2026-10-23 (PlayerState/OtherCharacterState
+    // unification refactor): x/y/z moved onto `currentInstance` and
+    // this cast was missed, so `me.x/y/z` silently read `undefined` --
+    // teleportTo([undefined, undefined, undefined]) put the player at
+    // a NaN position, which noa's own chunk-loading (worldDataNeeded)
+    // never resolves a real chunk coordinate for, reproduced live as
+    // "infinite blue space... character disappears after a moment."
+    const players = (room.state as { players?: Map<string, { currentInstance?: { x: number; y: number; z: number } }> } | undefined)?.players;
+    const me = players?.get(room.sessionId)?.currentInstance;
     if (!me) return;
     appliedInitialSpawn = true;
     playerController.teleportTo([me.x, me.y, me.z]);
