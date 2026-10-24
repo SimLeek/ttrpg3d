@@ -110,6 +110,9 @@ interface OtherCharacterLike {
 interface RemotePlayerLike {
   name: string;
   currentInstance: OtherCharacterLike;
+  waypointColorR?: number;
+  waypointColorG?: number;
+  waypointColorB?: number;
 }
 
 /** The shape of `room.state` this file actually reads -- `players` (per-session) alongside the world-level `otherCharacters` array (see OtherCharacterLike's own doc for why this moved off PlayerState). */
@@ -464,6 +467,11 @@ export async function connectAndStreamWorld(
     distanceMetricP: () => (room!.state as WorldStateLike | undefined)?.waypointDistanceMetricP ?? 2,
     onAddWaypoint: () => waypoints.addAtCurrentPosition(),
     onRemoveWaypoint: () => waypoints.removeOrWalkBack(),
+    waypointColor: () => {
+      const me = (room!.state as WorldStateLike | undefined)?.players?.get(room!.sessionId);
+      return [me?.waypointColorR ?? 1, me?.waypointColorG ?? 0.9, me?.waypointColorB ?? 0.2];
+    },
+    onSetColor: ([r, g, b]) => room!.send("setWaypointColor", { r, g, b }),
     onToggleWaypoints: () => room!.send("toggleWaypoints"),
     onSetDistanceMetric: (p) => room!.send("setWaypointDistanceMetric", { p }),
   });

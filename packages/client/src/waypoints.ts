@@ -39,6 +39,9 @@ interface WaypointLike {
 interface RemotePlayerLike {
   waypoints?: Iterable<WaypointLike>;
   currentInstance?: { x: number; y: number; z: number; bodyWidth: number };
+  waypointColorR?: number;
+  waypointColorG?: number;
+  waypointColorB?: number;
 }
 
 interface WorldStateLike {
@@ -47,7 +50,7 @@ interface WorldStateLike {
   players?: Map<string, RemotePlayerLike>;
 }
 
-const MARKER_COLOR = new BABYLON.Color3(1, 0.9, 0.2); // yellow, per docs/BATTLE_SYSTEM.md
+const DEFAULT_MARKER_COLOR: [number, number, number] = [1, 0.9, 0.2]; // yellow, per docs/BATTLE_SYSTEM.md -- per-player override via the waypoint panel's own color picker
 const MIN_MARKER_RADIUS = 0.08;
 const MIN_LINE_RADIUS = 0.02;
 
@@ -68,9 +71,31 @@ export interface WaypointsController {
 
 export function installWaypoints(noa: Engine, room: Room, playerController: PlayerController): WaypointsController {
   const scene = noa.rendering.getScene();
-  const material = new BABYLON.StandardMaterial("waypoint-marker-mat", scene);
-  material.diffuseColor = MARKER_COLOR;
-  material.disableLighting = true;
+
+  // Real bug found live: a StandardMaterial with disableLighting ON
+  // sources its unlit color from `emissiveColor`, NOT `diffuseColor`
+  // (diffuse reflection needs a light contribution to multiply
+  // against -- with lighting disabled there isn't one, so it renders
+  // black) -- confirmed against this codebase's own
+  // characterPlacement.ts marker, which already sets BOTH together
+  // for exactly this reason. "If the waypoint 3d lines and spheres
+  // were supposed to be yellow, then we may have a bug on our hands"
+  // -- they were, and this was it. One material PER SESSION now
+  // (not shared) since color is a per-player preference (the
+  // waypoint panel's own color picker).
+  const materialsBySession = new Map<string, BABYLON.StandardMaterial>();
+  function materialFor(sessionId: string, color: [number, number, number]): BABYLON.StandardMaterial {
+    let material = materialsBySession.get(sessionId);
+    if (!material) {
+      material = new BABYLON.StandardMaterial(`waypoint-marker-mat-${sessionId}`, scene);
+      material.disableLighting = true;
+      materialsBySession.set(sessionId, material);
+    }
+    const c = new BABYLON.Color3(...color);
+    material.diffuseColor = c;
+    material.emissiveColor = c;
+    return material;
+  }
 
   function state(): WorldStateLike | undefined {
     return room.state as WorldStateLike | undefined;
@@ -145,9 +170,10 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
     for (const label of visuals.labels) label.dispose();
   }
 
-  function buildVisualsFor(sessionId: string, waypoints: WaypointLike[], livePos: Point3 | undefined, bodyWidth: number, metricP: number): PlayerWaypointVisuals {
+  function buildVisualsFor(sessionId: string, waypoints: WaypointLike[], livePos: Point3 | undefined, bodyWidth: number, metricP: number, color: [number, number, number]): PlayerWaypointVisuals {
     const markerRadius = Math.max(MIN_MARKER_RADIUS, bodyWidth * 0.25);
     const lineRadius = Math.max(MIN_LINE_RADIUS, bodyWidth * 0.06);
+    const material = materialFor(sessionId, color);
     const markers: BABYLON.Mesh[] = [];
     const segments: BABYLON.Mesh[] = [];
     const labels: DistanceLabel[] = [];
@@ -161,10 +187,24 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       markers.push(marker);
     });
 
-    function addSegment(a: Point3, b: Point3, key: string): void {
-      const distance = minkowskiDistance(a, b, metricP);
+    // Every consecutive waypoint-to-waypoint pair, plus one more LIVE
+    // segment from the LAST waypoint to the player's current
+    // position -- each segment's own endpoints, computed up front so
+    // "T" (the whole path's total length) is known before building
+    // any one label.
+    const segmentEndpoints: [Point3, Point3][] = [];
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      segmentEndpoints.push([[waypoints[i].x, waypoints[i].y, waypoints[i].z], [waypoints[i + 1].x, waypoints[i + 1].y, waypoints[i + 1].z]]);
+    }
+    const lastWaypoint = waypoints[waypoints.length - 1];
+    if (lastWaypoint && livePos) segmentEndpoints.push([[lastWaypoint.x, lastWaypoint.y, lastWaypoint.z], livePos]);
+
+    const segmentDistances = segmentEndpoints.map(([a, b]) => minkowskiDistance(a, b, metricP));
+    const totalDistance = segmentDistances.reduce((sum, d) => sum + d, 0);
+
+    segmentEndpoints.forEach(([a, b], i) => {
       const tube = BABYLON.MeshBuilder.CreateTube(
-        `waypoint-segment-${sessionId}-${key}`,
+        `waypoint-segment-${sessionId}-${i}`,
         { path: [new BABYLON.Vector3(...a), new BABYLON.Vector3(...b)], radius: lineRadius, cap: BABYLON.Mesh.CAP_ALL, updatable: false },
         scene,
       );
@@ -173,22 +213,15 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       noa.rendering.addMeshToScene(tube, false);
       segments.push(tube);
 
-      const label = createDistanceLabel(scene, distance.toFixed(1));
+      // Real request: "change the billboards a bit: D: {this line's
+      // distance}, T:{whole path distance}, since I found myself
+      // wanting to know exactly how far the distance was."
+      const label = createDistanceLabel(scene, `D: ${segmentDistances[i].toFixed(1)}, T: ${totalDistance.toFixed(1)}`);
       const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2] as Point3;
       label.mesh.position = new BABYLON.Vector3(...mid);
       noa.rendering.addMeshToScene(label.mesh, false);
       labels.push(label);
-    }
-
-    // Every consecutive waypoint-to-waypoint pair gets its own FIXED segment+label.
-    for (let i = 0; i < waypoints.length - 1; i++) {
-      addSegment([waypoints[i].x, waypoints[i].y, waypoints[i].z], [waypoints[i + 1].x, waypoints[i + 1].y, waypoints[i + 1].z], `${i}`);
-    }
-    // One more LIVE segment from the LAST waypoint to the player's current position.
-    const lastWaypoint = waypoints[waypoints.length - 1];
-    if (lastWaypoint && livePos) {
-      addSegment([lastWaypoint.x, lastWaypoint.y, lastWaypoint.z], livePos, "live");
-    }
+    });
 
     return { markers, segments, labels, lastKey: "" };
   }
@@ -207,15 +240,17 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       const livePos: Point3 | undefined = player.currentInstance ? [player.currentInstance.x, player.currentInstance.y, player.currentInstance.z] : undefined;
       const bodyWidth = player.currentInstance?.bodyWidth ?? 0.6;
       const metricP = s?.waypointDistanceMetricP ?? 2;
+      const color: [number, number, number] = [player.waypointColorR ?? DEFAULT_MARKER_COLOR[0], player.waypointColorG ?? DEFAULT_MARKER_COLOR[1], player.waypointColorB ?? DEFAULT_MARKER_COLOR[2]];
       // Cheap skip, same spirit as turnTracker.ts's own update() diff --
       // only rebuild this player's meshes when something relevant
       // actually changed (their own waypoints, their live position
-      // while one exists, body size, or the shared metric).
-      const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP]);
+      // while one exists, body size, the shared metric, or their own
+      // marker color).
+      const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP, color]);
       const existing = visualsBySession.get(sessionId);
       if (existing?.lastKey === key) continue;
       if (existing) disposeVisuals(existing);
-      const fresh = buildVisualsFor(sessionId, waypoints, livePos, bodyWidth, metricP);
+      const fresh = buildVisualsFor(sessionId, waypoints, livePos, bodyWidth, metricP, color);
       fresh.lastKey = key;
       visualsBySession.set(sessionId, fresh);
     }
@@ -224,6 +259,8 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       if (!seen.has(sessionId)) {
         disposeVisuals(visuals);
         visualsBySession.delete(sessionId);
+        materialsBySession.get(sessionId)?.dispose();
+        materialsBySession.delete(sessionId);
       }
     }
   });
@@ -234,7 +271,8 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
     destroy(): void {
       for (const visuals of visualsBySession.values()) disposeVisuals(visuals);
       visualsBySession.clear();
-      material.dispose();
+      for (const material of materialsBySession.values()) material.dispose();
+      materialsBySession.clear();
     },
   };
 }
