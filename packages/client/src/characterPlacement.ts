@@ -63,7 +63,31 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
     const camera = scene.activeCamera;
     if (!camera) return undefined;
     const ray = scene.createPickingRay(screenPoint.x, screenPoint.y, BABYLON.Matrix.Identity(), camera);
-    const pos = [ray.origin.x, ray.origin.y, ray.origin.z];
+    // Real bug found live, confirmed via diagnostic logging (not
+    // guessed): "the green circle matched the position on screen, but
+    // the elevation was wrong, meaning it picked up some other
+    // location stuff... placement is also still wrong." `ray.origin`
+    // is in BABYLON's own scene space, which for this engine IS noa's
+    // LOCAL (origin-shifted) frame -- the whole Babylon scene
+    // deliberately lives near [0,0,0] for float precision, only
+    // translated to/from true GLOBAL coords at noa's own API boundary
+    // (see noa's /docs/positions.md). `noa.pick()` is a PUBLIC API
+    // that expects a GLOBAL position and does its own `globalToLocal`
+    // conversion internally -- passing the already-local `ray.origin`
+    // straight into it was a DOUBLE origin-shift, silently cancelling
+    // out to the correct answer ONLY while `worldOriginOffset` was
+    // still [0,0,0] (fresh session, never walked far from spawn) --
+    // exactly matching "I was able to have it work for a bit, then
+    // after that I couldn't figure out what the offset was." Confirmed
+    // directly: a logged `worldOriginOffset` of [37,14,43] accounted
+    // almost exactly for the gap between the reported hitPosition and
+    // where the camera/character actually were. Fix: convert the
+    // local ray origin back to true global (`localToGlobal`, the
+    // documented inverse) before handing it to `noa.pick()`, matching
+    // that API's actual contract. `dir` needs no such conversion --
+    // direction vectors are translation-invariant, unaffected by an
+    // origin shift.
+    const pos = noa.localToGlobal([ray.origin.x, ray.origin.y, ray.origin.z], []) as [number, number, number];
     const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
     const hit = noa.pick(pos, dir, MAX_CHARACTER_PLACEMENT_DISTANCE + TERRAIN_PICK_MARGIN);
     return hit ? (hit.position as [number, number, number]) : undefined;
@@ -86,9 +110,28 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
+  // Real bug found live: "placing a character now places them in
+  // unexpected locations... super intermittent... the green circle was
+  // correct for the most part when it showed up though, it was just
+  // the final character placement that was off." Root cause: the
+  // HTML5 drag-and-drop spec doesn't guarantee a `drop` event's own
+  // clientX/clientY are meaningful -- a documented, long-standing
+  // cross-browser quirk (seen in both Firefox and Chrome under
+  // various drag-image/retargeting conditions) where `drop` can
+  // report stale or zeroed coordinates even though the preceding
+  // `dragover` stream was reporting correct ones the whole time --
+  // which matches this exactly: the PREVIEW (continuously driven by
+  // `dragover`) stayed right, only the one-shot `drop` read sometimes
+  // didn't. Fix: `drop` no longer reads its own event's coordinates at
+  // all -- it reuses the LAST known-good `dragover` screen point,
+  // which is also better UX regardless (wherever the green marker was
+  // last shown IS where the character lands, guaranteed WYSIWYG).
+  let lastDragoverScreen: { x: number; y: number } | undefined;
+
   canvas.addEventListener("dragover", (event) => {
     event.preventDefault(); // required for "drop" to fire at all -- standard HTML5 drag-and-drop
-    const hit = raycastTerrain(screenPointFor(event));
+    lastDragoverScreen = screenPointFor(event);
+    const hit = raycastTerrain(lastDragoverScreen);
     if (!hit) {
       marker.isVisible = false;
       return;
@@ -104,18 +147,20 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
   });
   canvas.addEventListener("dragend", () => {
     marker.isVisible = false;
+    lastDragoverScreen = undefined;
   });
   canvas.addEventListener("drop", (event) => {
     event.preventDefault();
     marker.isVisible = false;
     const characterId = event.dataTransfer?.getData(CHARACTER_DRAG_MIME);
-    if (!characterId) return;
-    const hit = raycastTerrain(screenPointFor(event));
+    if (!characterId || !lastDragoverScreen) return;
+    const hit = raycastTerrain(lastDragoverScreen);
     // No message sent for an invalid drop (no terrain hit, or out of
     // range) -- same "no visible feedback for an invalid action"
     // convention as everywhere else in this codebase; the marker
     // already showed it was invalid before release.
     if (!hit || !withinPlacementRange(hit)) return;
     room.send("placeCharacter", { characterId, x: hit[0], y: hit[1], z: hit[2] });
+    lastDragoverScreen = undefined;
   });
 }

@@ -1561,23 +1561,33 @@ describe("WorldRoom", () => {
       expect(otherRoom.state.waypointDistanceMetricP).toBe(2);
     });
 
-    it("waypointsEnabled/metric survive a room being recreated, but an instance's own waypoint chain does NOT (not persisted -- scratch measurement data, not something the unreliable-connections principle protects); no core is auto-stamped on resume either, since core-stamping is now tied to turn-order membership, not to joining -- real correction, 2026-10-24: waypoints moved from the piloting session to the piloted INSTANCE, so the old 'latecomer gets a core just for joining' behavior no longer applies here", async () => {
+    it("waypointsEnabled/metric survive a room being recreated, AND an instance's own waypoint chain now survives a disconnect/reconnect too (real correction, 2026-10-24: \"we'll want to persist those waypoints. Right now I can exit the page and come back and the waypoints are gone... they should remain on exit/re-entry\" -- reverses the earlier 'scratch measurement data, not persisted' call); no core is auto-stamped on resume -- core-stamping is tied to turn-order membership, not to joining", async () => {
       const owner = trackedAccount(`WorldRoom-test-wp-persist-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-wp-persist-game-${Date.now()}`, owner.id);
       const world = trackedWorld(game.id, "Waypoint Persist Test World", "limestone_slab", SLAB_PARAMS);
       const firstRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
-      const client = await colyseus.connectTo(firstRoom, { accountId: owner.id });
+      const firstClient = await colyseus.connectTo(firstRoom, { accountId: owner.id });
+      const instanceId = firstRoom.state.players.get(firstClient.sessionId)!.currentInstance.instanceId;
       firstRoom.state.waypointsEnabled = true;
-      client.send("addWaypoint", { x: 1, y: 1, z: 1 });
+      firstClient.send("addWaypoint", { x: 1, y: 1, z: 1 });
+      firstClient.send("setWaypointColor", { r: 0.2, g: 0.6, b: 1 });
       await new Promise((resolve) => setTimeout(resolve, 50));
       store.setWaypointsEnabledForWorld(world.id, true); // the manual path (toggleWaypoints) would do this; set directly since this test bypasses that handler
 
+      // A clean disconnect -- onLeave pushes the instance (waypoints
+      // and all) into otherCharacters and persists it, same path the
+      // position/stats-survive-a-reconnect test above already covers.
+      await firstClient.leave();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
       const secondRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       expect(secondRoom.state.waypointsEnabled).toBe(true); // persisted
-      const secondClient = await colyseus.connectTo(secondRoom, { accountId: owner.id });
+      const secondClient = await colyseus.connectTo(secondRoom, { accountId: owner.id, instanceId });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const resumedWaypoints = secondRoom.state.players.get(secondClient.sessionId)!.currentInstance.waypoints;
-      expect(resumedWaypoints).toHaveLength(0); // the old chain is gone, and nothing is auto-stamped just from joining
+      const resumed = secondRoom.state.players.get(secondClient.sessionId)!.currentInstance;
+      expect(resumed.waypoints).toHaveLength(1); // the chain survived the exit/re-entry
+      expect(resumed.waypoints[0]).toMatchObject({ x: 1, y: 1, z: 1 });
+      expect([resumed.waypointColorR, resumed.waypointColorG, resumed.waypointColorB]).toEqual([0.2, 0.6, 1]);
     });
 
     it("resetAllCoreWaypoints (triggered by turning waypoints on, auto or manual) replaces EVERY turn-order-bound instance's own chain with just one fresh core at its current position, discarding any stale chain from before -- real correction, 2026-10-24: scoped to turn-order membership now, not every connected session, since a core waypoint is \"the waypoint at the start of the TURN\"", async () => {

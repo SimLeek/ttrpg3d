@@ -428,6 +428,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       tokenColor: [o.tokenColorR, o.tokenColorG, o.tokenColorB],
       statusEffects: Array.from(o.statusEffects).map((e) => ({ icon: e.icon, label: e.label })),
       variableOverrides: this.instanceVariableOverrides.get(o.instanceId) ?? {},
+      // Real correction, 2026-10-24: waypoints now persist too --
+      // "we'll want to persist those waypoints... they should remain
+      // on exit/re-entry." See PlacedCharacterInstanceRecord's own doc.
+      waypoints: Array.from(o.waypoints).map((w) => ({ x: w.x, y: w.y, z: w.z, isCore: w.isCore })),
+      waypointColor: [o.waypointColorR, o.waypointColorG, o.waypointColorB],
     }));
     store.setPlacedCharactersForWorld(this.worldId, records);
   }
@@ -687,6 +692,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       if (Object.keys(record.variableOverrides).length > 0) this.instanceVariableOverrides.set(record.instanceId, record.variableOverrides);
       applyBarsToCharacterTarget(other, character, record.variableOverrides);
       applyBodySizeToCharacterTarget(other, character, record.variableOverrides);
+      // Real correction, 2026-10-24: restore a persisted waypoint
+      // chain too -- see PlacedCharacterInstanceRecord's own doc.
+      for (const w of record.waypoints ?? []) {
+        const waypoint = new WaypointState();
+        waypoint.x = w.x;
+        waypoint.y = w.y;
+        waypoint.z = w.z;
+        waypoint.isCore = w.isCore;
+        other.waypoints.push(waypoint);
+      }
+      if (record.waypointColor) {
+        other.waypointColorR = record.waypointColor[0];
+        other.waypointColorG = record.waypointColor[1];
+        other.waypointColorB = record.waypointColor[2];
+      }
       this.state.otherCharacters.push(other);
       this.syncCharacterRoomRegistration(record.characterId);
     }
