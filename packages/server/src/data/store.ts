@@ -89,6 +89,17 @@ export interface GameRecord {
    * `true` default.
    */
   seeThroughWalls: boolean;
+  /**
+   * docs/BATTLE_SYSTEM.md's waypoint/distance measurement, GM settings
+   * checkbox "Waypoint system auto-on when 1+ character turns" --
+   * per-GAME scope, same reasoning/tier as seeThroughWalls above.
+   * Live-synced via WorldState's own field of the same name, read by
+   * WorldRoom.ts's `applyWaypointAutoToggle` on every turn-order add/
+   * remove/clear.
+   */
+  waypointAutoOnWithTurnOrder: boolean;
+  /** Same tier as waypointAutoOnWithTurnOrder, independently settable -- GM settings checkbox "Waypoint system auto-off when 0 character turns". */
+  waypointAutoOffWithoutTurnOrder: boolean;
 }
 
 export interface WorldRecord {
@@ -128,6 +139,10 @@ export interface WorldRecord {
     currentIndex: number;
     round: number;
   };
+  /** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- same "survives a room being recreated" persistence as turnOrder above. Undefined/missing defaults to `false`, same as a world that's never had a turn order touch it. */
+  waypointsEnabled?: boolean;
+  /** Same tier as waypointsEnabled. Undefined/missing defaults to `2` (ordinary Euclidean) -- see WorldState.ts's own doc on why this is per-WORLD, not per-game. */
+  waypointDistanceMetricP?: number;
 }
 
 /**
@@ -289,7 +304,13 @@ export function createStore(baseDir: string) {
     // anything iterates it (e.g. `for (const id of game.modIds)`).
     // Defaulted here, at the one place every other reader goes through,
     // rather than at each call site.
-    return readJson<GameRecord[]>(gamesFile, []).map((g) => ({ ...g, modIds: g.modIds ?? [], seeThroughWalls: g.seeThroughWalls ?? true }));
+    return readJson<GameRecord[]>(gamesFile, []).map((g) => ({
+      ...g,
+      modIds: g.modIds ?? [],
+      seeThroughWalls: g.seeThroughWalls ?? true,
+      waypointAutoOnWithTurnOrder: g.waypointAutoOnWithTurnOrder ?? true,
+      waypointAutoOffWithoutTurnOrder: g.waypointAutoOffWithoutTurnOrder ?? true,
+    }));
   }
 
   function saveGames(games: GameRecord[]): void {
@@ -374,8 +395,8 @@ export function createStore(baseDir: string) {
       if (games.length === 0) {
         const now = Date.now();
         games = [
-          { id: newId(), name: "Root's Game", ownerAccountId: "root", adminAccountIds: [], createdAt: now, modIds: [], seeThroughWalls: true },
-          { id: newId(), name: "Test1's Game", ownerAccountId: "test1", adminAccountIds: [], createdAt: now, modIds: [], seeThroughWalls: true },
+          { id: newId(), name: "Root's Game", ownerAccountId: "root", adminAccountIds: [], createdAt: now, modIds: [], seeThroughWalls: true, waypointAutoOnWithTurnOrder: true, waypointAutoOffWithoutTurnOrder: true },
+          { id: newId(), name: "Test1's Game", ownerAccountId: "test1", adminAccountIds: [], createdAt: now, modIds: [], seeThroughWalls: true, waypointAutoOnWithTurnOrder: true, waypointAutoOffWithoutTurnOrder: true },
         ];
         saveGames(games);
         for (const game of games) {
@@ -430,7 +451,7 @@ export function createStore(baseDir: string) {
 
     createGame(name: string, ownerAccountId: string): GameRecord {
       const games = loadGames();
-      const game: GameRecord = { id: newId(), name, ownerAccountId, adminAccountIds: [], createdAt: Date.now(), modIds: [], seeThroughWalls: true };
+      const game: GameRecord = { id: newId(), name, ownerAccountId, adminAccountIds: [], createdAt: Date.now(), modIds: [], seeThroughWalls: true, waypointAutoOnWithTurnOrder: true, waypointAutoOffWithoutTurnOrder: true };
       games.push(game);
       saveGames(games);
       return game;
@@ -513,6 +534,24 @@ export function createStore(baseDir: string) {
       saveWorlds(worlds);
     },
 
+    /** No-op if the world id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- WorldRoom.ts's own `applyWaypointAutoToggle` (auto-on/off) and the panel's manual toggle message both call this after changing `WorldState.waypointsEnabled`. */
+    setWaypointsEnabledForWorld(worldId: string, enabled: boolean): void {
+      const worlds = loadWorlds();
+      const world = worlds.find((w) => w.id === worldId);
+      if (!world) return;
+      world.waypointsEnabled = enabled;
+      saveWorlds(worlds);
+    },
+
+    /** Same tier as setWaypointsEnabledForWorld -- the GM-only Minkowski-exponent setting (shared/src/distance.ts's `minkowskiDistance`), per-WORLD (not per-game, see WorldState.ts's own doc on why). */
+    setWaypointDistanceMetricForWorld(worldId: string, p: number): void {
+      const worlds = loadWorlds();
+      const world = worlds.find((w) => w.id === worldId);
+      if (!world) return;
+      world.waypointDistanceMetricP = p;
+      saveWorlds(worlds);
+    },
+
     /** No-op if already enabled or the game id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. Admin-gating happens at the caller (server.ts), same split that function already uses. Per-GAME, not per-world -- real correction, see GameRecord.modIds's own doc. */
     enableModForGame(gameId: string, modId: string): void {
       const games = loadGames();
@@ -536,6 +575,24 @@ export function createStore(baseDir: string) {
       const game = games.find((g) => g.id === gameId);
       if (!game) return;
       game.seeThroughWalls = enabled;
+      saveGames(games);
+    },
+
+    /** GM settings checkbox "Waypoint system auto-on when 1+ character turns" -- same tier/pattern as setSeeThroughWallsForGame. */
+    setWaypointAutoOnForGame(gameId: string, enabled: boolean): void {
+      const games = loadGames();
+      const game = games.find((g) => g.id === gameId);
+      if (!game) return;
+      game.waypointAutoOnWithTurnOrder = enabled;
+      saveGames(games);
+    },
+
+    /** GM settings checkbox "Waypoint system auto-off when 0 character turns" -- same tier/pattern as setSeeThroughWallsForGame. */
+    setWaypointAutoOffForGame(gameId: string, enabled: boolean): void {
+      const games = loadGames();
+      const game = games.find((g) => g.id === gameId);
+      if (!game) return;
+      game.waypointAutoOffWithoutTurnOrder = enabled;
       saveGames(games);
     },
 

@@ -116,3 +116,4 @@ export * from "./collision.js";
 export * from "./worldGenerators.js";
 export * from "./chatCommands.js";
 export * from "./characterSheet.js";
+export * from "./distance.js";
