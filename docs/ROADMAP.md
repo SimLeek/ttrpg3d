@@ -163,7 +163,14 @@ discussion (2026-10-15), in dependency order:
    old game's, but gains a GM-triggered per-turn position/stat
    snapshot + "Reset Turn" (a per-character context-menu item, plus a
    GM-only bulk button -- no keybind) as the actual fairness mechanism
-   instead.
+   instead. **Phase 1 (manual Add/Remove/Clear All/reorder/Next Turn,
+   plus a GM-editable roll number + sort buttons found needed once
+   playtested) is now DONE** -- see
+   [COMPLETED.md](COMPLETED.md#mvp-goal-item-6-partial--turn-order-tracker-phase-1-built-on-a-character-instance-unification-refactor)
+   for the full detail, including the character-instance-unification
+   refactor it depended on and three real bugs found live. Initiative
+   rolls (the `[[]]` roll-eval submit path), Reset Turn, and the
+   waypoint/distance-measurement feature are still not started.
 7. **Default blocks as a real mod** -- pull the current built-in voxel
    type catalog (`packages/shared/src/voxelTypes.ts`'s `VOXEL_TYPES`,
    hardcoded in the shared package) out into an actual mod file, using
@@ -309,7 +316,7 @@ play (see `docs/PORTING_CHECKLIST.md` for exactly where).
 | 6 | **⭐ MVP: Mod system v2** -- per-game data-only AND behavior-mod registration | **PARTIAL** | full scope now covered by the MVP goal section's items 3/7/8/9 above: the load/unload mechanism + GM-only management tab are DONE (items 3, 9); default-blocks mod (item 7) and default-generators mod (item 8) are not started; also dynamic mod loading/packaging beyond today's per-game enable/disable, Uint16 wire-format widening (needed before 7/8 can allocate real mod voxel ids) |
 | 7 | DM tools -- world CRUD UI, structure saver/placer, draw tools | NOT STARTED | everything |
 | 8 | Lighting + voxel tick system -- needs fresh design, not a port; also where the LCG + spatial hash land, if/when actually needed | NOT STARTED | everything |
-| 9 | **⭐ MVP: Battle mode / turn tracker** -- tracker state is server-authoritative/synced, but turn order itself stays advisory/unenforced (see `docs/BATTLE_SYSTEM.md`); also where the distance math lands. Full requirements are item 6 in the MVP goal section above (was mis-labeled "item 5" here before 2026-10-23), which depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | NOT STARTED | everything |
+| 9 | **⭐ MVP: Battle mode / turn tracker** -- tracker state is server-authoritative/synced, but turn order itself stays advisory/unenforced (see `docs/BATTLE_SYSTEM.md`); also where the distance math lands. Full requirements are item 6 in the MVP goal section above (was mis-labeled "item 5" here before 2026-10-23), which depends on chat/dice, tokens, the full character-sheet system, and the panel UI chrome (items 0-4) existing first | **PARTIAL** | phase 1 (manual add/remove/clear/reorder/next-turn, GM-editable roll number + sort) is DONE -- see item 6 above; initiative rolls (`[[]]` roll-eval submit), Reset Turn, and waypoint/distance measurement are not started |
 | 10 | NPC/AI -- WANDER/CHASE/ATTACK state machine, FOV/LOS (vision-cone *rendering* deferred further) | NOT STARTED | everything |
 | 11+ | Polish -- remaining UI, chunk-streaming perf, mod-ecosystem hardening, Google/OAuth + payments research | NOT STARTED | everything |
 

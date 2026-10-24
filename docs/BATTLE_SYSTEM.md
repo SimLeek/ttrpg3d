@@ -51,11 +51,21 @@ call) than redesigned from scratch:
   logic). Triggers the Reset Turn snapshot below. **GM-only** --
   confirmed by direct user call ("Only the GM should be able to click
   next turn"), a deliberate change from the old game's own
-  no-permission-check behavior, not a port of it.
+  no-permission-check behavior, not a port of it. **Real clarification
+  found during phase 1 playtesting**: "GM-only" here means the real
+  admin/owner permission check stays server-side-enforced regardless,
+  but the CLIENT only shows/enables these controls when that admin
+  ALSO has the G-key `gmOverride` toggle on -- "the gm should be able
+  to see what players will see" by toggling it off. Applies to every
+  "GM-only" item in this doc, not just Next Turn.
 - Header shows round number + whose turn it notionally is.
-- Reordering (drag a row to change order) stays available for manual
-  correction, on top of the automatic roll-value sort "Initiative
-  rolls" below produces.
+- Reordering is **up/down buttons per row**, not drag-and-drop --
+  drag-and-drop was tried during phase 1 and dropped after a direct
+  playtest verdict ("I just tried it as GM and it's pretty bad").
+  Stays available for manual correction, on top of whatever the
+  automatic roll-value sort "Initiative rolls" below (once built) or
+  the phase-1 GM-editable roll number + manual Sort ascending/
+  descending buttons produce.
 - **Persists across a disconnect/refresh/rejoin** -- who's in the
   order, whose turn it is, and the round number all survive a session
   dropping and reconnecting (see the Philosophy section above: a mid-
@@ -108,6 +118,14 @@ Concretely:
   GM's choice, not a hardcoded direction).
 - Manually-`Add`ed entries (no roll value) sort as a separate concern
   from the above -- exact interaction left open below.
+- **Partial precursor already shipped in phase 1**: every entry
+  (manually-added or not) now has a GM-editable roll NUMBER (defaults
+  to 0) and GM-only Sort ascending/descending buttons that sort the
+  whole order by it -- a manual stand-in for "keep the whole list
+  sorted by roll value" above, built ahead of the `[[]]` roll-eval
+  submit path this section describes. The automatic
+  "roll → submit → auto-insert-sorted" flow itself is still not built;
+  only the number + manual sort exist so far.
 
 ### 3. Reset Turn (replaces the earlier Ctrl+Z framing entirely)
 
@@ -389,7 +407,10 @@ Feature: Waypoint distance measurement
   reorder. This project's own old game already converged on the same
   non-modal/draggable/add-remove/round-counter shape independently
   (`turn_tracker_menu.gd`) -- Roll20 is the reference for *polish and
-  interaction details* more than a wholesale redesign.
+  interaction details* more than a wholesale redesign. **One real
+  divergence from Roll20, found during phase 1 playtesting**:
+  drag-to-reorder itself was tried and dropped ("I just tried it as GM
+  and it's pretty bad") in favor of plain up/down buttons per row.
 - **Distance labels**: this project's own existing character-token
   billboard (`characterToken.ts`, `@babylonjs/gui`-based billboard
   plane) is the mechanism to reuse/extend, per direct user call --
@@ -403,6 +424,12 @@ Feature: Waypoint distance measurement
    entries -- sort to one end, keep it pinned wherever manually placed,
    or something else. Not specified above.
 2. **Sort-direction default**: high-to-low vs. low-to-high -- confirmed
-   configurable, not which one is the default.
+   configurable, not which one is the default. **Resolved by the
+   phase-1 UI, at least for the manual roll-number case**: there's no
+   implicit default at all -- two explicit GM-only buttons ("Sort
+   ascending"/"Sort descending"), picked each time, same as Roll20's
+   own tracker leaves it to the GM rather than baking in one. Whether
+   the FUTURE automatic "insert sorted on every Initiative Roll" path
+   needs its own separate default is still open.
 3. **"Reset char"/GM-reset keybind**, if any, is explicitly deferred
    ("we'll decide a keybind later") -- not blocking this pass.
