@@ -13,6 +13,8 @@ function mount(overrides: Partial<WaypointPanelOptions> = {}) {
     onAddWaypoint: vi.fn(),
     onRemoveWaypoint: vi.fn(),
     onSetColor: vi.fn(),
+    isShowThroughTerrain: () => false,
+    onSetShowThroughTerrain: vi.fn(),
     onToggleWaypoints: vi.fn(),
     onSetDistanceMetric: vi.fn(),
     ...overrides,
@@ -62,6 +64,16 @@ describe("mountWaypointPanel", () => {
     colorInput.value = "#ff0000";
     colorInput.dispatchEvent(new Event("change"));
     expect(options.onSetColor).toHaveBeenCalledWith([1, 0, 0]);
+  });
+
+  it("'Show through terrain' is always visible (not GM-only, a per-player preference), reflects the current state, and calls onSetShowThroughTerrain when toggled -- real request: \"I'd make it a player toggle, and a per-player setting\"", () => {
+    const { options } = mount({ isGM: () => false, isShowThroughTerrain: () => true });
+    const checkbox = dockElement.querySelector<HTMLInputElement>("#waypoint-show-through-terrain-input")!;
+    expect(checkbox.checked).toBe(true);
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(options.onSetShowThroughTerrain).toHaveBeenCalledWith(false);
   });
 
   it("the on/off toggle and distance-metric input are GM-only", () => {

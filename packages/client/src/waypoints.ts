@@ -54,6 +54,46 @@ const DEFAULT_MARKER_COLOR: [number, number, number] = [1, 0.9, 0.2]; // yellow,
 const MIN_MARKER_RADIUS = 0.08;
 const MIN_LINE_RADIUS = 0.02;
 
+/**
+ * Real request: "the billboard and waypoint lines/spheres get
+ * obscured when they go through terrain... there should be a way to
+ * see them." A per-PLAYER, purely client-side preference (no server
+ * sync needed -- it only changes how THIS viewer renders waypoint
+ * meshes, not any shared state) -- not a shader change at all: a
+ * StandardMaterial that always passes the depth test
+ * (`depthFunction = ALWAYS`) and doesn't write its own depth
+ * (`disableDepthWrite`) renders on top of whatever else is already
+ * drawn, same trick engines use for gizmo/x-ray overlays. Confirmed
+ * fine by the user for this to also render in front of OTHER meshes
+ * (not just terrain), not just a cutout/alpha-test effect.
+ */
+const SHOW_THROUGH_TERRAIN_STORAGE_KEY = "ttrpg3d.waypointsShowThroughTerrain";
+
+function applyShowThroughTerrainToMaterial(material: BABYLON.Material, showThroughTerrain: boolean): void {
+  material.disableDepthWrite = showThroughTerrain;
+  material.depthFunction = showThroughTerrain ? BABYLON.Constants.ALWAYS : BABYLON.Constants.LEQUAL;
+}
+
+/**
+ * Real bug found live: the depth-function trick above alone made the
+ * BILLBOARD (the distance label) render through terrain correctly,
+ * but NOT the marker spheres/line tubes. Root cause: the label's
+ * plane, backed by `AdvancedDynamicTexture`, is alpha-blended --
+ * Babylon already draws every alpha-blended mesh in a SEPARATE pass,
+ * strictly after all opaque geometry (including terrain) regardless
+ * of submission order, so it "just worked." The marker/tube meshes
+ * are plain opaque `StandardMaterial` -- they draw in the SAME opaque
+ * pass as the terrain itself, where a depth-write/test trick alone
+ * doesn't guarantee draw ORDER against something else in that same
+ * pass. A higher `renderingGroupId` fixes this properly: Babylon
+ * always draws a higher rendering group strictly after every lower
+ * one, so group 1 is guaranteed to draw after terrain's default
+ * group 0, independent of submission order.
+ */
+function applyShowThroughTerrainToMesh(mesh: BABYLON.AbstractMesh, showThroughTerrain: boolean): void {
+  mesh.renderingGroupId = showThroughTerrain ? 1 : 0;
+}
+
 interface PlayerWaypointVisuals {
   markers: BABYLON.Mesh[];
   segments: BABYLON.Mesh[];
@@ -66,6 +106,8 @@ export interface WaypointsController {
   addAtCurrentPosition(): void;
   /** Shared by the N keybind and the waypoint panel's own W- button. */
   removeOrWalkBack(): void;
+  isShowThroughTerrain(): boolean;
+  setShowThroughTerrain(enabled: boolean): void;
   destroy(): void;
 }
 
@@ -84,6 +126,8 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
   // (not shared) since color is a per-player preference (the
   // waypoint panel's own color picker).
   const materialsBySession = new Map<string, BABYLON.StandardMaterial>();
+  let showThroughTerrain = localStorage.getItem(SHOW_THROUGH_TERRAIN_STORAGE_KEY) === "true";
+
   function materialFor(sessionId: string, color: [number, number, number]): BABYLON.StandardMaterial {
     let material = materialsBySession.get(sessionId);
     if (!material) {
@@ -94,6 +138,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
     const c = new BABYLON.Color3(...color);
     material.diffuseColor = c;
     material.emissiveColor = c;
+    applyShowThroughTerrainToMaterial(material, showThroughTerrain);
     return material;
   }
 
@@ -183,6 +228,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       marker.position = new BABYLON.Vector3(w.x, w.y, w.z);
       marker.material = material;
       marker.isPickable = false;
+      applyShowThroughTerrainToMesh(marker, showThroughTerrain);
       noa.rendering.addMeshToScene(marker, false);
       markers.push(marker);
     });
@@ -210,6 +256,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       );
       tube.material = material;
       tube.isPickable = false;
+      applyShowThroughTerrainToMesh(tube, showThroughTerrain);
       noa.rendering.addMeshToScene(tube, false);
       segments.push(tube);
 
@@ -222,6 +269,8 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       const label = createDistanceLabel(scene, `D: ${segmentDistances[i].toFixed(1)}\nT: ${totalDistance.toFixed(1)}`);
       const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2] as Point3;
       label.mesh.position = new BABYLON.Vector3(...mid);
+      applyShowThroughTerrainToMesh(label.mesh, showThroughTerrain);
+      if (label.mesh.material) applyShowThroughTerrainToMaterial(label.mesh.material, showThroughTerrain);
       noa.rendering.addMeshToScene(label.mesh, false);
       labels.push(label);
     });
@@ -247,9 +296,12 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       // Cheap skip, same spirit as turnTracker.ts's own update() diff --
       // only rebuild this player's meshes when something relevant
       // actually changed (their own waypoints, their live position
-      // while one exists, body size, the shared metric, or their own
-      // marker color).
-      const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP, color]);
+      // while one exists, body size, the shared metric, their own
+      // marker color, or the LOCAL viewer's own show-through-terrain
+      // preference -- the one case where a toggle isn't ABOUT this
+      // particular player's data, but still needs every session's
+      // visuals rebuilt with fresh materials to take effect).
+      const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP, color, showThroughTerrain]);
       const existing = visualsBySession.get(sessionId);
       if (existing?.lastKey === key) continue;
       if (existing) disposeVisuals(existing);
@@ -271,6 +323,14 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
   return {
     addAtCurrentPosition,
     removeOrWalkBack,
+    isShowThroughTerrain: () => showThroughTerrain,
+    setShowThroughTerrain(enabled: boolean): void {
+      showThroughTerrain = enabled;
+      localStorage.setItem(SHOW_THROUGH_TERRAIN_STORAGE_KEY, String(enabled));
+      // The next tick's key comparison picks this up and rebuilds
+      // every session's visuals with the new material settings --
+      // see the key's own doc above.
+    },
     destroy(): void {
       for (const visuals of visualsBySession.values()) disposeVisuals(visuals);
       visualsBySession.clear();

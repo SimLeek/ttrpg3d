@@ -472,6 +472,8 @@ export async function connectAndStreamWorld(
       return [me?.waypointColorR ?? 1, me?.waypointColorG ?? 0.9, me?.waypointColorB ?? 0.2];
     },
     onSetColor: ([r, g, b]) => room!.send("setWaypointColor", { r, g, b }),
+    isShowThroughTerrain: () => waypoints.isShowThroughTerrain(),
+    onSetShowThroughTerrain: (enabled) => waypoints.setShowThroughTerrain(enabled),
     onToggleWaypoints: () => room!.send("toggleWaypoints"),
     onSetDistanceMetric: (p) => room!.send("setWaypointDistanceMetric", { p }),
   });

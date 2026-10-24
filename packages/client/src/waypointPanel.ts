@@ -48,6 +48,9 @@ export interface WaypointPanelOptions {
   onRemoveWaypoint(): void;
   /** Real request: "add a little color picker for them in the waypoint window" -- everyone picks their OWN waypoint color (not GM-only), real bug found live: the marker/line material only set diffuseColor with lighting disabled, which renders black -- "if the waypoint 3d lines and spheres were supposed to be yellow, then we may have a bug on our hands." */
   onSetColor(rgb: [number, number, number]): void;
+  /** Real request: "the billboard and waypoint lines/spheres get obscured when they go through terrain... I'd make it a player toggle, and a per-player setting." Not GM-only -- every player decides for themselves whether THEIR OWN view renders waypoints through terrain (and other meshes -- confirmed fine by the user). */
+  isShowThroughTerrain: () => boolean;
+  onSetShowThroughTerrain(enabled: boolean): void;
   /** The panel's own manual on/off toggle (GM-only) -- real request: "just add a waypoint on/off toggle button instead, which the GM can press." */
   onToggleWaypoints(): void;
   /** GM-only distance-metric setting -- 1 = Manhattan, 2 = Euclidean, any other positive number = the general Minkowski-n case. */
@@ -86,6 +89,7 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
       .waypoint-panel-enabled-toggle.off { background: #622; color: #fff; }
       .waypoint-panel-metric-label { font-size: 11px; }
       .waypoint-panel-metric-input { width: 100%; }
+      .waypoint-panel-checkbox-row { display: flex; align-items: center; gap: 4px; font-size: 11px; }
     </style>
     <div class="waypoint-panel" id="waypoint-panel">
       <div class="waypoint-panel-header" id="waypoint-panel-header">
@@ -96,6 +100,10 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
         <button type="button" id="waypoint-add-btn" title="Add waypoint (M)">W+</button>
         <button type="button" id="waypoint-remove-btn" title="Revert waypoint (N)">W-</button>
         <input type="color" id="waypoint-color-input" title="Waypoint marker/line color" />
+        <label class="waypoint-panel-checkbox-row" title="Render waypoint markers/lines/labels through terrain (and other meshes) instead of being hidden behind them">
+          <input type="checkbox" id="waypoint-show-through-terrain-input" />
+          Show through terrain
+        </label>
         <div id="waypoint-gm-controls"></div>
       </div>
     </div>
@@ -107,6 +115,7 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
   const addBtn = container.querySelector<HTMLButtonElement>("#waypoint-add-btn")!;
   const removeBtn = container.querySelector<HTMLButtonElement>("#waypoint-remove-btn")!;
   const colorInput = container.querySelector<HTMLInputElement>("#waypoint-color-input")!;
+  const showThroughTerrainInput = container.querySelector<HTMLInputElement>("#waypoint-show-through-terrain-input")!;
   const gmControls = container.querySelector<HTMLDivElement>("#waypoint-gm-controls")!;
 
   let collapsed = false;
@@ -122,6 +131,9 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
 
   colorInput.value = colorToHex(options.waypointColor());
   colorInput.addEventListener("change", () => options.onSetColor(hexToColor(colorInput.value)));
+
+  showThroughTerrainInput.checked = options.isShowThroughTerrain();
+  showThroughTerrainInput.addEventListener("change", () => options.onSetShowThroughTerrain(showThroughTerrainInput.checked));
 
   function renderGmControls(): void {
     if (!options.isGM()) {
@@ -150,6 +162,7 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
   let lastEnabled = options.isWaypointsEnabled();
   let lastMetric = options.distanceMetricP();
   let lastColorHex = colorInput.value;
+  let lastShowThroughTerrain = showThroughTerrainInput.checked;
   renderGmControls();
 
   return {
@@ -161,6 +174,11 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
       if (colorHexNow !== lastColorHex) {
         lastColorHex = colorHexNow;
         colorInput.value = colorHexNow;
+      }
+      const showThroughTerrainNow = options.isShowThroughTerrain();
+      if (showThroughTerrainNow !== lastShowThroughTerrain) {
+        lastShowThroughTerrain = showThroughTerrainNow;
+        showThroughTerrainInput.checked = showThroughTerrainNow;
       }
       if (isGMNow === lastIsGM && enabledNow === lastEnabled && metricNow === lastMetric) return;
       lastIsGM = isGMNow;
