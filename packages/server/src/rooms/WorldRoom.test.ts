@@ -1102,6 +1102,36 @@ describe("WorldRoom", () => {
       expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(bId); // still B's turn
     });
 
+    it("setTurnOrderRollValue (GM) sets both rollValue and hasRollValue -- real request: \"the number (default 0 if no roll)... editable by gm and not others\"", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const entryId = room.state.turnOrder[0].turnEntryId;
+      expect(room.state.turnOrder[0]).toMatchObject({ hasRollValue: false, rollValue: 0 });
+
+      adminClient.send("setTurnOrderRollValue", { turnEntryId: entryId, value: 17 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder[0]).toMatchObject({ hasRollValue: true, rollValue: 17 });
+    });
+
+    it("setTurnOrderRollValue is refused from a non-admin session, even for their OWN character's entry -- unlike add/remove, the sort/display number stays GM-only", async () => {
+      const playerAccount = trackedAccount(`WorldRoom-test-turnorder-rollvalue-${Date.now()}`);
+      const mine = store.createCharacter(playerAccount.id, "RollValueOwner", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: playerAccount.id, characterId: mine.id });
+      const player = room.state.players.get(client.sessionId)!;
+      client.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: mine.id });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const entryId = room.state.turnOrder[0].turnEntryId;
+
+      client.send("setTurnOrderRollValue", { turnEntryId: entryId, value: 99 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder[0]).toMatchObject({ hasRollValue: false, rollValue: 0 });
+    });
+
     it("removeCharacterInstance cascades to remove any turn-order entry pointing at that instance", async () => {
       const focused = trackedCharacterOwner();
       const goblin = store.createCharacter(owner.id, "ToRemoveFromTracker", [0, 1, 0]);

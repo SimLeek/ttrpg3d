@@ -13,6 +13,7 @@ function mount(overrides: Partial<TurnTrackerOptions> = {}) {
     onClearAll: vi.fn(),
     onNextTurn: vi.fn(),
     onReorder: vi.fn(),
+    onSetRollValue: vi.fn(),
     ...overrides,
   };
   tracker = mountTurnTracker(container, options);
@@ -99,18 +100,36 @@ describe("mountTurnTracker", () => {
     tracker.update([entry("1", "A", 11), entry("2", "B")], 0, 1); // roll value changed
 
     expect(container.querySelector<HTMLLIElement>(".turn-tracker-entry")).not.toBe(rowBefore);
-    expect(container.querySelector(".turn-tracker-entry-roll")!.textContent).toBe("11");
+    expect(container.querySelector<HTMLInputElement>(".turn-tracker-entry-roll-input")!.value).toBe("11");
   });
 
-  it("shows a roll value for entries that have one, and nothing for entries that don't", () => {
-    const { tracker } = mount();
+  it("the roll number always shows, defaulting to 0 when the entry has no roll yet -- real request: \"the number (default 0 if no roll)\"", () => {
+    const { tracker } = mount({ isGM: () => false });
     tracker.update([entry("1", "RolledGoblin", 14), entry("2", "ManualAdd")], 0, 1);
     const rows = container.querySelectorAll<HTMLLIElement>(".turn-tracker-entry");
-    expect(rows[0].querySelector(".turn-tracker-entry-roll")!.textContent).toBe("14");
-    expect(rows[1].querySelector(".turn-tracker-entry-roll")).toBeNull();
+    expect(rows[0].querySelector(".turn-tracker-entry-roll-display")!.textContent).toBe("14");
+    expect(rows[1].querySelector(".turn-tracker-entry-roll-display")!.textContent).toBe("0"); // no roll yet -- default 0, not blank
   });
 
-  it("GM-only controls (Add row, Next Turn, Clear All, per-row Remove, draggable rows) are present for a GM", () => {
+  it("the roll number is an editable input for a GM, calling onSetRollValue on blur or Enter -- real request: \"editable by gm and not others\"", () => {
+    const { tracker, options } = mount({ isGM: () => true });
+    tracker.update([entry("1", "A", 5)], 0, 1);
+    const input = container.querySelector<HTMLInputElement>(".turn-tracker-entry-roll-input")!;
+    expect(input.value).toBe("5");
+
+    input.value = "12";
+    input.dispatchEvent(new Event("blur"));
+    expect(options.onSetRollValue).toHaveBeenCalledWith("1", 12);
+  });
+
+  it("the roll number is a plain read-only display for a non-GM, even for a character they own", () => {
+    const { tracker } = mount({ isGM: () => false, canRemoveEntry: () => true });
+    tracker.update([entry("1", "MyGoblin", 5, "mine")], 0, 1);
+    expect(container.querySelector(".turn-tracker-entry-roll-input")).toBeNull();
+    expect(container.querySelector(".turn-tracker-entry-roll-display")!.textContent).toBe("5");
+  });
+
+  it("GM-only controls (Add row, Next Turn, Clear All, per-row Remove, up/down arrows) are present for a GM", () => {
     const { tracker } = mount({ isGM: () => true });
     tracker.update([entry("1", "A")], 0, 1);
 
@@ -118,7 +137,7 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector("#turn-tracker-next-btn")).not.toBeNull();
     expect(container.querySelector("#turn-tracker-clear-btn")).not.toBeNull();
     expect(container.querySelector(".turn-tracker-entry-remove")).not.toBeNull();
-    expect(container.querySelector<HTMLLIElement>(".turn-tracker-entry")!.draggable).toBe(true);
+    expect(container.querySelector(".turn-tracker-entry-arrows")).not.toBeNull();
   });
 
   it("GM-only controls are absent for a non-GM, who sees a read-only list", () => {
@@ -129,7 +148,7 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector("#turn-tracker-next-btn")).toBeNull();
     expect(container.querySelector("#turn-tracker-clear-btn")).toBeNull();
     expect(container.querySelector(".turn-tracker-entry-remove")).toBeNull();
-    expect(container.querySelector<HTMLLIElement>(".turn-tracker-entry")!.draggable).toBe(false);
+    expect(container.querySelector(".turn-tracker-entry-arrows")).toBeNull();
   });
 
   it("the manual add row's placeholder reads 'Add non-character...' -- real request: distinguish it from the context-menu's per-character 'Add to Turn Order'", () => {
@@ -137,14 +156,14 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector<HTMLInputElement>("#turn-tracker-add-input")!.placeholder).toBe("Add non-character...");
   });
 
-  it("a non-GM player can still remove an entry for a character they OWN -- real correction: \"if it's the player owning their own characters, then sure, they should be able to remove their specific characters\" -- but NOT see Next Turn/Clear All/the add row/drag-to-reorder, which stay GM-only", () => {
+  it("a non-GM player can still remove an entry for a character they OWN -- real correction: \"if it's the player owning their own characters, then sure, they should be able to remove their specific characters\" -- but NOT see Next Turn/Clear All/the add row/up-down arrows, which stay GM-only", () => {
     const { tracker, options } = mount({ isGM: () => false, canRemoveEntry: (e) => e.instanceId === "mine" });
     tracker.update([entry("1", "MyGoblin", undefined, "mine"), entry("2", "SomeoneElses", undefined, "not-mine")], 0, 1);
 
     const rows = container.querySelectorAll<HTMLLIElement>(".turn-tracker-entry");
     expect(rows[0].querySelector(".turn-tracker-entry-remove")).not.toBeNull(); // owned -- removable
     expect(rows[1].querySelector(".turn-tracker-entry-remove")).toBeNull(); // not owned, not GM -- not removable
-    expect(rows[0].draggable).toBe(false); // reordering stays GM-only regardless of ownership
+    expect(rows[0].querySelector(".turn-tracker-entry-arrows")).toBeNull(); // reordering stays GM-only regardless of ownership
     expect(container.querySelector("#turn-tracker-next-btn")).toBeNull();
     expect(container.querySelector("#turn-tracker-clear-btn")).toBeNull();
     expect(container.querySelector("#turn-tracker-add-input")).toBeNull();
@@ -216,26 +235,27 @@ describe("mountTurnTracker", () => {
     expect(options.onRemove).toHaveBeenCalledWith("2");
   });
 
-  it("dragging one row onto another calls onReorder with the dragged entry's id and the drop target's CURRENT index", () => {
+  it("clicking a row's up/down arrows calls onReorder with that entry's id and the adjacent index -- real correction, 2026-10-23: replaced drag-and-drop (\"I just tried it as GM and it's pretty bad\")", () => {
     const { tracker, options } = mount();
     tracker.update([entry("1", "A"), entry("2", "B"), entry("3", "C")], 0, 1);
     const rows = container.querySelectorAll<HTMLLIElement>(".turn-tracker-entry");
 
-    rows[0].dispatchEvent(new Event("dragstart"));
-    rows[2].dispatchEvent(new Event("drop", { cancelable: true }));
+    rows[1].querySelector<HTMLButtonElement>('[title="Move up"]')!.click();
+    expect(options.onReorder).toHaveBeenCalledWith("2", 0);
 
-    expect(options.onReorder).toHaveBeenCalledWith("1", 2);
+    rows[1].querySelector<HTMLButtonElement>('[title="Move down"]')!.click();
+    expect(options.onReorder).toHaveBeenCalledWith("2", 2);
   });
 
-  it("dropping onto itself is a no-op", () => {
-    const { tracker, options } = mount();
+  it("the first row's up arrow and the last row's down arrow are disabled -- nowhere further to move", () => {
+    const { tracker } = mount();
     tracker.update([entry("1", "A"), entry("2", "B")], 0, 1);
     const rows = container.querySelectorAll<HTMLLIElement>(".turn-tracker-entry");
 
-    rows[0].dispatchEvent(new Event("dragstart"));
-    rows[0].dispatchEvent(new Event("drop", { cancelable: true }));
-
-    expect(options.onReorder).not.toHaveBeenCalled();
+    expect(rows[0].querySelector<HTMLButtonElement>('[title="Move up"]')!.disabled).toBe(true);
+    expect(rows[0].querySelector<HTMLButtonElement>('[title="Move down"]')!.disabled).toBe(false);
+    expect(rows[1].querySelector<HTMLButtonElement>('[title="Move up"]')!.disabled).toBe(false);
+    expect(rows[1].querySelector<HTMLButtonElement>('[title="Move down"]')!.disabled).toBe(true);
   });
 
   it("minimizing shows '<name>'s turn' in the title bar instead of 'Turn Order', and restoring reverts it", () => {

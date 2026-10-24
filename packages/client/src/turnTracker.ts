@@ -14,10 +14,14 @@
 // calls setVisible() and doesn't track the state itself (same split
 // hotbar.ts's own inventory-open toggle already uses elsewhere).
 //
-// GM-only controls (Add, per-row Remove, Clear All, Next Turn,
-// drag-to-reorder) -- confirmed directly ("Only the GM should be able
-// to click next turn"; "Add" is explicitly the GM's manual-override
-// path). A non-GM session sees the same list, read-only.
+// GM-only controls (Add, Clear All, Next Turn, roll-value edit,
+// up/down reorder arrows) -- confirmed directly ("Only the GM should
+// be able to click next turn"; "Add" is explicitly the GM's manual-
+// override path). A non-GM session sees the same list, read-only,
+// except they can still remove/add their OWN character's entry (see
+// canRemoveEntry's own doc). Reordering was native HTML5 drag-and-
+// drop originally; real correction, 2026-10-23 ("I just tried it as
+// GM and it's pretty bad") -- replaced with plain up/down buttons.
 //
 // Deliberately noa-free (same reasoning as every other panel file
 // here) -- GM status and all data come in via injected callbacks/
@@ -59,6 +63,8 @@ export interface TurnTrackerOptions {
   onClearAll(): void;
   onNextTurn(): void;
   onReorder(turnEntryId: string, newIndex: number): void;
+  /** Real request: "the number (default 0 if no roll)... editable by gm and not others." GM-only, like onClearAll/onNextTurn/onReorder -- unlike who's IN the order, what number they're sorted/shown by is a GM-tier call. */
+  onSetRollValue(turnEntryId: string, value: number): void;
   /**
    * Real request: "let's get the context menu working for the turn
    * order characters, so if I select a turn order character that I
@@ -101,7 +107,12 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
       .turn-tracker-entry { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 3px; margin-bottom: 2px; background: rgba(255,255,255,0.05); }
       .turn-tracker-entry.current { background: rgb(255,217,51); color: #222; }
       .turn-tracker-entry-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .turn-tracker-entry-roll { font-size: 11px; opacity: 0.8; }
+      .turn-tracker-entry-roll-display { font-size: 11px; opacity: 0.8; min-width: 18px; text-align: center; }
+      .turn-tracker-entry-roll-input { width: 30px; font-size: 11px; text-align: center; background: rgba(255,255,255,0.08); border: 1px solid rgba(200,200,200,0.3); border-radius: 3px; color: inherit; padding: 1px 0; }
+      /* Real request: "up and down arrows... with up arrow above and down arrow below even if that means they're tiny." */
+      .turn-tracker-entry-arrows { display: flex; flex-direction: column; }
+      .turn-tracker-entry-arrow { background: none; border: none; color: inherit; cursor: pointer; font-size: 8px; line-height: 1; padding: 0 2px; }
+      .turn-tracker-entry-arrow:disabled { opacity: 0.3; cursor: default; }
       .turn-tracker-entry-remove { background: none; border: none; color: inherit; cursor: pointer; font-size: 11px; padding: 0 2px; }
       .turn-tracker-add-row { display: flex; gap: 4px; margin-bottom: 4px; }
       .turn-tracker-add-row input { flex: 1; min-width: 0; }
@@ -135,7 +146,6 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
   let lastEntries: TurnOrderEntryLike[] = [];
   let lastCurrentIndex = 0;
   let lastRound = 1;
-  let draggingTurnEntryId: string | null = null;
 
   function setMinimized(next: boolean): void {
     minimized = next;
@@ -145,10 +155,9 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
   }
   minBtn.addEventListener("click", () => setMinimized(!minimized));
 
-  // Plain mouse-event dragging for MOVING the whole panel -- distinct
-  // from the native HTML5 drag-and-drop used below for REORDERING rows
-  // within the list; the two don't mix (a continuously-following free
-  // position vs. a discrete drop-target swap).
+  // Plain mouse-event dragging for MOVING the whole panel -- rows
+  // within the list are reordered via up/down buttons instead (see
+  // renderList's own doc), not drag-and-drop.
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let draggingPanel = false;
@@ -228,20 +237,62 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
       const li = document.createElement("li");
       li.className = "turn-tracker-entry" + (index === lastCurrentIndex ? " current" : "");
       li.dataset.turnEntryId = entry.turnEntryId;
-      // Drag-to-reorder stays GM-only (reordering the WHOLE order is a
-      // GM-tier concern, unlike removing just your own entry below).
-      if (isGM) li.draggable = true;
 
       const label = document.createElement("span");
       label.className = "turn-tracker-entry-label";
       label.textContent = entry.label;
       li.appendChild(label);
 
-      if (entry.hasRollValue) {
-        const roll = document.createElement("span");
-        roll.className = "turn-tracker-entry-roll";
-        roll.textContent = String(entry.rollValue);
-        li.appendChild(roll);
+      // Real request: "the number (default 0 if no roll)... editable
+      // by gm and not others" -- always shown now (not conditional on
+      // hasRollValue), defaulting to 0. GM gets a real input; anyone
+      // else gets a plain read-only display.
+      const rollValue = entry.hasRollValue ? entry.rollValue : 0;
+      if (isGM) {
+        const rollInput = document.createElement("input");
+        rollInput.type = "number";
+        rollInput.className = "turn-tracker-entry-roll-input";
+        rollInput.value = String(rollValue);
+        function commitRoll(): void {
+          const value = Number(rollInput.value);
+          if (Number.isFinite(value)) options.onSetRollValue(entry.turnEntryId, value);
+        }
+        rollInput.addEventListener("blur", commitRoll);
+        rollInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") commitRoll();
+        });
+        li.appendChild(rollInput);
+      } else {
+        const rollDisplay = document.createElement("span");
+        rollDisplay.className = "turn-tracker-entry-roll-display";
+        rollDisplay.textContent = String(rollValue);
+        li.appendChild(rollDisplay);
+      }
+
+      // Real correction, 2026-10-23: reorder via up/down buttons
+      // instead of drag-and-drop ("I just tried it as GM and it's
+      // pretty bad") -- stays GM-only, same tier as Clear All/Next
+      // Turn/the roll-value edit above.
+      if (isGM) {
+        const arrows = document.createElement("div");
+        arrows.className = "turn-tracker-entry-arrows";
+        const upBtn = document.createElement("button");
+        upBtn.type = "button";
+        upBtn.className = "turn-tracker-entry-arrow";
+        upBtn.title = "Move up";
+        upBtn.textContent = "▲";
+        upBtn.disabled = index === 0;
+        upBtn.addEventListener("click", () => options.onReorder(entry.turnEntryId, index - 1));
+        const downBtn = document.createElement("button");
+        downBtn.type = "button";
+        downBtn.className = "turn-tracker-entry-arrow";
+        downBtn.title = "Move down";
+        downBtn.textContent = "▼";
+        downBtn.disabled = index === lastEntries.length - 1;
+        downBtn.addEventListener("click", () => options.onReorder(entry.turnEntryId, index + 1));
+        arrows.appendChild(upBtn);
+        arrows.appendChild(downBtn);
+        li.appendChild(arrows);
       }
 
       // Real correction, 2026-10-23: "if it's the player owning their
@@ -255,21 +306,6 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
         removeBtn.textContent = "✕";
         removeBtn.addEventListener("click", () => options.onRemove(entry.turnEntryId));
         li.appendChild(removeBtn);
-      }
-
-      if (isGM) {
-        li.addEventListener("dragstart", () => {
-          draggingTurnEntryId = entry.turnEntryId;
-        });
-        li.addEventListener("dragover", (event) => event.preventDefault());
-        li.addEventListener("drop", (event) => {
-          event.preventDefault();
-          if (!draggingTurnEntryId || draggingTurnEntryId === entry.turnEntryId) return;
-          const dropIndex = lastEntries.findIndex((e) => e.turnEntryId === entry.turnEntryId);
-          if (dropIndex === -1) return;
-          options.onReorder(draggingTurnEntryId, dropIndex);
-          draggingTurnEntryId = null;
-        });
       }
 
       // Real request: "let's get the context menu working for the

@@ -134,10 +134,16 @@ interface RemoveFromTurnOrderMessage {
   turnEntryId: string;
 }
 
-/** Moves the entry to `newIndex` in the list (drag-to-reorder) -- clamped server-side, never trusts the client's own bounds-checking. */
+/** Moves the entry to `newIndex` in the list (up/down arrow buttons -- drag-and-drop was tried and dropped, "pretty bad" in practice) -- clamped server-side, never trusts the client's own bounds-checking. */
 interface ReorderTurnOrderMessage {
   turnEntryId: string;
   newIndex: number;
+}
+
+/** GM-only inline roll-value edit (real request: a manually-typed initiative number, not yet the `[[]]` roll-eval function docs/BATTLE_SYSTEM.md's later phase describes) -- sets both `rollValue` and `hasRollValue` together, since typing a value (even 0) is itself the thing that gives this entry one. */
+interface SetTurnOrderRollValueMessage {
+  turnEntryId: string;
+  value: number;
 }
 
 function flatIndex(i: number, j: number, k: number): number {
@@ -975,6 +981,22 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
         const newCurrentIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === currentEntryId);
         if (newCurrentIndex !== -1) this.state.turnOrderCurrentIndex = newCurrentIndex;
       }
+      this.persistTurnOrder();
+    });
+
+    // GM-only, real request: "the number (default 0 if no roll)...
+    // editable by gm and not others" -- a manual, directly-typed
+    // initiative value (not the `[[]]` roll-eval function, a later
+    // phase). Not ownership-relaxed like add/remove above -- unlike
+    // "which characters are IN the order," what number they're
+    // sorted/displayed by is a GM-tier call.
+    this.onMessage<SetTurnOrderRollValueMessage>("setTurnOrderRollValue", (client, { turnEntryId, value }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      if (!Number.isFinite(value)) return;
+      const entry = this.state.turnOrder.find((e) => e.turnEntryId === turnEntryId);
+      if (!entry) return;
+      entry.rollValue = value;
+      entry.hasRollValue = true;
       this.persistTurnOrder();
     });
 
