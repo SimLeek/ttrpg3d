@@ -174,13 +174,31 @@ world-switch hotkey. Resolved by moving pages to **P** instead
 (confirmed free, same thorough re-check this time) -- M stays free
 for this section's own use. N remains confirmed free either way.
 
+- **UI panel, not keybind-only** -- real correction, this round:
+  "since it's only appearing when turn order is there, I think we
+  should just attach it as a panel to the turn order on the right of
+  it." A collapsible panel docked to the RIGHT edge of the turn-order
+  tracker widget (`turnTracker.ts`), not a separate floating panel of
+  its own -- follows the tracker's own position when it's dragged,
+  and is only ever visible while the tracker itself is visible (see
+  the updated "auto-on with turn order" bullet below for the rest of
+  that visibility rule). Two buttons, **`W+`** (add waypoint) and
+  **`W-`** (revert waypoint) -- plain text labels for now, real icons
+  later -- each triggering the EXACT same action its keybind does (M /
+  N respectively, including N/`W-`'s own "walk back to the last
+  waypoint first" semantics below). Hovering either button shows a
+  tooltip spelling out the keybind: "Add waypoint (M)" / "Revert
+  waypoint (N)".
 - **M** marks a waypoint at the player's current position; **N**
   removes it -- same "walk back to the last waypoint first, then a
   second press actually removes it" semantics the old game had (so you
   can't accidentally delete a waypoint you've since wandered away
   from).
 - A selectable distance metric (Manhattan / Euclidean / Minkowski-n),
-  matching `GameSettings`' old equivalent.
+  matching `GameSettings`' old equivalent -- lives as a GM-only
+  dropdown inside the panel's expanded state (a world-level setting
+  shared by everyone's displayed distances, not a per-player one, same
+  as the old `GameSettings` equivalent).
 - Waypoints snap to voxel-grid centers by default.
 - **Every consecutive pair of waypoints gets its own distance label on
   the segment between them** -- real correction: this is NOT just
@@ -215,10 +233,22 @@ for this section's own use. N remains confirmed free either way.
   stat value.
 - **Waypoints are automatically active whenever a turn order is
   running**, not a separately-toggled mode -- real direction: "these
-  waypoints should be on whenever turn order is on." The **GM can
-  disable them** for a given turn order (a toggle, GM-only) -- useful
-  for a pure roleplay/conversation-turn-order use case where distance
-  measurement isn't relevant, as opposed to actual combat.
+  waypoints should be on whenever turn order is on." "Running" means
+  the turn order has at least one entry in it -- the tracker widget
+  being merely open with an empty order does NOT turn this on, same
+  as Next Turn/round-counting have no real meaning for an empty order
+  either. The **GM can disable them** for a given turn order (a
+  toggle, GM-only) -- useful for a pure roleplay/conversation-turn-
+  order use case where distance measurement isn't relevant, as
+  opposed to actual combat. **Gated the same way every other "GM-
+  only" turn-tracker control now is** (real correction from the turn-
+  tracker phase-1 round): the toggle itself is admin-only server-side,
+  but the CLIENT only shows it to an admin who also has the G-key
+  `gmOverride` toggle on, so a GM previewing the player view (G off)
+  doesn't see it either. M/N (and the panel's `W+`/`W-` buttons) stop
+  doing anything for EVERYONE while disabled, GM included -- this
+  toggle is "is distance measurement relevant to this turn order at
+  all," not a per-session preference.
 
 ### 5. Character-size-aware waypoint markers
 
@@ -386,16 +416,84 @@ Feature: Waypoint distance measurement
     Then that input's own normal Enter behavior happens
     And no waypoint chain is finalized
 
-  Scenario: Waypoints turn on automatically with the turn order
-    Given no turn order is currently running
-    When the GM starts a turn order
+  Scenario: Waypoints turn on automatically once the turn order has an entry
+    Given the turn tracker is open with an EMPTY turn order
+    Then the waypoint/distance system is NOT active yet
+    When a character is added to the turn order
     Then the waypoint/distance system becomes active for all players
+
+  Scenario: An empty turn order does not count as "running"
+    Given the turn tracker widget is open
+    And the turn order has no entries in it
+    Then the waypoint panel does not appear, and M/N do nothing
 
   Scenario: The GM can disable waypoints for a turn order
     Given a turn order is running with waypoints active
+    And the GM currently has G-key mode ON
     When the GM disables waypoints for this turn order
-    Then M/N/distance labels stop functioning until re-enabled,
-      while the turn order itself keeps running
+    Then M/N/distance labels/the waypoint panel's W+/W- buttons all
+      stop functioning for EVERYONE, GM included, until re-enabled
+    And the turn order itself keeps running
+
+  Scenario: A GM previewing the player view does not see the disable toggle
+    Given a turn order is running with waypoints active
+    And the GM turns G-key mode OFF
+    Then the "disable waypoints" toggle is not visible to them,
+      same as the turn tracker's other GM-only controls
+
+Feature: Waypoint panel UI (docked to the turn-order tracker)
+
+  Scenario: The panel is docked to the right of the turn tracker
+    Given the turn order is running (has at least one entry) and
+      waypoints are not GM-disabled
+    Then a waypoint panel appears attached to the RIGHT edge of the
+      turn-order tracker widget, not as its own independent floating
+      panel
+
+  Scenario: The panel follows the tracker when it's dragged
+    Given the waypoint panel is docked next to the turn tracker
+    When the player drags the turn tracker to a new position
+    Then the waypoint panel moves along with it, staying docked to its
+      right edge
+
+  Scenario: The panel is hidden whenever the turn tracker itself is hidden
+    Given the turn order is running and waypoints are active
+    When the player closes/hides the turn tracker widget
+    Then the waypoint panel is hidden too, even though waypoints are
+      still technically active
+
+  Scenario: The panel is collapsible, independent of the tracker's own minimize state
+    Given the waypoint panel is visible, expanded
+    When the player clicks the panel's own collapse control
+    Then the panel shrinks to a minimal form (buttons only, no expanded
+      settings like the metric dropdown)
+    And the turn tracker's own minimize state is unaffected
+
+  Scenario: W+ places a waypoint, same as pressing M
+    Given the waypoint panel is visible
+    When the player clicks "W+"
+    Then a waypoint is placed at their current position, identically
+      to pressing M
+
+  Scenario: W- reverts a waypoint, same as pressing N (including the walk-back-first guard)
+    Given the waypoint panel is visible and the player has walked away
+      from the last placed waypoint
+    When the player clicks "W-"
+    Then they are moved back to that waypoint first, and it is NOT
+      removed -- identical to pressing N while not standing on it
+
+  Scenario: Hovering a panel button shows its keybind as a tooltip
+    Given the waypoint panel is visible
+    When the player hovers "W+"
+    Then a tooltip reading "Add waypoint (M)" appears
+    When the player hovers "W-"
+    Then a tooltip reading "Revert waypoint (N)" appears
+
+  Scenario: A non-GM session sees the panel's buttons but not the metric dropdown
+    Given a non-GM session has the waypoint panel open, expanded
+    Then "W+"/"W-" are visible and usable (everyone can place/revert
+      their OWN waypoints)
+    And the distance-metric dropdown is not visible to them
 ```
 
 ## UI/interaction reference
@@ -416,6 +514,13 @@ Feature: Waypoint distance measurement
   plane) is the mechanism to reuse/extend, per direct user call --
   check the old Godot game's own billboard node setup for anything
   else worth matching.
+- **Waypoint panel**: docked beside the turn tracker, not its own
+  floating window -- no existing precedent for a panel attached to
+  ANOTHER panel in this codebase (every other panel here is either a
+  docked safe-area one or an independent floating one), so
+  `turnTracker.ts`'s own position-tracking (its drag handler) is what
+  the waypoint panel's position needs to follow, not a separate
+  mechanism of its own.
 
 ## Open questions / assumptions still worth confirming
 
@@ -433,3 +538,12 @@ Feature: Waypoint distance measurement
    needs its own separate default is still open.
 3. **"Reset char"/GM-reset keybind**, if any, is explicitly deferred
    ("we'll decide a keybind later") -- not blocking this pass.
+4. **No Finalize ("Enter") button in the waypoint panel**: the panel
+   spec above only names `W+`/`W-` buttons, matching what was asked
+   for directly -- Finalize stays keybind-only (Enter) for now. A
+   third button could be added later if that turns out to matter in
+   practice.
+5. **The distance-metric dropdown's exact placement/behavior** (GM-only,
+   inside the panel's expanded state, a world-level setting) is this
+   doc's own best guess at where it should live -- never directly
+   specified by the user, unlike everything else in this section.
