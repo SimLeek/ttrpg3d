@@ -75,7 +75,7 @@ export const BarState = schema(
   "BarState",
 );
 
-/** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- one marked position in a session's own waypoint chain (M/N keybinds, the panel's W+/W- buttons). Snapped to voxel-grid centers client-side before being sent (same "client reports its own position, server trusts it" convention the "pos" message already uses), not re-validated server-side beyond finiteness. */
+/** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- one marked position in a character INSTANCE's own waypoint chain (M/N keybinds, the panel's W+/W- buttons, operating on whichever instance the sender currently pilots). Snapped to voxel-grid centers client-side before being sent (same "client reports its own position, server trusts it" convention the "pos" message already uses), not re-validated server-side beyond finiteness. */
 export const WaypointState = schema(
   {
     x: t.number().default(0),
@@ -149,6 +149,26 @@ export const OtherCharacterState = schema(
     bodyHeight: t.number().default(1.8),
     bodyDepth: t.number().default(0.6),
     statusEffects: t.array(StatusEffectState),
+    /**
+     * docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- real
+     * correction, 2026-10-24: lives on the INSTANCE now, not the
+     * piloting session (PlayerState used to hold this) -- "waypoints
+     * should be per-player... tab through different 3d instances,
+     * [and] waypoints then go in a line from the previous location to
+     * the instance I'm controlling now. It should really be waypoints
+     * just following a specific instance, which would make more
+     * sense with the turn order and swapping control." Since a
+     * piloted instance is the SAME object (`t.ref`, moved -- see this
+     * state's own doc) the whole time, its waypoint chain moves with
+     * it automatically on every focus-swap, with no extra code needed
+     * here -- an idle instance (otherCharacters) keeps whatever chain
+     * it had too, for whenever someone next takes control of it.
+     */
+    waypoints: t.array(WaypointState),
+    /** Same tier/reasoning as `waypoints` above -- moved off PlayerState so each CHARACTER (not each piloting session) has its own distinguishing color, consistent with turn-order membership rather than who happens to be driving it right now. */
+    waypointColorR: t.number().default(1),
+    waypointColorG: t.number().default(0.9),
+    waypointColorB: t.number().default(0.2),
   },
   "OtherCharacterState",
 );
@@ -191,12 +211,6 @@ export const PlayerState = schema(
     /** Mirrors GameState.ts's own presence.accountId (GameRoom.ts) -- same "never trusted for anything auth-related beyond a fresh store check" rule. MVP goal item 4 follow-up: needed so `placeCharacter` can verify the sender actually owns the character they're placing. */
     accountId: t.string().default(""),
     currentInstance: t.ref(OtherCharacterState),
-    /** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- a SESSION's own navigation aid (M/N, the panel's W+/W-), independent of whichever character they're currently piloting -- tabbing to a different character keeps your own waypoint chain, it doesn't move with the character. Not persisted (store.ts): lost on disconnect, same as any other scratch-measurement tool, not something the "assume unreliable connections" standing principle needs to protect. */
-    waypoints: t.array(WaypointState),
-    /** Real bug found live: the marker/line material only set `diffuseColor` with `disableLighting` on, which renders black (StandardMaterial sources its unlit color from `emissiveColor`, not `diffuseColor` -- confirmed against this codebase's own characterPlacement.ts marker, which already sets both together for exactly this reason). Fixed client-side; this is the real request on top of that fix -- "I can already see the complaints coming in for yellow" -- a per-player color, defaulting to the same yellow, picked via the waypoint panel's own color input. Not persisted, same reasoning as `waypoints` above. */
-    waypointColorR: t.number().default(1),
-    waypointColorG: t.number().default(0.9),
-    waypointColorB: t.number().default(0.2),
   },
   "PlayerState",
 );

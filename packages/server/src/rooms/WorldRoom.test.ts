@@ -1315,12 +1315,12 @@ describe("WorldRoom", () => {
 
       client.send("addWaypoint", { x: 1.5, y: 2.5, z: 3.5 }); // waypointsEnabled defaults false
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(room.state.players.get(client.sessionId)!.waypoints).toHaveLength(0);
+      expect(room.state.players.get(client.sessionId)!.currentInstance.waypoints).toHaveLength(0);
 
       room.state.waypointsEnabled = true;
       client.send("addWaypoint", { x: 1.5, y: 2.5, z: 3.5 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const waypoints = room.state.players.get(client.sessionId)!.waypoints;
+      const waypoints = room.state.players.get(client.sessionId)!.currentInstance.waypoints;
       expect(waypoints).toHaveLength(1);
       expect(waypoints[0]).toMatchObject({ x: 1.5, y: 2.5, z: 3.5 });
     });
@@ -1339,12 +1339,12 @@ describe("WorldRoom", () => {
       room.state.waypointsEnabled = false;
       client.send("removeWaypoint");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(room.state.players.get(client.sessionId)!.waypoints).toHaveLength(2); // disabled -- no-op
+      expect(room.state.players.get(client.sessionId)!.currentInstance.waypoints).toHaveLength(2); // disabled -- no-op
 
       room.state.waypointsEnabled = true;
       client.send("removeWaypoint");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const remaining = room.state.players.get(client.sessionId)!.waypoints;
+      const remaining = room.state.players.get(client.sessionId)!.currentInstance.waypoints;
       expect(remaining).toHaveLength(1);
       expect(remaining[0]).toMatchObject({ x: 1, y: 1, z: 1 }); // the SECOND one was removed, not the first
     });
@@ -1362,7 +1362,7 @@ describe("WorldRoom", () => {
 
       client.send("clearWaypoints");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(room.state.players.get(client.sessionId)!.waypoints).toHaveLength(0);
+      expect(room.state.players.get(client.sessionId)!.currentInstance.waypoints).toHaveLength(0);
     });
 
     it("a session's own waypoint chain is independent of another session's", async () => {
@@ -1376,8 +1376,8 @@ describe("WorldRoom", () => {
 
       a.send("addWaypoint", { x: 1, y: 1, z: 1 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(room.state.players.get(a.sessionId)!.waypoints).toHaveLength(1);
-      expect(room.state.players.get(b.sessionId)!.waypoints).toHaveLength(0);
+      expect(room.state.players.get(a.sessionId)!.currentInstance.waypoints).toHaveLength(1);
+      expect(room.state.players.get(b.sessionId)!.currentInstance.waypoints).toHaveLength(0);
     });
 
     it("toggleWaypoints (GM-only) flips waypointsEnabled and persists it, refused from a non-admin", async () => {
@@ -1561,7 +1561,7 @@ describe("WorldRoom", () => {
       expect(otherRoom.state.waypointDistanceMetricP).toBe(2);
     });
 
-    it("waypointsEnabled/metric survive a room being recreated, but a session's own waypoint chain does NOT (not persisted -- scratch measurement data, not something the unreliable-connections principle protects); a fresh core waypoint is stamped instead, since waypoints are still on", async () => {
+    it("waypointsEnabled/metric survive a room being recreated, but an instance's own waypoint chain does NOT (not persisted -- scratch measurement data, not something the unreliable-connections principle protects); no core is auto-stamped on resume either, since core-stamping is now tied to turn-order membership, not to joining -- real correction, 2026-10-24: waypoints moved from the piloting session to the piloted INSTANCE, so the old 'latecomer gets a core just for joining' behavior no longer applies here", async () => {
       const owner = trackedAccount(`WorldRoom-test-wp-persist-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-wp-persist-game-${Date.now()}`, owner.id);
       const world = trackedWorld(game.id, "Waypoint Persist Test World", "limestone_slab", SLAB_PARAMS);
@@ -1575,13 +1575,12 @@ describe("WorldRoom", () => {
       const secondRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       expect(secondRoom.state.waypointsEnabled).toBe(true); // persisted
       const secondClient = await colyseus.connectTo(secondRoom, { accountId: owner.id });
-      const resumedWaypoints = secondRoom.state.players.get(secondClient.sessionId)!.waypoints;
-      expect(resumedWaypoints).toHaveLength(1); // NOT the old chain -- a FRESH core, since waypoints are still on at join time
-      expect(resumedWaypoints[0].isCore).toBe(true);
-      expect([resumedWaypoints[0].x, resumedWaypoints[0].y, resumedWaypoints[0].z]).not.toEqual([1, 1, 1]); // not the stale (1,1,1) from before -- wherever they actually spawned
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const resumedWaypoints = secondRoom.state.players.get(secondClient.sessionId)!.currentInstance.waypoints;
+      expect(resumedWaypoints).toHaveLength(0); // the old chain is gone, and nothing is auto-stamped just from joining
     });
 
-    it("resetAllCoreWaypoints (triggered by turning waypoints on, auto or manual) replaces EVERY connected session's own chain with just one fresh core at their current position, discarding any stale chain from before", async () => {
+    it("resetAllCoreWaypoints (triggered by turning waypoints on, auto or manual) replaces EVERY turn-order-bound instance's own chain with just one fresh core at its current position, discarding any stale chain from before -- real correction, 2026-10-24: scoped to turn-order membership now, not every connected session, since a core waypoint is \"the waypoint at the start of the TURN\"", async () => {
       const owner = trackedAccount(`WorldRoom-test-wp-core-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-wp-core-game-${Date.now()}`, owner.id);
       const world = trackedWorld(game.id, "Waypoint Core Test World", "limestone_slab", SLAB_PARAMS);
@@ -1589,11 +1588,11 @@ describe("WorldRoom", () => {
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
       const player = room.state.players.get(adminClient.sessionId)!;
 
-      adminClient.send("addToTurnOrder", { label: "A" }); // 0 -> 1 entries, auto-ON
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: player.currentInstance.characterId }); // 0 -> 1 entries, auto-ON
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(player.waypoints).toHaveLength(1);
-      expect(player.waypoints[0]).toMatchObject({ isCore: true, x: player.currentInstance.x, y: player.currentInstance.y, z: player.currentInstance.z });
+      expect(player.currentInstance.waypoints).toHaveLength(1);
+      expect(player.currentInstance.waypoints[0]).toMatchObject({ isCore: true, x: player.currentInstance.x, y: player.currentInstance.y, z: player.currentInstance.z });
     });
 
     it("removeWaypoint refuses to remove the core waypoint even when it's the only one left -- real request: \"there should be a core waypoint... that can't be removed from the list\"", async () => {
@@ -1602,23 +1601,23 @@ describe("WorldRoom", () => {
       const world = trackedWorld(game.id, "Waypoint Core Remove Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
-      adminClient.send("addToTurnOrder", { label: "A" }); // auto-ON, stamps the core
-      await new Promise((resolve) => setTimeout(resolve, 50));
       const player = room.state.players.get(adminClient.sessionId)!;
-      expect(player.waypoints).toHaveLength(1);
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: player.currentInstance.characterId }); // auto-ON, stamps the core
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.currentInstance.waypoints).toHaveLength(1);
 
       adminClient.send("removeWaypoint");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(player.waypoints).toHaveLength(1); // refused -- still just the core
+      expect(player.currentInstance.waypoints).toHaveLength(1); // refused -- still just the core
 
       adminClient.send("addWaypoint", { x: 9, y: 9, z: 9 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(player.waypoints).toHaveLength(2);
+      expect(player.currentInstance.waypoints).toHaveLength(2);
 
       adminClient.send("removeWaypoint"); // removes the NON-core one
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(player.waypoints).toHaveLength(1);
-      expect(player.waypoints[0].isCore).toBe(true);
+      expect(player.currentInstance.waypoints).toHaveLength(1);
+      expect(player.currentInstance.waypoints[0].isCore).toBe(true);
     });
 
     it("clearWaypoints keeps the core waypoint, dropping everything else", async () => {
@@ -1627,34 +1626,41 @@ describe("WorldRoom", () => {
       const world = trackedWorld(game.id, "Waypoint Core Clear Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
-      adminClient.send("addToTurnOrder", { label: "A" }); // auto-ON, stamps the core
+      const player = room.state.players.get(adminClient.sessionId)!;
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: player.currentInstance.characterId }); // auto-ON, stamps the core
       await new Promise((resolve) => setTimeout(resolve, 50));
       adminClient.send("addWaypoint", { x: 9, y: 9, z: 9 });
       adminClient.send("addWaypoint", { x: 8, y: 8, z: 8 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const player = room.state.players.get(adminClient.sessionId)!;
-      expect(player.waypoints).toHaveLength(3);
+      expect(player.currentInstance.waypoints).toHaveLength(3);
 
       adminClient.send("clearWaypoints");
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(player.waypoints).toHaveLength(1);
-      expect(player.waypoints[0].isCore).toBe(true);
+      expect(player.currentInstance.waypoints).toHaveLength(1);
+      expect(player.currentInstance.waypoints[0].isCore).toBe(true);
     });
 
-    it("a latecomer joining WHILE waypoints are already on gets a core waypoint too", async () => {
+    it("a character added to the turn order WHILE waypoints are already on gets a core waypoint too, even though it joined after the auto-on transition already fired -- real correction, 2026-10-24: this is no longer tied to a SESSION connecting (that onJoin path was removed along with session-owned waypoints), just to the instance being added to the turn order", async () => {
       const owner = trackedAccount(`WorldRoom-test-wp-core-latecomer-owner-${Date.now()}`);
       const latecomer = trackedAccount(`WorldRoom-test-wp-core-latecomer-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-wp-core-latecomer-game-${Date.now()}`, owner.id);
       const world = trackedWorld(game.id, "Waypoint Core Latecomer Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
-      adminClient.send("addToTurnOrder", { label: "A" }); // auto-ON
+      const admin = room.state.players.get(adminClient.sessionId)!;
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: admin.currentInstance.instanceId, characterId: admin.currentInstance.characterId }); // auto-ON
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const latecomerClient = await colyseus.connectTo(room, { accountId: latecomer.id });
-      const latecomerPlayer = room.state.players.get(latecomerClient.sessionId)!;
-      expect(latecomerPlayer.waypoints).toHaveLength(1);
-      expect(latecomerPlayer.waypoints[0]).toMatchObject({ isCore: true, x: latecomerPlayer.currentInstance.x, y: latecomerPlayer.currentInstance.y, z: latecomerPlayer.currentInstance.z });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const latecomerInstance = room.state.players.get(latecomerClient.sessionId)!.currentInstance;
+      expect(latecomerInstance.waypoints).toHaveLength(0); // joining alone isn't enough -- not in the turn order yet
+
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: latecomerInstance.instanceId, characterId: latecomerInstance.characterId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(latecomerInstance.waypoints).toHaveLength(1);
+      expect(latecomerInstance.waypoints[0]).toMatchObject({ isCore: true, x: latecomerInstance.x, y: latecomerInstance.y, z: latecomerInstance.z });
     });
 
     it("nextTurn (GM-only) re-stamps the core waypoint at the player's CURRENT position and clears the rest of the chain -- real request: \"the core waypoint should re-stamp on every next turn, and... the whole list... should clear, and just that core waypoint should be left\"", async () => {
@@ -1663,10 +1669,10 @@ describe("WorldRoom", () => {
       const world = trackedWorld(game.id, "Waypoint Core NextTurn Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
-      adminClient.send("addToTurnOrder", { label: "A" }); // auto-ON, stamps the first core
-      await new Promise((resolve) => setTimeout(resolve, 50));
       const player = room.state.players.get(adminClient.sessionId)!;
-      const originalCorePos = { x: player.waypoints[0].x, y: player.waypoints[0].y, z: player.waypoints[0].z };
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: player.currentInstance.characterId }); // auto-ON, stamps the first core
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const originalCorePos = { x: player.currentInstance.waypoints[0].x, y: player.currentInstance.waypoints[0].y, z: player.currentInstance.waypoints[0].z };
 
       // The player wanders around during their turn, placing waypoints
       // along the way, then moves to a new live position.
@@ -1674,15 +1680,15 @@ describe("WorldRoom", () => {
       adminClient.send("addWaypoint", { x: 8, y: 8, z: 8 });
       adminClient.send("pos", { x: 20, y: 20, z: 20, yaw: 0 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(player.waypoints).toHaveLength(3);
+      expect(player.currentInstance.waypoints).toHaveLength(3);
 
       adminClient.send("nextTurn");
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(player.waypoints).toHaveLength(1); // the whole chain cleared, just the core left
-      expect(player.waypoints[0].isCore).toBe(true);
-      expect([player.waypoints[0].x, player.waypoints[0].y, player.waypoints[0].z]).toEqual([20, 20, 20]); // re-stamped at the CURRENT position
-      expect([player.waypoints[0].x, player.waypoints[0].y, player.waypoints[0].z]).not.toEqual([originalCorePos.x, originalCorePos.y, originalCorePos.z]);
+      expect(player.currentInstance.waypoints).toHaveLength(1); // the whole chain cleared, just the core left
+      expect(player.currentInstance.waypoints[0].isCore).toBe(true);
+      expect([player.currentInstance.waypoints[0].x, player.currentInstance.waypoints[0].y, player.currentInstance.waypoints[0].z]).toEqual([20, 20, 20]); // re-stamped at the CURRENT position
+      expect([player.currentInstance.waypoints[0].x, player.currentInstance.waypoints[0].y, player.currentInstance.waypoints[0].z]).not.toEqual([originalCorePos.x, originalCorePos.y, originalCorePos.z]);
     });
 
     it("nextTurn still re-stamps the core even when the player never moved -- a harmless no-op position-wise, but still clears any waypoints placed that turn", async () => {
@@ -1691,33 +1697,33 @@ describe("WorldRoom", () => {
       const world = trackedWorld(game.id, "Waypoint Core NextTurn NoMove Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
-      adminClient.send("addToTurnOrder", { label: "A" });
-      await new Promise((resolve) => setTimeout(resolve, 50));
       const player = room.state.players.get(adminClient.sessionId)!;
-      const corePos = { x: player.waypoints[0].x, y: player.waypoints[0].y, z: player.waypoints[0].z };
+      adminClient.send("addToTurnOrder", { label: "ignored", instanceId: player.currentInstance.instanceId, characterId: player.currentInstance.characterId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const corePos = { x: player.currentInstance.waypoints[0].x, y: player.currentInstance.waypoints[0].y, z: player.currentInstance.waypoints[0].z };
       adminClient.send("addWaypoint", { x: 9, y: 9, z: 9 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(player.waypoints).toHaveLength(2);
+      expect(player.currentInstance.waypoints).toHaveLength(2);
 
       adminClient.send("nextTurn"); // no "pos" sent -- player stayed put
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(player.waypoints).toHaveLength(1);
-      expect([player.waypoints[0].x, player.waypoints[0].y, player.waypoints[0].z]).toEqual([corePos.x, corePos.y, corePos.z]);
+      expect(player.currentInstance.waypoints).toHaveLength(1);
+      expect([player.currentInstance.waypoints[0].x, player.currentInstance.waypoints[0].y, player.currentInstance.waypoints[0].z]).toEqual([corePos.x, corePos.y, corePos.z]);
     });
 
-    it("setWaypointColor (self-only, no admin needed) sets a session's own marker color", async () => {
+    it("setWaypointColor (self-only, no admin needed) sets the piloted INSTANCE's own marker color", async () => {
       const owner = trackedAccount(`WorldRoom-test-wp-color-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-wp-color-game-${Date.now()}`, owner.id);
       const world = trackedWorld(game.id, "Waypoint Color Test World", "limestone_slab", SLAB_PARAMS);
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const client = await colyseus.connectTo(room, { accountId: owner.id });
       const player = room.state.players.get(client.sessionId)!;
-      expect([player.waypointColorR, player.waypointColorG, player.waypointColorB]).toEqual([1, 0.9, 0.2]); // default yellow
+      expect([player.currentInstance.waypointColorR, player.currentInstance.waypointColorG, player.currentInstance.waypointColorB]).toEqual([1, 0.9, 0.2]); // default yellow
 
       client.send("setWaypointColor", { r: 0.2, g: 0.6, b: 1 });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect([player.waypointColorR, player.waypointColorG, player.waypointColorB]).toEqual([0.2, 0.6, 1]);
+      expect([player.currentInstance.waypointColorR, player.currentInstance.waypointColorG, player.currentInstance.waypointColorB]).toEqual([0.2, 0.6, 1]);
     });
   });
 

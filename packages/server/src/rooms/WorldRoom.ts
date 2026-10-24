@@ -530,27 +530,37 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
    * Real request: "there should be a core waypoint as long as
    * waypoints are on, one that can't be removed from the list, since
    * that would be the waypoint at the start of the turn, for
-   * reverting positions." Resets EVERY connected session's own
-   * waypoint chain down to just one fresh, non-removable entry
-   * (`isCore`) at wherever they currently are -- called whenever
+   * reverting positions." Real correction, 2026-10-24: waypoints
+   * (and this core-stamping) now belong to whichever INSTANCE the
+   * turn order actually references, not "every connected session" --
+   * "it should really be waypoints just following a specific
+   * instance, which would make more sense with the turn order and
+   * swapping control." Resets every turn-order member's own waypoint
+   * chain down to just one fresh, non-removable entry (`isCore`) at
+   * wherever that instance currently is -- called whenever
    * `waypointsEnabled` flips false -> true (here and in
-   * `toggleWaypoints`'s own manual path), discarding whatever stale
-   * chain a session might still have from a PREVIOUS time waypoints
-   * were on.
+   * `toggleWaypoints`'s own manual path) and on every `nextTurn`,
+   * discarding whatever stale chain an instance might still have from
+   * earlier. A bare-label turn-order entry (no instanceId) has
+   * nothing to stamp, same as every other instance-scoped operation.
    */
   private resetAllCoreWaypoints(): void {
-    for (const player of this.state.players.values()) this.resetWaypointsToCore(player);
+    for (const entry of this.state.turnOrder) {
+      if (!entry.instanceId) continue;
+      const instance = this.findAnyInstance(entry.instanceId);
+      if (instance) this.resetWaypointsToCore(instance);
+    }
   }
 
-  /** One session's own half of resetAllCoreWaypoints -- also called from onJoin for a session joining WHILE waypoints are already enabled (they have no core yet). Never reuses an existing WaypointState object across the clear+push (the same `@colyseus/schema` reparenting-within-one-mutation hazard the turn-order reorder bug already taught this file) -- always a brand new instance. */
-  private resetWaypointsToCore(player: PlayerStateType): void {
-    player.waypoints.clear();
+  /** One instance's own half of resetAllCoreWaypoints -- also called from addToTurnOrder, for a character joining the turn order (and so needing its own fresh core) WHILE waypoints are already enabled, without touching every OTHER already-active combatant's own chain. Never reuses an existing WaypointState object across the clear+push (the same `@colyseus/schema` reparenting-within-one-mutation hazard the turn-order reorder bug already taught this file) -- always a brand new instance. */
+  private resetWaypointsToCore(instance: OtherCharacterStateType): void {
+    instance.waypoints.clear();
     const core = new WaypointState();
-    core.x = player.currentInstance.x;
-    core.y = player.currentInstance.y;
-    core.z = player.currentInstance.z;
+    core.x = instance.x;
+    core.y = instance.y;
+    core.z = instance.z;
     core.isCore = true;
-    player.waypoints.push(core);
+    instance.waypoints.push(core);
   }
 
   /** removeCharacterInstance's own cleanup -- a turn-order entry can't outlive the live instance it points to. A bare-label entry (no instanceId) is never touched by this, same as it's never touched by any other instance-scoped operation. */
@@ -1049,6 +1059,16 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.state.turnOrder.push(entry);
       this.persistTurnOrder();
       this.applyWaypointAutoToggle(beforeCount);
+      // Real correction, 2026-10-24: a character JOINING combat
+      // mid-fight (turn order already non-empty, so the 0->1
+      // transition above doesn't fire) still needs its OWN fresh
+      // core waypoint, without touching any other already-active
+      // combatant's chain -- applyWaypointAutoToggle only resets
+      // EVERYONE on a 0<->1+ transition, not on every individual add.
+      if (entry.instanceId && this.state.waypointsEnabled) {
+        const instance = this.findAnyInstance(entry.instanceId);
+        if (instance) this.resetWaypointsToCore(instance);
+      }
     });
 
     // Real correction, 2026-10-23: same ownership relaxation as
@@ -1143,9 +1163,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       if (this.state.waypointsEnabled) this.resetAllCoreWaypoints();
     });
 
-    // docs/BATTLE_SYSTEM.md's waypoint/distance measurement. Self-only
-    // (a session can only ever add/remove/clear its OWN waypoint
-    // chain, no admin bypass needed -- there's nothing here for an
+    // docs/BATTLE_SYSTEM.md's waypoint/distance measurement. Operates
+    // on whichever INSTANCE the sender currently pilots
+    // (`currentInstance`) -- real correction, 2026-10-24: "it should
+    // really be waypoints just following a specific instance, which
+    // would make more sense with the turn order and swapping
+    // control," not the piloting session itself (tabbing to a
+    // different character used to leave the OLD chain's "live"
+    // segment jumping to the NEW character's position, since the
+    // chain stayed with the session). Self-only (a session can only
+    // ever add/remove/clear the chain for whatever they're CURRENTLY
+    // piloting, no admin bypass needed -- there's nothing here for an
     // admin to need access to on someone else's behalf). A no-op
     // while `waypointsEnabled` is false, for everyone, GM included --
     // "M/N and the panel's W+/W- do nothing while disabled."
@@ -1164,7 +1192,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       waypoint.x = x;
       waypoint.y = y;
       waypoint.z = z;
-      sender.waypoints.push(waypoint);
+      sender.currentInstance.waypoints.push(waypoint);
     });
 
     // Real request: "walk back to the last waypoint first, then a
@@ -1182,9 +1210,10 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.onMessage("removeWaypoint", (client) => {
       if (!this.state.waypointsEnabled) return;
       const sender = this.state.players.get(client.sessionId);
-      if (!sender || sender.waypoints.length === 0) return;
-      if (sender.waypoints[sender.waypoints.length - 1].isCore) return;
-      sender.waypoints.pop();
+      const waypoints = sender?.currentInstance.waypoints;
+      if (!waypoints || waypoints.length === 0) return;
+      if (waypoints[waypoints.length - 1].isCore) return;
+      waypoints.pop();
     });
 
     // Real request: "Finalizing the current waypoint chain" (Enter) --
@@ -1197,16 +1226,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.onMessage("clearWaypoints", (client) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      const existingCore = sender.waypoints.find((w) => w.isCore);
+      const waypoints = sender.currentInstance.waypoints;
+      const existingCore = waypoints.find((w) => w.isCore);
       const coreData = existingCore ? { x: existingCore.x, y: existingCore.y, z: existingCore.z } : undefined;
-      sender.waypoints.clear();
+      waypoints.clear();
       if (coreData) {
         const core = new WaypointState();
         core.x = coreData.x;
         core.y = coreData.y;
         core.z = coreData.z;
         core.isCore = true;
-        sender.waypoints.push(core);
+        waypoints.push(core);
       }
     });
 
@@ -1225,16 +1255,18 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     });
 
     // Real request: "add a little color picker for them in the
-    // waypoint window" -- a per-session preference (not admin-gated;
-    // everyone picks their OWN waypoint color), not persisted, same
-    // reasoning as the waypoints themselves.
+    // waypoint window" -- sets whichever INSTANCE the sender
+    // currently pilots (not admin-gated; everyone picks their OWN
+    // waypoint color), same "follows the instance, not the session"
+    // correction as addWaypoint/removeWaypoint/clearWaypoints above.
+    // Not persisted, same reasoning as the waypoints themselves.
     this.onMessage<{ r: number; g: number; b: number }>("setWaypointColor", (client, { r, g, b }) => {
       if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return;
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      sender.waypointColorR = r;
-      sender.waypointColorG = g;
-      sender.waypointColorB = b;
+      sender.currentInstance.waypointColorR = r;
+      sender.currentInstance.waypointColorG = g;
+      sender.currentInstance.waypointColorB = b;
     });
 
     // GM settings checkboxes (chatPanel.ts's GM tab) -- per-GAME, same
@@ -1302,11 +1334,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.currentInstance = resumed;
       this.registerActiveCharacter(client.sessionId, resumed.characterId);
       this.syncCharacterRoomRegistration(resumed.characterId);
-      // Real request: a session joining WHILE waypoints are already
-      // on (a latecomer mid-combat) has no core waypoint yet -- give
-      // them one at wherever they just resumed to, same as everyone
-      // else got when waypoints last turned on.
-      if (this.state.waypointsEnabled) this.resetWaypointsToCore(player);
+      // Real correction, 2026-10-24: waypoints now live on the
+      // INSTANCE itself (`resumed`), not the piloting session -- its
+      // existing chain (if any -- e.g. still in the turn order from
+      // before this session disconnected) comes back for free with
+      // the SAME object, nothing to stamp or reset here.
       console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}, resuming ${resumed.characterName}`);
       return;
     }
@@ -1354,9 +1386,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.syncCharacterRoomRegistration(character.id);
     }
 
-    // Same "a latecomer mid-combat gets a core waypoint too" rule as
-    // the resume path above.
-    if (this.state.waypointsEnabled) this.resetWaypointsToCore(player);
+    // Real correction, 2026-10-24: a BRAND NEW instance (this is a
+    // fresh join, never previously known to anything) has no reason
+    // to get a core waypoint here -- it isn't in the turn order yet.
+    // If it's later added to one (addToTurnOrder), that handler
+    // stamps its own core then.
 
     console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}${character ? ` as ${character.name}` : ""}`);
   }

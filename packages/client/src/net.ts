@@ -90,6 +90,10 @@ interface OtherCharacterLike {
   bodyHeight: number;
   bodyDepth: number;
   statusEffects: StatusEffectLike[];
+  /** Real correction, 2026-10-24: moved here from RemotePlayerLike -- waypoints/waypointColor* now belong to the piloted/placed INSTANCE, not the piloting session, so a waypoint chain follows whichever character it belongs to across focus-swaps (see waypoints.ts's own OtherCharacterLike doc). */
+  waypointColorR?: number;
+  waypointColorG?: number;
+  waypointColorB?: number;
 }
 
 /**
@@ -110,9 +114,6 @@ interface OtherCharacterLike {
 interface RemotePlayerLike {
   name: string;
   currentInstance: OtherCharacterLike;
-  waypointColorR?: number;
-  waypointColorG?: number;
-  waypointColorB?: number;
 }
 
 /** The shape of `room.state` this file actually reads -- `players` (per-session) alongside the world-level `otherCharacters` array (see OtherCharacterLike's own doc for why this moved off PlayerState). */
@@ -469,7 +470,7 @@ export async function connectAndStreamWorld(
     onRemoveWaypoint: () => waypoints.removeOrWalkBack(),
     waypointColor: () => {
       const me = (room!.state as WorldStateLike | undefined)?.players?.get(room!.sessionId);
-      return [me?.waypointColorR ?? 1, me?.waypointColorG ?? 0.9, me?.waypointColorB ?? 0.2];
+      return [me?.currentInstance.waypointColorR ?? 1, me?.currentInstance.waypointColorG ?? 0.9, me?.currentInstance.waypointColorB ?? 0.2];
     },
     onSetColor: ([r, g, b]) => room!.send("setWaypointColor", { r, g, b }),
     isShowThroughTerrain: () => waypoints.isShowThroughTerrain(),

@@ -36,18 +36,39 @@ interface WaypointLike {
   z: number;
 }
 
-interface RemotePlayerLike {
+/**
+ * Real correction, 2026-10-24: waypoints/waypointColor* moved from the
+ * piloting SESSION (`PlayerState`) to the piloted CHARACTER INSTANCE
+ * (`OtherCharacterState`) -- "the waypoint thing seems to be per
+ * player, so when I tab through different 3d instances, the waypoints
+ * then go in a line from the previous location to the instance I'm
+ * controlling now. It should really be waypoints just following a
+ * specific instance." A piloted instance is `players.get(x)
+ * .currentInstance`; an idle one lives directly in the world's own
+ * `otherCharacters` array -- both are rendered below, keyed by
+ * `instanceId` rather than `sessionId`.
+ */
+interface OtherCharacterLike {
+  instanceId: string;
+  x: number;
+  y: number;
+  z: number;
+  bodyWidth: number;
   waypoints?: Iterable<WaypointLike>;
-  currentInstance?: { x: number; y: number; z: number; bodyWidth: number };
   waypointColorR?: number;
   waypointColorG?: number;
   waypointColorB?: number;
+}
+
+interface RemotePlayerLike {
+  currentInstance?: OtherCharacterLike;
 }
 
 interface WorldStateLike {
   waypointsEnabled?: boolean;
   waypointDistanceMetricP?: number;
   players?: Map<string, RemotePlayerLike>;
+  otherCharacters?: Iterable<OtherCharacterLike>;
 }
 
 const DEFAULT_MARKER_COLOR: [number, number, number] = [1, 0.9, 0.2]; // yellow, per docs/BATTLE_SYSTEM.md -- per-player override via the waypoint panel's own color picker
@@ -122,18 +143,18 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
   // characterPlacement.ts marker, which already sets BOTH together
   // for exactly this reason. "If the waypoint 3d lines and spheres
   // were supposed to be yellow, then we may have a bug on our hands"
-  // -- they were, and this was it. One material PER SESSION now
-  // (not shared) since color is a per-player preference (the
+  // -- they were, and this was it. One material PER INSTANCE now
+  // (not shared) since color is a per-character preference (the
   // waypoint panel's own color picker).
-  const materialsBySession = new Map<string, BABYLON.StandardMaterial>();
+  const materialsByInstance = new Map<string, BABYLON.StandardMaterial>();
   let showThroughTerrain = localStorage.getItem(SHOW_THROUGH_TERRAIN_STORAGE_KEY) === "true";
 
-  function materialFor(sessionId: string, color: [number, number, number]): BABYLON.StandardMaterial {
-    let material = materialsBySession.get(sessionId);
+  function materialFor(instanceId: string, color: [number, number, number]): BABYLON.StandardMaterial {
+    let material = materialsByInstance.get(instanceId);
     if (!material) {
-      material = new BABYLON.StandardMaterial(`waypoint-marker-mat-${sessionId}`, scene);
+      material = new BABYLON.StandardMaterial(`waypoint-marker-mat-${instanceId}`, scene);
       material.disableLighting = true;
-      materialsBySession.set(sessionId, material);
+      materialsByInstance.set(instanceId, material);
     }
     const c = new BABYLON.Color3(...color);
     material.diffuseColor = c;
@@ -147,7 +168,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
   }
 
   function myWaypoints(): WaypointLike[] {
-    return Array.from(state()?.players?.get(room.sessionId)?.waypoints ?? []);
+    return Array.from(state()?.players?.get(room.sessionId)?.currentInstance?.waypoints ?? []);
   }
 
   function myLivePosition(): Point3 | undefined {
@@ -206,8 +227,8 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
     room.send("addWaypoint", { x, y, z });
   }
 
-  // ---- 3D rendering: markers + segments + distance labels, for EVERY connected player's own waypoint chain ----
-  const visualsBySession = new Map<string, PlayerWaypointVisuals>();
+  // ---- 3D rendering: markers + segments + distance labels, for EVERY character instance's own waypoint chain (piloted AND idle) ----
+  const visualsByInstance = new Map<string, PlayerWaypointVisuals>();
 
   function disposeVisuals(visuals: PlayerWaypointVisuals): void {
     for (const mesh of visuals.markers) mesh.dispose();
@@ -215,16 +236,16 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
     for (const label of visuals.labels) label.dispose();
   }
 
-  function buildVisualsFor(sessionId: string, waypoints: WaypointLike[], livePos: Point3 | undefined, bodyWidth: number, metricP: number, color: [number, number, number]): PlayerWaypointVisuals {
+  function buildVisualsFor(instanceId: string, waypoints: WaypointLike[], livePos: Point3 | undefined, bodyWidth: number, metricP: number, color: [number, number, number]): PlayerWaypointVisuals {
     const markerRadius = Math.max(MIN_MARKER_RADIUS, bodyWidth * 0.25);
     const lineRadius = Math.max(MIN_LINE_RADIUS, bodyWidth * 0.06);
-    const material = materialFor(sessionId, color);
+    const material = materialFor(instanceId, color);
     const markers: BABYLON.Mesh[] = [];
     const segments: BABYLON.Mesh[] = [];
     const labels: DistanceLabel[] = [];
 
     waypoints.forEach((w, i) => {
-      const marker = BABYLON.MeshBuilder.CreateSphere(`waypoint-${sessionId}-${i}`, { diameter: markerRadius * 2 }, scene);
+      const marker = BABYLON.MeshBuilder.CreateSphere(`waypoint-${instanceId}-${i}`, { diameter: markerRadius * 2 }, scene);
       marker.position = new BABYLON.Vector3(w.x, w.y, w.z);
       marker.material = material;
       marker.isPickable = false;
@@ -250,7 +271,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
 
     segmentEndpoints.forEach(([a, b], i) => {
       const tube = BABYLON.MeshBuilder.CreateTube(
-        `waypoint-segment-${sessionId}-${i}`,
+        `waypoint-segment-${instanceId}-${i}`,
         { path: [new BABYLON.Vector3(...a), new BABYLON.Vector3(...b)], radius: lineRadius, cap: BABYLON.Mesh.CAP_ALL, updatable: false },
         scene,
       );
@@ -280,42 +301,48 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
 
   noa.on("tick", () => {
     const s = state();
-    const players = s?.players;
-    if (!players) return;
+    if (!s) return;
+    // Piloted instances (players.get(x).currentInstance) AND idle ones
+    // (otherCharacters) both carry their own waypoint chain now -- see
+    // this file's own OtherCharacterLike doc above.
+    const instances: OtherCharacterLike[] = [];
+    if (s.players) for (const player of s.players.values()) if (player.currentInstance) instances.push(player.currentInstance);
+    if (s.otherCharacters) for (const other of s.otherCharacters) instances.push(other);
     const seen = new Set<string>();
 
-    for (const [sessionId, player] of players) {
-      const waypoints = Array.from(player.waypoints ?? []);
+    for (const instance of instances) {
+      const waypoints = Array.from(instance.waypoints ?? []);
       if (waypoints.length === 0) continue;
-      seen.add(sessionId);
+      const instanceId = instance.instanceId;
+      seen.add(instanceId);
 
-      const livePos: Point3 | undefined = player.currentInstance ? [player.currentInstance.x, player.currentInstance.y, player.currentInstance.z] : undefined;
-      const bodyWidth = player.currentInstance?.bodyWidth ?? 0.6;
-      const metricP = s?.waypointDistanceMetricP ?? 2;
-      const color: [number, number, number] = [player.waypointColorR ?? DEFAULT_MARKER_COLOR[0], player.waypointColorG ?? DEFAULT_MARKER_COLOR[1], player.waypointColorB ?? DEFAULT_MARKER_COLOR[2]];
+      const livePos: Point3 = [instance.x, instance.y, instance.z];
+      const bodyWidth = instance.bodyWidth ?? 0.6;
+      const metricP = s.waypointDistanceMetricP ?? 2;
+      const color: [number, number, number] = [instance.waypointColorR ?? DEFAULT_MARKER_COLOR[0], instance.waypointColorG ?? DEFAULT_MARKER_COLOR[1], instance.waypointColorB ?? DEFAULT_MARKER_COLOR[2]];
       // Cheap skip, same spirit as turnTracker.ts's own update() diff --
-      // only rebuild this player's meshes when something relevant
-      // actually changed (their own waypoints, their live position
-      // while one exists, body size, the shared metric, their own
-      // marker color, or the LOCAL viewer's own show-through-terrain
-      // preference -- the one case where a toggle isn't ABOUT this
-      // particular player's data, but still needs every session's
-      // visuals rebuilt with fresh materials to take effect).
+      // only rebuild this instance's meshes when something relevant
+      // actually changed (its own waypoints, its live position, body
+      // size, the shared metric, its own marker color, or the LOCAL
+      // viewer's own show-through-terrain preference -- the one case
+      // where a toggle isn't ABOUT this particular instance's data,
+      // but still needs every instance's visuals rebuilt with fresh
+      // materials to take effect).
       const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP, color, showThroughTerrain]);
-      const existing = visualsBySession.get(sessionId);
+      const existing = visualsByInstance.get(instanceId);
       if (existing?.lastKey === key) continue;
       if (existing) disposeVisuals(existing);
-      const fresh = buildVisualsFor(sessionId, waypoints, livePos, bodyWidth, metricP, color);
+      const fresh = buildVisualsFor(instanceId, waypoints, livePos, bodyWidth, metricP, color);
       fresh.lastKey = key;
-      visualsBySession.set(sessionId, fresh);
+      visualsByInstance.set(instanceId, fresh);
     }
 
-    for (const [sessionId, visuals] of visualsBySession) {
-      if (!seen.has(sessionId)) {
+    for (const [instanceId, visuals] of visualsByInstance) {
+      if (!seen.has(instanceId)) {
         disposeVisuals(visuals);
-        visualsBySession.delete(sessionId);
-        materialsBySession.get(sessionId)?.dispose();
-        materialsBySession.delete(sessionId);
+        visualsByInstance.delete(instanceId);
+        materialsByInstance.get(instanceId)?.dispose();
+        materialsByInstance.delete(instanceId);
       }
     }
   });
@@ -332,10 +359,10 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       // see the key's own doc above.
     },
     destroy(): void {
-      for (const visuals of visualsBySession.values()) disposeVisuals(visuals);
-      visualsBySession.clear();
-      for (const material of materialsBySession.values()) material.dispose();
-      materialsBySession.clear();
+      for (const visuals of visualsByInstance.values()) disposeVisuals(visuals);
+      visualsByInstance.clear();
+      for (const material of materialsByInstance.values()) material.dispose();
+      materialsByInstance.clear();
     },
   };
 }
