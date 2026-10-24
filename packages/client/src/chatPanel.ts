@@ -84,6 +84,9 @@ export interface ChatPanelOptions {
   onReloadWorld: () => void;
   /** Fired by the GM tab's seeThroughWalls checkbox -- main.ts sends the admin-gated room message via the current RunningGame. */
   onSetSeeThroughWalls: (enabled: boolean) => void;
+  /** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- the GM tab's two auto-on/off checkboxes, same tier/pattern as onSetSeeThroughWalls. */
+  onSetWaypointAutoOn: (enabled: boolean) => void;
+  onSetWaypointAutoOff: (enabled: boolean) => void;
   /** Fired by clicking a character row in the Characters tab -- main.ts opens the character-sheet popup. */
   onOpenCharacter: (characterId: string) => void;
   /** Fired by the "Link" button -- main.ts owns the actual REST call and feeds the fresh list back via `setCharactersState`. */
@@ -103,6 +106,9 @@ export interface ChatPanelController {
   setModsState(availableMods: ModManifest[], enabledModIds: string[]): void;
   /** Reflects the room's current seeThroughWalls value in the GM tab's checkbox (initial value, and any live change -- e.g. another admin toggled it). */
   setSeeThroughWallsState(enabled: boolean): void;
+  /** Same tier/pattern as setSeeThroughWallsState -- the GM tab's two auto-on/off checkboxes. */
+  setWaypointAutoOnState(enabled: boolean): void;
+  setWaypointAutoOffState(enabled: boolean): void;
   /**
    * Pushes fresh data into the Characters tab AND the compose row's
    * "post as" dropdown (same underlying list, two places it's used).
@@ -220,6 +226,14 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
               <input type="checkbox" id="chat-see-through-walls" />
               Players can see through walls (third-person camera)
             </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="chat-waypoint-auto-on" />
+              Waypoint system auto-on when 1+ character turns
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="chat-waypoint-auto-off" />
+              Waypoint system auto-off when 0 character turns
+            </label>
             <h3>Mods for this game</h3>
             <ul class="mod-list" id="mod-list"></ul>
             <button class="chat-reload-btn" id="chat-reload-btn" type="button" disabled title="Reload your current page to pick up mod changes (no hot-reload)">Reload this page</button>
@@ -242,6 +256,8 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   const charactersTabPane = container.querySelector<HTMLDivElement>("#chat-tab-characters")!;
   const gmTabPane = container.querySelector<HTMLDivElement>("#chat-tab-gm")!;
   const seeThroughWallsCheckbox = container.querySelector<HTMLInputElement>("#chat-see-through-walls")!;
+  const waypointAutoOnCheckbox = container.querySelector<HTMLInputElement>("#chat-waypoint-auto-on")!;
+  const waypointAutoOffCheckbox = container.querySelector<HTMLInputElement>("#chat-waypoint-auto-off")!;
   const modListEl = container.querySelector<HTMLUListElement>("#mod-list")!;
   const reloadBtn = container.querySelector<HTMLButtonElement>("#chat-reload-btn")!;
   const linkSelectEl = container.querySelector<HTMLSelectElement>("#link-character-select")!;
@@ -429,6 +445,14 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
     options.onSetSeeThroughWalls(seeThroughWallsCheckbox.checked);
   });
 
+  waypointAutoOnCheckbox.addEventListener("change", () => {
+    options.onSetWaypointAutoOn(waypointAutoOnCheckbox.checked);
+  });
+
+  waypointAutoOffCheckbox.addEventListener("change", () => {
+    options.onSetWaypointAutoOff(waypointAutoOffCheckbox.checked);
+  });
+
   function applyWidth(width: number): void {
     currentWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
     panel.style.width = `${currentWidth}px`;
@@ -567,6 +591,12 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
     },
     setSeeThroughWallsState(enabled) {
       seeThroughWallsCheckbox.checked = enabled;
+    },
+    setWaypointAutoOnState(enabled) {
+      waypointAutoOnCheckbox.checked = enabled;
+    },
+    setWaypointAutoOffState(enabled) {
+      waypointAutoOffCheckbox.checked = enabled;
     },
     destroy() {
       window.removeEventListener("keydown", onWindowKeydown);

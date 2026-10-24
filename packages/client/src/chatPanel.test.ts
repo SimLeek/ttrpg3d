@@ -25,6 +25,8 @@ function mount(options: Partial<ChatPanelOptions> & Pick<ChatPanelOptions, "init
     onToggleMod: vi.fn(),
     onReloadWorld: vi.fn(),
     onSetSeeThroughWalls: vi.fn(),
+    onSetWaypointAutoOn: vi.fn(),
+    onSetWaypointAutoOff: vi.fn(),
     onOpenCharacter: vi.fn(),
     onLinkCharacter: vi.fn(),
     onUnlinkCharacter: vi.fn(),
@@ -261,6 +263,27 @@ describe("mountChatPanel's GM tab (MVP goal item 3, docs/ROADMAP.md)", () => {
     checkbox.checked = true;
     checkbox.dispatchEvent(new Event("change"));
     expect(onSetSeeThroughWalls).toHaveBeenCalledWith(true);
+  });
+
+  it("setWaypointAutoOnState/setWaypointAutoOffState reflect the current values, and toggling each checkbox calls its own callback -- docs/BATTLE_SYSTEM.md's waypoint auto-on/off GM settings", () => {
+    const onSetWaypointAutoOn = vi.fn();
+    const onSetWaypointAutoOff = vi.fn();
+    const panel = mount({ initialMessages: [], onSend: vi.fn(), onSetWaypointAutoOn, onSetWaypointAutoOff });
+    panel.setWaypointAutoOnState(true);
+    panel.setWaypointAutoOffState(true);
+
+    const autoOnCheckbox = container.querySelector<HTMLInputElement>("#chat-waypoint-auto-on")!;
+    const autoOffCheckbox = container.querySelector<HTMLInputElement>("#chat-waypoint-auto-off")!;
+    expect(autoOnCheckbox.checked).toBe(true);
+    expect(autoOffCheckbox.checked).toBe(true);
+
+    autoOnCheckbox.checked = false;
+    autoOnCheckbox.dispatchEvent(new Event("change"));
+    expect(onSetWaypointAutoOn).toHaveBeenCalledWith(false);
+
+    autoOffCheckbox.checked = false;
+    autoOffCheckbox.dispatchEvent(new Event("change"));
+    expect(onSetWaypointAutoOff).toHaveBeenCalledWith(false);
   });
 });
 

@@ -1,6 +1,6 @@
 import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType } from "./WorldState.js";
+import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, WaypointState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType } from "./WorldState.js";
 import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord, TurnOrderEntryRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
@@ -489,12 +489,68 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   private removeTurnOrderEntryById(turnEntryId: string): void {
     const index = this.state.turnOrder.findIndex((e) => e.turnEntryId === turnEntryId);
     if (index === -1) return;
+    const beforeCount = this.state.turnOrder.length;
     this.state.turnOrder.splice(index, 1);
     if (index < this.state.turnOrderCurrentIndex) this.state.turnOrderCurrentIndex--;
     else if (index === this.state.turnOrderCurrentIndex && this.state.turnOrderCurrentIndex >= this.state.turnOrder.length) {
       this.state.turnOrderCurrentIndex = Math.max(0, this.state.turnOrder.length - 1);
     }
     this.persistTurnOrder();
+    this.applyWaypointAutoToggle(beforeCount);
+  }
+
+  /**
+   * docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- auto-flips
+   * `waypointsEnabled` on a 0<->1+ turn-order-entry-count TRANSITION,
+   * each direction independently gated by its own GM settings
+   * checkbox (`waypointAutoOnWithTurnOrder`/
+   * `waypointAutoOffWithoutTurnOrder`). Called after every add/remove/
+   * clear to the turn order, with the entry count from BEFORE that
+   * mutation. A manual toggle via the panel's own on/off button
+   * (`toggleWaypoints` handler) overrides `waypointsEnabled` at any
+   * time -- that value only gets overwritten again by the NEXT
+   * qualifying transition here, confirmed directly by the user as the
+   * intended (if "tricky") behavior, not a bug to "fix" by making this
+   * sticky some other way.
+   */
+  private applyWaypointAutoToggle(beforeCount: number): void {
+    const afterCount = this.state.turnOrder.length;
+    if (beforeCount === 0 && afterCount > 0 && this.state.waypointAutoOnWithTurnOrder) {
+      this.state.waypointsEnabled = true;
+      this.resetAllCoreWaypoints();
+    } else if (beforeCount > 0 && afterCount === 0 && this.state.waypointAutoOffWithoutTurnOrder) {
+      this.state.waypointsEnabled = false;
+    } else {
+      return; // no qualifying transition -- nothing changed, nothing to persist
+    }
+    store.setWaypointsEnabledForWorld(this.worldId, this.state.waypointsEnabled);
+  }
+
+  /**
+   * Real request: "there should be a core waypoint as long as
+   * waypoints are on, one that can't be removed from the list, since
+   * that would be the waypoint at the start of the turn, for
+   * reverting positions." Resets EVERY connected session's own
+   * waypoint chain down to just one fresh, non-removable entry
+   * (`isCore`) at wherever they currently are -- called whenever
+   * `waypointsEnabled` flips false -> true (here and in
+   * `toggleWaypoints`'s own manual path), discarding whatever stale
+   * chain a session might still have from a PREVIOUS time waypoints
+   * were on.
+   */
+  private resetAllCoreWaypoints(): void {
+    for (const player of this.state.players.values()) this.resetWaypointsToCore(player);
+  }
+
+  /** One session's own half of resetAllCoreWaypoints -- also called from onJoin for a session joining WHILE waypoints are already enabled (they have no core yet). Never reuses an existing WaypointState object across the clear+push (the same `@colyseus/schema` reparenting-within-one-mutation hazard the turn-order reorder bug already taught this file) -- always a brand new instance. */
+  private resetWaypointsToCore(player: PlayerStateType): void {
+    player.waypoints.clear();
+    const core = new WaypointState();
+    core.x = player.currentInstance.x;
+    core.y = player.currentInstance.y;
+    core.z = player.currentInstance.z;
+    core.isCore = true;
+    player.waypoints.push(core);
   }
 
   /** removeCharacterInstance's own cleanup -- a turn-order entry can't outlive the live instance it points to. A bare-label entry (no instanceId) is never touched by this, same as it's never touched by any other instance-scoped operation. */
@@ -643,6 +699,16 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.state.turnOrderCurrentIndex = world.turnOrder.currentIndex;
       this.state.turnOrderRound = world.turnOrder.round;
     }
+
+    // docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- same
+    // per-WORLD/per-GAME split as respawnAnchor/seeThroughWalls above:
+    // the live enabled-state + distance metric are per-WORLD
+    // (WorldRecord), the two auto-on/off GM settings checkboxes are
+    // per-GAME (GameRecord), same tier as seeThroughWalls/modIds.
+    this.state.waypointsEnabled = world?.waypointsEnabled ?? false;
+    this.state.waypointDistanceMetricP = world?.waypointDistanceMetricP ?? 2;
+    this.state.waypointAutoOnWithTurnOrder = game?.waypointAutoOnWithTurnOrder ?? true;
+    this.state.waypointAutoOffWithoutTurnOrder = game?.waypointAutoOffWithoutTurnOrder ?? true;
 
     // Admin-only: sets the shared respawn anchor (Schema fields, auto-
     // synced to every client -- same mechanism the "pos" handler below
@@ -979,8 +1045,10 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
         if (!isAdmin) return;
         entry.label = label;
       }
+      const beforeCount = this.state.turnOrder.length;
       this.state.turnOrder.push(entry);
       this.persistTurnOrder();
+      this.applyWaypointAutoToggle(beforeCount);
     });
 
     // Real correction, 2026-10-23: same ownership relaxation as
@@ -999,10 +1067,12 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
 
     this.onMessage("clearTurnOrder", (client) => {
       if (!this.adminSessionIds.has(client.sessionId)) return;
+      const beforeCount = this.state.turnOrder.length;
       this.state.turnOrder.clear();
       this.state.turnOrderCurrentIndex = 0;
       this.state.turnOrderRound = 1;
       this.persistTurnOrder();
+      this.applyWaypointAutoToggle(beforeCount);
     });
 
     this.onMessage<ReorderTurnOrderMessage>("reorderTurnOrder", (client, { turnEntryId, newIndex }) => {
@@ -1060,8 +1130,135 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
         this.state.turnOrderRound++;
       }
       this.persistTurnOrder();
-      // Reset Turn's own snapshot-on-advance (docs/BATTLE_SYSTEM.md
-      // section 3) lands in a later pass, not this one.
+      // Real request: "the core waypoint should re-stamp on every
+      // next turn, and in fact the whole list if a player moved
+      // around, should clear, and just that core waypoint should be
+      // left." Unconditional, not just when someone actually moved --
+      // resetAllCoreWaypoints re-stamping at the SAME position a
+      // player never left is a harmless no-op, and this is simpler
+      // than tracking "did they move" separately. A precursor to the
+      // fuller Reset Turn snapshot-on-advance feature (docs/
+      // BATTLE_SYSTEM.md section 3), not that feature itself -- this
+      // is position-only, not stats.
+      if (this.state.waypointsEnabled) this.resetAllCoreWaypoints();
+    });
+
+    // docs/BATTLE_SYSTEM.md's waypoint/distance measurement. Self-only
+    // (a session can only ever add/remove/clear its OWN waypoint
+    // chain, no admin bypass needed -- there's nothing here for an
+    // admin to need access to on someone else's behalf). A no-op
+    // while `waypointsEnabled` is false, for everyone, GM included --
+    // "M/N and the panel's W+/W- do nothing while disabled."
+    //
+    // Position is CLIENT-reported (same "client reports its own
+    // position, server trusts it" convention the "pos" handler
+    // already uses -- no anti-cheat per the migration plan), snapped
+    // to voxel-grid centers CLIENT-side before being sent; only
+    // validated for finiteness here, same as "pos".
+    this.onMessage<{ x: number; y: number; z: number }>("addWaypoint", (client, { x, y, z }) => {
+      if (!this.state.waypointsEnabled) return;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender) return;
+      const waypoint = new WaypointState();
+      waypoint.x = x;
+      waypoint.y = y;
+      waypoint.z = z;
+      sender.waypoints.push(waypoint);
+    });
+
+    // Real request: "walk back to the last waypoint first, then a
+    // second press actually removes it" -- that "am I standing on it"
+    // check is entirely CLIENT-side (waypoints.ts reads its own
+    // locally-known position against the synced last waypoint and
+    // only sends this message once it's already decided to actually
+    // remove, teleporting locally via playerController.teleportTo
+    // otherwise -- same client/server split respawnControl.ts's own
+    // Shift+R already uses). This handler just pops unconditionally --
+    // EXCEPT the core waypoint (`isCore`, always whatever's left once
+    // the chain is down to one entry), which can never be removed:
+    // "there should be a core waypoint as long as waypoints are on,
+    // one that can't be removed from the list."
+    this.onMessage("removeWaypoint", (client) => {
+      if (!this.state.waypointsEnabled) return;
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender || sender.waypoints.length === 0) return;
+      if (sender.waypoints[sender.waypoints.length - 1].isCore) return;
+      sender.waypoints.pop();
+    });
+
+    // Real request: "Finalizing the current waypoint chain" (Enter) --
+    // commits/clears the WHOLE chain explicitly, without needing to
+    // end the current turn to do it. Keeps the core waypoint, if any
+    // (same "can't be removed from the list" rule as removeWaypoint
+    // above) -- a fresh WaypointState with its same position/flag,
+    // never the removed object itself (see resetWaypointsToCore's own
+    // doc on why).
+    this.onMessage("clearWaypoints", (client) => {
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender) return;
+      const existingCore = sender.waypoints.find((w) => w.isCore);
+      const coreData = existingCore ? { x: existingCore.x, y: existingCore.y, z: existingCore.z } : undefined;
+      sender.waypoints.clear();
+      if (coreData) {
+        const core = new WaypointState();
+        core.x = coreData.x;
+        core.y = coreData.y;
+        core.z = coreData.z;
+        core.isCore = true;
+        sender.waypoints.push(core);
+      }
+    });
+
+    // GM-only manual override (the panel's own on/off toggle button) --
+    // admin-gated server-side regardless of the G-key gmOverride toggle
+    // the CLIENT additionally hides this behind (same split every other
+    // "GM-only" turn-tracker control already uses). Sticks until the
+    // NEXT 0<->1+ turn-order transition whose own checkbox is checked
+    // (applyWaypointAutoToggle above) overwrites it again -- confirmed
+    // directly by the user as the intended behavior.
+    this.onMessage("toggleWaypoints", (client) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      this.state.waypointsEnabled = !this.state.waypointsEnabled;
+      if (this.state.waypointsEnabled) this.resetAllCoreWaypoints();
+      store.setWaypointsEnabledForWorld(this.worldId, this.state.waypointsEnabled);
+    });
+
+    // Real request: "add a little color picker for them in the
+    // waypoint window" -- a per-session preference (not admin-gated;
+    // everyone picks their OWN waypoint color), not persisted, same
+    // reasoning as the waypoints themselves.
+    this.onMessage<{ r: number; g: number; b: number }>("setWaypointColor", (client, { r, g, b }) => {
+      if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return;
+      const sender = this.state.players.get(client.sessionId);
+      if (!sender) return;
+      sender.waypointColorR = r;
+      sender.waypointColorG = g;
+      sender.waypointColorB = b;
+    });
+
+    // GM settings checkboxes (chatPanel.ts's GM tab) -- per-GAME, same
+    // tier/pattern as setSeeThroughWalls above.
+    this.onMessage<{ enabled: boolean }>("setWaypointAutoOn", (client, { enabled }) => {
+      if (!this.adminSessionIds.has(client.sessionId) || !this.gameId) return;
+      this.state.waypointAutoOnWithTurnOrder = enabled;
+      store.setWaypointAutoOnForGame(this.gameId, enabled);
+    });
+
+    this.onMessage<{ enabled: boolean }>("setWaypointAutoOff", (client, { enabled }) => {
+      if (!this.adminSessionIds.has(client.sessionId) || !this.gameId) return;
+      this.state.waypointAutoOffWithoutTurnOrder = enabled;
+      store.setWaypointAutoOffForGame(this.gameId, enabled);
+    });
+
+    // GM-only setting (the panel's expanded state) -- per-WORLD (see
+    // WorldState.ts's own doc on why), the Minkowski exponent every
+    // displayed distance label uses.
+    this.onMessage<{ p: number }>("setWaypointDistanceMetric", (client, { p }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      if (!Number.isFinite(p) || p <= 0) return;
+      this.state.waypointDistanceMetricP = p;
+      store.setWaypointDistanceMetricForWorld(this.worldId, p);
     });
   }
 
@@ -1105,6 +1302,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.currentInstance = resumed;
       this.registerActiveCharacter(client.sessionId, resumed.characterId);
       this.syncCharacterRoomRegistration(resumed.characterId);
+      // Real request: a session joining WHILE waypoints are already
+      // on (a latecomer mid-combat) has no core waypoint yet -- give
+      // them one at wherever they just resumed to, same as everyone
+      // else got when waypoints last turned on.
+      if (this.state.waypointsEnabled) this.resetWaypointsToCore(player);
       console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}, resuming ${resumed.characterName}`);
       return;
     }
@@ -1151,6 +1353,10 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       }
       this.syncCharacterRoomRegistration(character.id);
     }
+
+    // Same "a latecomer mid-combat gets a core waypoint too" rule as
+    // the resume path above.
+    if (this.state.waypointsEnabled) this.resetWaypointsToCore(player);
 
     console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}${character ? ` as ${character.name}` : ""}`);
   }
