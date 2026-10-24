@@ -1130,8 +1130,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
         this.state.turnOrderRound++;
       }
       this.persistTurnOrder();
-      // Reset Turn's own snapshot-on-advance (docs/BATTLE_SYSTEM.md
-      // section 3) lands in a later pass, not this one.
+      // Real request: "the core waypoint should re-stamp on every
+      // next turn, and in fact the whole list if a player moved
+      // around, should clear, and just that core waypoint should be
+      // left." Unconditional, not just when someone actually moved --
+      // resetAllCoreWaypoints re-stamping at the SAME position a
+      // player never left is a harmless no-op, and this is simpler
+      // than tracking "did they move" separately. A precursor to the
+      // fuller Reset Turn snapshot-on-advance feature (docs/
+      // BATTLE_SYSTEM.md section 3), not that feature itself -- this
+      // is position-only, not stats.
+      if (this.state.waypointsEnabled) this.resetAllCoreWaypoints();
     });
 
     // docs/BATTLE_SYSTEM.md's waypoint/distance measurement. Self-only

@@ -1657,6 +1657,55 @@ describe("WorldRoom", () => {
       expect(latecomerPlayer.waypoints[0]).toMatchObject({ isCore: true, x: latecomerPlayer.currentInstance.x, y: latecomerPlayer.currentInstance.y, z: latecomerPlayer.currentInstance.z });
     });
 
+    it("nextTurn (GM-only) re-stamps the core waypoint at the player's CURRENT position and clears the rest of the chain -- real request: \"the core waypoint should re-stamp on every next turn, and... the whole list... should clear, and just that core waypoint should be left\"", async () => {
+      const owner = trackedAccount(`WorldRoom-test-wp-core-nextturn-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-wp-core-nextturn-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Waypoint Core NextTurn Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" }); // auto-ON, stamps the first core
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const player = room.state.players.get(adminClient.sessionId)!;
+      const originalCorePos = { x: player.waypoints[0].x, y: player.waypoints[0].y, z: player.waypoints[0].z };
+
+      // The player wanders around during their turn, placing waypoints
+      // along the way, then moves to a new live position.
+      adminClient.send("addWaypoint", { x: 9, y: 9, z: 9 });
+      adminClient.send("addWaypoint", { x: 8, y: 8, z: 8 });
+      adminClient.send("pos", { x: 20, y: 20, z: 20, yaw: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.waypoints).toHaveLength(3);
+
+      adminClient.send("nextTurn");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.waypoints).toHaveLength(1); // the whole chain cleared, just the core left
+      expect(player.waypoints[0].isCore).toBe(true);
+      expect([player.waypoints[0].x, player.waypoints[0].y, player.waypoints[0].z]).toEqual([20, 20, 20]); // re-stamped at the CURRENT position
+      expect([player.waypoints[0].x, player.waypoints[0].y, player.waypoints[0].z]).not.toEqual([originalCorePos.x, originalCorePos.y, originalCorePos.z]);
+    });
+
+    it("nextTurn still re-stamps the core even when the player never moved -- a harmless no-op position-wise, but still clears any waypoints placed that turn", async () => {
+      const owner = trackedAccount(`WorldRoom-test-wp-core-nextturn-nomove-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-wp-core-nextturn-nomove-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Waypoint Core NextTurn NoMove Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "A" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const player = room.state.players.get(adminClient.sessionId)!;
+      const corePos = { x: player.waypoints[0].x, y: player.waypoints[0].y, z: player.waypoints[0].z };
+      adminClient.send("addWaypoint", { x: 9, y: 9, z: 9 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(player.waypoints).toHaveLength(2);
+
+      adminClient.send("nextTurn"); // no "pos" sent -- player stayed put
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(player.waypoints).toHaveLength(1);
+      expect([player.waypoints[0].x, player.waypoints[0].y, player.waypoints[0].z]).toEqual([corePos.x, corePos.y, corePos.z]);
+    });
+
     it("setWaypointColor (self-only, no admin needed) sets a session's own marker color", async () => {
       const owner = trackedAccount(`WorldRoom-test-wp-color-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-wp-color-game-${Date.now()}`, owner.id);

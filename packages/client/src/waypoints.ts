@@ -216,7 +216,10 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       // Real request: "change the billboards a bit: D: {this line's
       // distance}, T:{whole path distance}, since I found myself
       // wanting to know exactly how far the distance was."
-      const label = createDistanceLabel(scene, `D: ${segmentDistances[i].toFixed(1)}, T: ${totalDistance.toFixed(1)}`);
+      // Two lines, not comma-separated on one -- real correction: "the
+      // billboard for the distance/total... getting cut off at normal
+      // distances."
+      const label = createDistanceLabel(scene, `D: ${segmentDistances[i].toFixed(1)}\nT: ${totalDistance.toFixed(1)}`);
       const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2] as Point3;
       label.mesh.position = new BABYLON.Vector3(...mid);
       noa.rendering.addMeshToScene(label.mesh, false);

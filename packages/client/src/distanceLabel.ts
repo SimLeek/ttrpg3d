@@ -10,9 +10,14 @@
 import * as BABYLON from "@babylonjs/core";
 import * as GUI from "@babylonjs/gui";
 
-const TEXTURE_WIDTH = 128;
-const TEXTURE_HEIGHT = 48;
-export const DISTANCE_LABEL_PLANE_WIDTH = 0.6;
+// Real correction: "make the billboard for the distance/total taller
+// and put them on multiple lines because they're getting cut off at
+// normal distances" -- wider AND taller than the original single-line
+// size, since waypoints.ts now sets two lines of text ("D: ...\nT:
+// ...").
+const TEXTURE_WIDTH = 170;
+const TEXTURE_HEIGHT = 90;
+export const DISTANCE_LABEL_PLANE_WIDTH = 0.7;
 export const DISTANCE_LABEL_PLANE_HEIGHT = (DISTANCE_LABEL_PLANE_WIDTH * TEXTURE_HEIGHT) / TEXTURE_WIDTH;
 
 export interface DistanceLabel {

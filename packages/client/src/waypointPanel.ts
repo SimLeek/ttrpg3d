@@ -130,7 +130,7 @@ export function mountWaypointPanel(dockElement: HTMLElement, options: WaypointPa
     }
     const enabled = options.isWaypointsEnabled();
     gmControls.innerHTML = `
-      <label class="waypoint-panel-metric-label" for="waypoint-metric-input" title="${DISTANCE_METRIC_TOOLTIP}">Distance metric (p):</label>
+      <label class="waypoint-panel-metric-label" for="waypoint-metric-input" title="${DISTANCE_METRIC_TOOLTIP}">p-norm:</label>
       <input type="number" class="waypoint-panel-metric-input" id="waypoint-metric-input" title="${DISTANCE_METRIC_TOOLTIP}" min="0.1" step="0.5" value="${options.distanceMetricP()}" />
       <button type="button" id="waypoint-enabled-toggle-btn" class="waypoint-panel-enabled-toggle ${enabled ? "on" : "off"}">Waypoints: ${enabled ? "ON" : "OFF"}</button>
     `;
