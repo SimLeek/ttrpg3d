@@ -21,6 +21,8 @@ import { createCharacterToken, TOKEN_PLANE_HEIGHT, type CharacterToken, type Cha
 import { pickToken, type TrackedToken } from "./tokenPicking.js";
 import { mountCharacterContextMenu } from "./characterContextMenu.js";
 import { mountTurnTracker, type TurnTrackerController } from "./turnTracker.js";
+import { mountWaypointPanel } from "./waypointPanel.js";
+import { installWaypoints } from "./waypoints.js";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, type PlayerBodyMesh } from "./playerBodyMesh.js";
 import { CHARACTER_STORAGE_KEY } from "./api.js";
@@ -126,6 +128,10 @@ interface WorldStateLike {
   turnOrder?: TurnOrderEntryLike[];
   turnOrderCurrentIndex?: number;
   turnOrderRound?: number;
+  waypointsEnabled?: boolean;
+  waypointDistanceMetricP?: number;
+  waypointAutoOnWithTurnOrder?: boolean;
+  waypointAutoOffWithoutTurnOrder?: boolean;
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -144,6 +150,9 @@ export interface WorldConnection {
   leave(): void;
   /** GM-only chat tab (chatPanel.ts, via game.ts's RunningGame.setSeeThroughWalls) -- sends the admin-gated room message; WorldRoom.ts re-checks admin status server-side regardless of what this client claims. */
   setSeeThroughWalls(enabled: boolean): void;
+  /** Same tier/pattern as setSeeThroughWalls -- the GM tab's two waypoint auto-on/off checkboxes. */
+  setWaypointAutoOn(enabled: boolean): void;
+  setWaypointAutoOff(enabled: boolean): void;
   /** modePanel.ts's "Turns" button, via game.ts -- toggles the turn tracker widget's own visibility. The widget owns its visibility state itself; this just flips it. */
   toggleTurnTracker(): void;
 }
@@ -182,6 +191,11 @@ export async function connectAndStreamWorld(
   // own worldBottomY/hasRespawnAnchor precedent for reading a scalar
   // Schema field fresh each tick, no `.listen()` anywhere in this file).
   onSeeThroughWallsChange: (enabled: boolean) => void,
+  // docs/BATTLE_SYSTEM.md's waypoint/distance measurement GM settings
+  // checkboxes -- same "polled every tick, no .listen()" idiom as
+  // onSeeThroughWallsChange just above.
+  onWaypointAutoOnChange: (enabled: boolean) => void,
+  onWaypointAutoOffChange: (enabled: boolean) => void,
 ): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
@@ -435,6 +449,23 @@ export async function connectAndStreamWorld(
       lastMenuOpenScreen = { x, y };
       contextMenu.open(x, y, entry.characterId, entry.instanceId, isPiloted);
     },
+  });
+
+  // docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- the 3D
+  // markers/segments/labels + M/N/Enter keybinds (self-contained, same
+  // tier as respawnControl.ts/gmOverride.ts), and the small panel
+  // docked to the turn tracker's own right edge (real request: "attach
+  // it as a panel to the turn order on the right of it") via its
+  // `getDockElement()`.
+  const waypoints = installWaypoints(noa, room, playerController);
+  const waypointPanel = mountWaypointPanel(turnTracker.getDockElement(), {
+    isGM: () => isAdmin() && gmOverride.isActive(),
+    isWaypointsEnabled: () => !!(room!.state as WorldStateLike | undefined)?.waypointsEnabled,
+    distanceMetricP: () => (room!.state as WorldStateLike | undefined)?.waypointDistanceMetricP ?? 2,
+    onAddWaypoint: () => waypoints.addAtCurrentPosition(),
+    onRemoveWaypoint: () => waypoints.removeOrWalkBack(),
+    onToggleWaypoints: () => room!.send("toggleWaypoints"),
+    onSetDistanceMetric: (p) => room!.send("setWaypointDistanceMetric", { p }),
   });
 
   const statInputContainer = document.createElement("div");
@@ -768,6 +799,8 @@ export async function connectAndStreamWorld(
     // respawnControl.ts already uses for worldBottomY/hasRespawnAnchor
     // -- no `.listen()` anywhere in this codebase for a scalar field.
     onSeeThroughWallsChange(!!(room.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls);
+    onWaypointAutoOnChange((room.state as WorldStateLike | undefined)?.waypointAutoOnWithTurnOrder ?? true);
+    onWaypointAutoOffChange((room.state as WorldStateLike | undefined)?.waypointAutoOffWithoutTurnOrder ?? true);
 
     // Over a real connection (unlike @colyseus/testing's in-process
     // harness), the initial full-state sync can arrive a tick or two after
@@ -783,6 +816,7 @@ export async function connectAndStreamWorld(
       state?.turnOrderCurrentIndex ?? 0,
       state?.turnOrderRound ?? 1,
     );
+    waypointPanel.update();
     const seen = new Set<string>();
     for (const [sessionId, p] of players) {
       seen.add(sessionId);
@@ -1119,6 +1153,8 @@ export async function connectAndStreamWorld(
       statInputContainer.remove();
       turnTracker.destroy();
       turnTrackerContainer.remove();
+      waypointPanel.destroy();
+      waypoints.destroy();
       for (const token of remoteTokens.values()) token.dispose();
       for (const material of remoteMaterials.values()) material.dispose();
       room.leave();
@@ -1126,6 +1162,14 @@ export async function connectAndStreamWorld(
 
     setSeeThroughWalls(enabled: boolean): void {
       room.send("setSeeThroughWalls", { enabled });
+    },
+
+    setWaypointAutoOn(enabled: boolean): void {
+      room.send("setWaypointAutoOn", { enabled });
+    },
+
+    setWaypointAutoOff(enabled: boolean): void {
+      room.send("setWaypointAutoOff", { enabled });
     },
 
     toggleTurnTracker(): void {

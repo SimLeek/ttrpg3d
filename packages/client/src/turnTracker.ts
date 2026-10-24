@@ -84,6 +84,18 @@ export interface TurnTrackerController {
   update(entries: TurnOrderEntryLike[], currentIndex: number, round: number): void;
   setVisible(visible: boolean): void;
   isVisible(): boolean;
+  /**
+   * Real request: "attach it as a panel to the turn order on the
+   * right of it" (docs/BATTLE_SYSTEM.md's waypoint panel) -- the
+   * tracker's own root element, so a sibling panel can mount itself
+   * as a CHILD of it (`position: absolute; left: 100%`) instead of
+   * tracking its position/visibility/drag state separately. A child
+   * of this element is automatically hidden whenever the tracker
+   * itself is (`display: none` on this very element), and automatically
+   * follows it when dragged (same parent element moves, no extra
+   * wiring needed).
+   */
+  getDockElement(): HTMLElement;
   destroy(): void;
 }
 
@@ -394,6 +406,7 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
       localStorage.setItem(TURN_TRACKER_VISIBLE_STORAGE_KEY, String(visible));
     },
     isVisible: () => visible,
+    getDockElement: () => panel,
     destroy(): void {
       document.removeEventListener("mousemove", onDocumentMouseMove);
       document.removeEventListener("mouseup", onDocumentMouseUp);

@@ -98,9 +98,13 @@ function wireGmTabToCurrentRunningGame(): void {
     pushCharactersState();
   });
   const unsubSeeThroughWalls = runningGame.onSeeThroughWallsChange((enabled) => chatPanel.setSeeThroughWallsState(enabled));
+  const unsubWaypointAutoOn = runningGame.onWaypointAutoOnChange((enabled) => chatPanel.setWaypointAutoOnState(enabled));
+  const unsubWaypointAutoOff = runningGame.onWaypointAutoOffChange((enabled) => chatPanel.setWaypointAutoOffState(enabled));
   unsubscribeGmTab = () => {
     unsubActive();
     unsubSeeThroughWalls();
+    unsubWaypointAutoOn();
+    unsubWaypointAutoOff();
   };
 }
 
@@ -205,6 +209,8 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
         // onFocusChange's setPointerLock call above already relies on.
         onReloadWorld: () => runningGame?.reloadWorld(),
         onSetSeeThroughWalls: (enabled) => runningGame?.setSeeThroughWalls(enabled),
+        onSetWaypointAutoOn: (enabled) => runningGame?.setWaypointAutoOn(enabled),
+        onSetWaypointAutoOff: (enabled) => runningGame?.setWaypointAutoOff(enabled),
         // MVP goal item 4 follow-up ("characters" tab) -- all four read
         // `runningChat` LAZILY for the same reason as onReloadWorld
         // above (reassigned on every game switch), then refetch the
