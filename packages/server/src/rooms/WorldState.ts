@@ -81,6 +81,8 @@ export const WaypointState = schema(
     x: t.number().default(0),
     y: t.number().default(0),
     z: t.number().default(0),
+    /** Real request: "there should be a core waypoint as long as waypoints are on, one that can't be removed from the list, since that would be the waypoint at the start of the turn, for reverting positions." Always index 0 in a session's own `waypoints` array, stamped at that session's CURRENT position whenever `waypointsEnabled` goes from false to true (WorldRoom.ts's `resetWaypointsToCore`) -- `removeWaypoint`/`clearWaypoints` both refuse to let this one go. */
+    isCore: t.boolean().default(false),
   },
   "WaypointState",
 );
@@ -191,6 +193,10 @@ export const PlayerState = schema(
     currentInstance: t.ref(OtherCharacterState),
     /** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- a SESSION's own navigation aid (M/N, the panel's W+/W-), independent of whichever character they're currently piloting -- tabbing to a different character keeps your own waypoint chain, it doesn't move with the character. Not persisted (store.ts): lost on disconnect, same as any other scratch-measurement tool, not something the "assume unreliable connections" standing principle needs to protect. */
     waypoints: t.array(WaypointState),
+    /** Real bug found live: the marker/line material only set `diffuseColor` with `disableLighting` on, which renders black (StandardMaterial sources its unlit color from `emissiveColor`, not `diffuseColor` -- confirmed against this codebase's own characterPlacement.ts marker, which already sets both together for exactly this reason). Fixed client-side; this is the real request on top of that fix -- "I can already see the complaints coming in for yellow" -- a per-player color, defaulting to the same yellow, picked via the waypoint panel's own color input. Not persisted, same reasoning as `waypoints` above. */
+    waypointColorR: t.number().default(1),
+    waypointColorG: t.number().default(0.9),
+    waypointColorB: t.number().default(0.2),
   },
   "PlayerState",
 );
