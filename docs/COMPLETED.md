@@ -596,6 +596,96 @@ in the same game won't see the change until it's next (re)created. Same
 class of limitation mods themselves already had (per-game config,
 per-room-creation timing).
 
+## MVP goal item 6 (partial) — Turn-order tracker phase 1, built on a character-instance unification refactor
+
+PR building on the `docs/BATTLE_SYSTEM.md` requirements pass (PR #36):
+manual Add/Remove/Clear All/reorder/Next Turn (phase 1 of that doc's
+scope) -- **initiative rolls via `[[]]` roll-eval, Reset Turn, and
+waypoint/distance measurement are NOT part of this PR**, still open
+(see `docs/BATTLE_SYSTEM.md`).
+
+- **Turn-order tracker widget** (`turnTracker.ts`): floating/
+  draggable/minimizable panel, server-authoritative state
+  (`WorldState.turnOrder`/`turnOrderCurrentIndex`/`turnOrderRound`),
+  persisted per-world (`store.ts`'s `setTurnOrderForWorld`) so it
+  survives a disconnect/refresh/rejoin, same standing principle as
+  everything else this round ("assume every player's connection is
+  unreliable").
+- **Architecture change this depended on**: the character a session is
+  PILOTING is now a real `OtherCharacterState` held by reference
+  (`PlayerState.currentInstance`, a `t.ref`), literally moved between
+  the player and the world's `otherCharacters` array on every focus-
+  swap/join/leave, replacing the old flat duplicated fields
+  (`focusedVariableOverrides`, field-by-field copying on every swap).
+  Fixes two real bugs at once: "I cannot add my currently controlled
+  character to the turn order... even though I should be able to"
+  (a piloted character now has the SAME stable `instanceId` an idle
+  one does), and "the controlled player starts in spawn instead [of
+  where they were], which is 100% wrong" (`onLeave` now pushes the
+  piloted instance back into `otherCharacters` instead of discarding
+  it; a new `JoinOptions.instanceId`, persisted client-side per world,
+  resumes the exact instance on reconnect).
+- **GM gating now follows the G-key `gmOverride` toggle, not just real
+  admin status** -- real correction: "the gm should be able to see
+  what players will see." Next Turn/Clear All/the manual "Add non-
+  character..." row/up-down reorder/the roll-value edit/the sort
+  buttons all stay admin-gated server-side regardless, but the
+  CLIENT only shows them to an admin who also has G-key mode on, so
+  toggling it off previews the real player view.
+- **A non-admin player can add/remove their OWN character's entry**
+  (piloted or placed) without GM mode -- `addToTurnOrder`/
+  `removeFromTurnOrder` relaxed to `isSendersOwnInstance`, same check
+  every other instance-scoped message already used. A bare-label
+  ("Add non-character...") entry still requires admin -- nothing to
+  check ownership of.
+- **Right-click a turn-order row** for a character you own (or GM
+  mode) opens the SAME `characterContextMenu.ts` instance the 3D
+  tokens use, so "Control" jumps straight to that specific instance --
+  real request: "if there are a few similar ones, it gets confusing
+  otherwise."
+- **Reordering is up/down buttons, not drag-and-drop** -- native HTML5
+  drag-and-drop was tried and dropped after a direct playtest verdict
+  ("I just tried it as GM and it's pretty bad"). Per-row layout: name,
+  a number (defaulting to 0, GM-editable, read-only for everyone
+  else), up/down arrows (disabled at the ends of the list), remove
+  (✕). GM-only **Sort ascending/descending** buttons sort the whole
+  order by that number -- real request, since a GM can now edit the
+  numbers but had no way to re-sort by them.
+- **Real bugs found live, each confirmed by a real-WebSocket repro
+  script, not guessed**:
+  - The turn tracker widget's own `update()` is polled every noa tick;
+    an unconditional `innerHTML` rebuild on every call tore down and
+    rebuilt every button/row 60 times a second, reproduced as a hover
+    button "flashing lighter and darker quickly." Fixed by skipping
+    the rebuild when the entries/currentIndex/round/isGM are all
+    unchanged from the last call.
+  - **The actual "infinite blue space, character disappears" bug**:
+    net.ts's initial-spawn teleport still read a flat `me.x/y/z` that
+    no longer existed post-refactor (silently `undefined`),
+    teleporting the player to a NaN position. Worse, that NaN got sent
+    to the server via the ordinary "pos" update BEFORE this fix
+    landed, and then persisted to disk on that session's leave
+    (`JSON.stringify(NaN)` → `null`) -- reproducing the exact same
+    symptom on every later resume even after the client fix shipped,
+    since the corrupted data was already on disk. Fixed with three
+    layers: the client cast corrected, the server's "pos" handler now
+    rejects non-finite values outright, and `onCreate`'s
+    `placedCharacters` loader self-heals any already-corrupted record
+    by falling back to a safe spawn position.
+  - **The up-arrow reorder bug**: "I press up on hi and it changes
+    from bob's turn to hi's turn instead of moving hi above bob."
+    Root cause: `reorderTurnOrder` was splice-removing and
+    splice-reinserting the SAME `TurnOrderEntryState` schema object
+    within one synchronous mutation, which confused
+    `@colyseus/schema`'s own change-tracking the same way the
+    `PlayerState.currentInstance` move could have -- the array's
+    visible order silently never changed, while the "keep whose turn
+    it is" re-lookup afterward landed on the wrong entry. Fixed by
+    never removing/reinserting a schema object: snapshot the order as
+    plain data, reorder/sort in plain JS, write field values back onto
+    the objects already sitting in their array slots (shared by
+    `reorderTurnOrder` and the new `sortTurnOrderByRoll`).
+
 ## Phase 2 — MVP
 
 - `scripts/movement_resource.gd`, `basic_jump_resource.gd`,

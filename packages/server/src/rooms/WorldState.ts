@@ -77,13 +77,20 @@ export const BarState = schema(
 
 /**
  * MVP goal item 4 follow-up (drag-and-drop placement + Tab/Shift+Tab
- * focus cycling): one of a session's OWN characters that's present in
- * the world but not the one currently being controlled. Deliberately
- * mirrors PlayerState's own per-character fields (bars/body size/token
- * color/status effects) rather than reusing PlayerState itself --
- * there's no live "pos" input for one of these (placement/cycling are
- * the only things that ever move it), so it has no isAdmin/accountId/
- * otherCharacters of its own.
+ * focus cycling): one real character instance in this world. Lives in
+ * exactly one of two places at any moment -- an element of
+ * `WorldState.otherCharacters` (idle/placed, nobody currently piloting
+ * it) OR referenced by exactly one session's `PlayerState.
+ * currentInstance` (being piloted right now) -- moved between the two
+ * (`t.ref`, the SAME object, not copied) by WorldRoom.ts's
+ * focusCharacter/onJoin/onLeave, never both at once (confirmed:
+ * `@colyseus/schema` instances can't have two parents simultaneously).
+ * This is a real correction, 2026-10-23: earlier, a piloted character
+ * had NO instance of its own at all, just a separate set of fields
+ * duplicated onto PlayerState directly -- see PlayerState's own doc
+ * for the two real bugs that caused (couldn't reference your own
+ * piloted character from the turn order; disconnecting lost its
+ * position/stats entirely instead of persisting them).
  *
  * Real request: "I can't add multiple instances of the same character.
  * I would want to do that for monsters for example." `characterId`
@@ -134,49 +141,75 @@ export const OtherCharacterState = schema(
   "OtherCharacterState",
 );
 
+/**
+ * Real correction (2026-10-23), replacing this session's own
+ * duplicated characterId/characterName/tokenColor/bars/bodySize/
+ * statusEffects/x/y/z/yaw fields entirely: the character a session is
+ * piloting is now a REAL `OtherCharacterState` instance, held here by
+ * reference (`t.ref`, moved -- not copied field-by-field -- out of
+ * `WorldState.otherCharacters` while piloted, same object identity the
+ * whole time) rather than a separate parallel representation. Real
+ * bugs this fixes, found live:
+ * - "I cannot add my currently controlled character to the turn
+ *   order" -- it had no stable instanceId to add, since it wasn't a
+ *   real instance at all while focused.
+ * - "the controlled player starts in spawn instead [of where they
+ *   were], which is 100% wrong" on a disconnect/refresh/rejoin --
+ *   onLeave used to delete the whole PlayerState outright, discarding
+ *   whatever position/stats this had reached. Now the instance itself
+ *   is just pushed back into `otherCharacters`, untouched, and
+ *   resuming it on rejoin (`currentInstanceId` in `JoinOptions`) picks
+ *   up EXACTLY where it left off -- not a new copy, not respawn.
+ *
+ * ALWAYS present (never `undefined`), even for a genuinely
+ * characterless session -- `currentInstance.characterId === ""` is
+ * that state now (same "render no token" signal
+ * `OtherCharacterState.characterId` already carried), not a second,
+ * separate "no character" representation. This is also what lets
+ * `instanceVariableOverrides` (WorldRoom.ts) be the ONLY override map
+ * now -- the earlier `focusedVariableOverrides` existed purely
+ * because the focused slot had no stable id to key overrides by; it
+ * does now, so that whole map is gone.
+ */
 export const PlayerState = schema(
   {
     name: t.string().default("Player"),
-    x: t.number().default(0),
-    y: t.number().default(0),
-    z: t.number().default(0),
-    yaw: t.number().default(0),
     /** GM admin-override escape hatch (core/mod-boundary plan) -- set once in WorldRoom.onJoin from store.isWorldAdmin, never re-derived from anything the client sends. */
     isAdmin: t.boolean().default(false),
     /** Mirrors GameState.ts's own presence.accountId (GameRoom.ts) -- same "never trusted for anything auth-related beyond a fresh store check" rule. MVP goal item 4 follow-up: needed so `placeCharacter` can verify the sender actually owns the character they're placing. */
     accountId: t.string().default(""),
-    /**
-     * MVP goal items 1-2 (docs/ROADMAP.md): flattened from store.ts's
-     * CharacterRecord once at join (same precedent as isAdmin/respawn-anchor
-     * above, per WorldRoom.ts's onJoin -- never a live per-message lookup).
-     * All default/optional-shaped so a characterless join (no character
-     * selected, or an unknown/stale id) still works and simply renders no
-     * token client-side -- a real state, not an edge case to assume away.
-     */
-    characterId: t.string().default(""),
-    characterName: t.string().default(""),
-    tokenColorR: t.number().default(0),
-    tokenColorG: t.number().default(0),
-    tokenColorB: t.number().default(0),
-    bars: t.array(BarState),
-    /**
-     * MVP goal item 4 follow-up ("finish item 4's MVP scope," real bug
-     * found live: "I tried adjusting the character width/height/depth
-     * and that did nothing") -- flattened once at join from
-     * `character.variableValues.bodyWidth/Height/Depth` (same
-     * "flatten once at join" precedent every other character field
-     * here already uses), re-flattened by `notifyCharacterSheetChanged`
-     * on a live sheet edit. Defaults match `RESERVED_BODY_SIZE_VARIABLES`'
-     * own shared defaults (and noa's own Engine constructor defaults --
-     * a numeric coincidence this migration finally makes a real,
-     * wired connection instead of two unrelated fixed values).
-     */
-    bodyWidth: t.number().default(0.6),
-    bodyHeight: t.number().default(1.8),
-    bodyDepth: t.number().default(0.6),
-    statusEffects: t.array(StatusEffectState),
+    currentInstance: t.ref(OtherCharacterState),
   },
   "PlayerState",
+);
+
+/**
+ * docs/BATTLE_SYSTEM.md -- one row in the turn-order tracker. Phase 1
+ * (manual Add/Remove/Clear/Next Turn, built now) always has a STABLE
+ * identity: either `instanceId` (an existing, already-placed
+ * `OtherCharacterState` entry) or neither (a free-text `label` with no
+ * live token at all -- same flexibility the old game's own "Add" had,
+ * e.g. "Orc Captain" with nothing backing it). Deliberately does NOT
+ * reference a session/PlayerState directly -- a Colyseus `sessionId`
+ * is not stable across a disconnect/rejoin, and turn order has to
+ * survive that (docs/BATTLE_SYSTEM.md's own persistence requirement,
+ * "player b mid combat has an internet glitch... should they be
+ * removed from combat? No."). That means a character someone is
+ * CURRENTLY piloting (the focused slot, which has no `instanceId` of
+ * its own) can't be referenced here yet -- initiative rolls (phase 2,
+ * "I can tab between them, press 'initiative roll'...") have to solve
+ * that separately, not assumed solved by this shape.
+ */
+export const TurnOrderEntryState = schema(
+  {
+    turnEntryId: t.string().default(""),
+    label: t.string().default(""),
+    instanceId: t.string().default(""),
+    characterId: t.string().default(""),
+    hasRollValue: t.boolean().default(false),
+    rollValue: t.number().default(0),
+  },
+  "TurnOrderEntryState",
 );
 
 export const WorldState = schema(
@@ -192,6 +225,11 @@ export const WorldState = schema(
     respawnAnchorZ: t.number().default(0),
     /** GM-only panel (gmPanel.ts): whether players can see through walls in third person (blockShaders.ts's xray-cutout shader). Room-level, not per-player -- same tier as worldBottomY/hasRespawnAnchor above. Seeded from the world's parent GameRecord.seeThroughWalls at WorldRoom.onCreate, then live-toggleable via the admin-gated "setSeeThroughWalls" message -- auto-synced to every connected client the instant it changes, no reload needed (unlike mods). */
     seeThroughWalls: t.boolean().default(true),
+    /** docs/BATTLE_SYSTEM.md's turn-order tracker -- world-level (not per-session), persisted (store.ts), so it survives a disconnect/refresh/rejoin the same way otherCharacters already does. */
+    turnOrder: t.array(TurnOrderEntryState),
+    /** Index into `turnOrder` of whoever's turn it notionally is. Meaningless (0) when `turnOrder` is empty -- not a separate "is combat running" flag; see TurnOrderEntryState's own doc for why phase 1 keeps this simple. */
+    turnOrderCurrentIndex: t.number().default(0),
+    turnOrderRound: t.number().default(1),
   },
   "WorldState",
 );
@@ -202,3 +240,4 @@ export type PlayerMap = MapSchema<PlayerStateType>;
 export type StatusEffectStateType = InstanceType<typeof StatusEffectState>;
 export type BarStateType = InstanceType<typeof BarState>;
 export type OtherCharacterStateType = InstanceType<typeof OtherCharacterState>;
+export type TurnOrderEntryStateType = InstanceType<typeof TurnOrderEntryState>;

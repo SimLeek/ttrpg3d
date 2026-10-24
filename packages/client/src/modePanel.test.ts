@@ -14,6 +14,7 @@ function makeOptions(initialLocked: boolean, overrides: Partial<ModePanelOptions
   return {
     isPointerLocked: () => initialLocked,
     setPointerLock: vi.fn(),
+    onToggleTurnTracker: vi.fn(),
     onPointerLockChange: (cb) => {
       listeners.push(cb);
       return () => {
@@ -63,13 +64,18 @@ describe("mountModePanel", () => {
     expect(options.setPointerLock).toHaveBeenCalledWith(false);
   });
 
-  it("the Distance and Turns buttons are rendered disabled, with no click handler wired to anything observable", () => {
+  it("the Distance button is rendered disabled -- the waypoint/distance system isn't built yet", () => {
     const options = makeOptions(true);
     mount(options);
     const distance = container.querySelector<HTMLButtonElement>("#mode-distance")!;
-    const turns = container.querySelector<HTMLButtonElement>("#mode-turns")!;
     expect(distance.disabled).toBe(true);
-    expect(turns.disabled).toBe(true);
+  });
+
+  it("clicking Turns calls onToggleTurnTracker (docs/BATTLE_SYSTEM.md phase 1)", () => {
+    const options = makeOptions(true);
+    mount(options);
+    container.querySelector<HTMLButtonElement>("#mode-turns")!.click();
+    expect(options.onToggleTurnTracker).toHaveBeenCalledOnce();
   });
 
   it("re-highlights correctly when the browser (not a button) changes pointer-lock state, via onPointerLockChange", () => {

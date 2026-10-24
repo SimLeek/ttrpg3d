@@ -1,7 +1,7 @@
 import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType } from "./WorldState.js";
-import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord } from "../data/store.js";
+import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType } from "./WorldState.js";
+import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord, TurnOrderEntryRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -30,41 +30,48 @@ interface JoinOptions {
   name?: string;
   /** Lobby-account id (packages/client/src/api.ts's Account.id) -- used ONLY to check world owner/admin/root status server-side (store.isWorldAdmin), per the core/mod-boundary plan's GM admin-override escape hatch. Never trusted blindly: a forged/missing id just means "not admin," checked fresh against the store, not taken from the client as-is. */
   accountId?: string;
-  /** MVP goal items 1-2 (docs/ROADMAP.md) -- resolved server-side via store.getCharacter in onJoin, never trusted as-is. A missing/unknown id is a real state (no character selected yet), not an error -- the player simply joins with no token. */
+  /** MVP goal items 1-2 (docs/ROADMAP.md) -- resolved server-side via store.getCharacter in onJoin, never trusted as-is. A missing/unknown id is a real state (no character selected yet), not an error -- the player simply joins with no token. Ignored once `instanceId` below successfully resumes something. */
   characterId?: string;
+  /**
+   * Real correction (2026-10-23): names the SPECIFIC instance this
+   * session was last piloting (not just which character), persisted
+   * client-side across a disconnect/refresh/rejoin -- resolving by
+   * instanceId, not characterId, is required now that several
+   * independent instances can share one characterId. Only honored if
+   * it still exists and is owned by this account (never trusted
+   * blindly, same spirit as every other id here); falls through to
+   * `characterId`/the account default otherwise, same as before this
+   * existed.
+   */
+  instanceId?: string;
 }
 
 /**
- * Replaces the old hp/maxHp/mp/maxMp-specific SetCharacterStatMessage
- * -- `variableId` is whichever sheet variable the clicked bar points
- * at (always the CURRENT half; `max` is edited on the character sheet
- * page, not in-game).
- *
- * `instanceId` (MVP goal item 4 follow-up, "multiple instances of the
- * same character... for monsters"): when present, this edit applies
- * ONLY to that one placed otherCharacters instance, as a persisted
- * override that never touches the shared CharacterRecord and never
- * affects any other instance or the focused slot -- see
- * `instanceVariableOverrides`'s own doc. Omitted (the original
- * behavior): edits the shared record and refreshes the FOCUSED slot
- * of whichever session(s) are playing that character.
+ * Backs "Edit a bar," "Select status effects," and "Edit token
+ * properties" -- real correction (2026-10-23): `instanceId` is now
+ * ALWAYS required, never optional. Every character instance (piloted
+ * right now or just sitting idle in the world) has a real, stable id
+ * (PlayerState.currentInstance's own doc explains why), so there's no
+ * more "the focused slot has no id, special-case it" branch to carry
+ * -- editing your own currently-piloted character and editing an idle
+ * placed instance are now the exact same code path.
  */
 interface SetCharacterVariableValueMessage {
   characterId: string;
-  instanceId?: string;
+  instanceId: string;
   variableId: string;
   value: number;
 }
 
 interface SetStatusEffectsMessage {
   characterId: string;
-  instanceId?: string;
+  instanceId: string;
   statusEffects: StatusEffect[];
 }
 
 interface SetCharacterTokenMessage {
   characterId: string;
-  instanceId?: string;
+  instanceId: string;
   color: [number, number, number];
 }
 
@@ -101,9 +108,42 @@ interface FocusCharacterMessage {
   direction: "next" | "previous";
 }
 
-/** MVP goal item 4 follow-up (right-click "Delete instance"). Keyed by `instanceId`, same reason as FocusCharacterMessage -- also means this can no longer even ADDRESS the focused slot (which has no instanceId), so "can't delete the character you're controlling" is now structural, not a separate check. */
+/** MVP goal item 4 follow-up (right-click "Delete instance"). Keyed by `instanceId`. Can't address whatever the sender is CURRENTLY piloting -- removeCharacterInstance only ever searches the idle `otherCharacters` array (findInstance, not findAnyInstance), same structural "can't delete the character you're controlling" guarantee as before, just because of what it searches rather than because the target has no id at all. */
 interface RemoveCharacterInstanceMessage {
   instanceId: string;
+}
+
+/**
+ * docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1 (manual Add --
+ * initiative-roll-driven adds are phase 2, not this message).
+ * `instanceId`/`characterId` are both optional and go together: a
+ * manual Add can reference ANY live instance (idle in `otherCharacters`
+ * OR actively being piloted right now -- real correction, 2026-10-23:
+ * "I cannot add my currently controlled character to the turn order
+ * for some reason... even though I should be able to", resolved by
+ * `findAnyInstance` below searching both places), or be a bare
+ * free-text label with no live token at all (both omitted).
+ */
+interface AddToTurnOrderMessage {
+  label: string;
+  instanceId?: string;
+  characterId?: string;
+}
+
+interface RemoveFromTurnOrderMessage {
+  turnEntryId: string;
+}
+
+/** Moves the entry to `newIndex` in the list (up/down arrow buttons -- drag-and-drop was tried and dropped, "pretty bad" in practice) -- clamped server-side, never trusts the client's own bounds-checking. */
+interface ReorderTurnOrderMessage {
+  turnEntryId: string;
+  newIndex: number;
+}
+
+/** GM-only inline roll-value edit (real request: a manually-typed initiative number, not yet the `[[]]` roll-eval function docs/BATTLE_SYSTEM.md's later phase describes) -- sets both `rollValue` and `hasRollValue` together, since typing a value (even 0) is itself the thing that gives this entry one. */
+interface SetTurnOrderRollValueMessage {
+  turnEntryId: string;
+  value: number;
 }
 
 function flatIndex(i: number, j: number, k: number): number {
@@ -116,15 +156,10 @@ function newInstanceId(): string {
 }
 
 /**
- * MVP goal item 4 follow-up (multi-character presence): a session's
- * currently-FOCUSED character (PlayerStateType) and one of the
- * world's placed-but-unfocused `otherCharacters` entries
- * (OtherCharacterStateType) share this exact field shape (bars + body
- * size), just on two different Schema types -- this is the structural
- * interface both `applyBarsToCharacterTarget`/
- * `applyBodySizeToCharacterTarget` below (and the focus-swap helpers
- * further down) operate against, so the same logic works for either
- * without duplicating it per-type.
+ * MVP goal item 4 follow-up (multi-character presence): the structural
+ * shape `applyBarsToCharacterTarget`/`applyBodySizeToCharacterTarget`
+ * below operate against -- every `OtherCharacterState` (idle or
+ * currently piloted, see that type's own doc) satisfies this.
  */
 interface CharacterSheetTarget {
   bars: { clear(): void; push(bar: BarStateType): void };
@@ -138,15 +173,15 @@ interface CharacterSheetTarget {
  * character... for monsters," independent stats): `overrides`, when
  * given, is one placed INSTANCE's own persisted variable deltas
  * (`instanceVariableOverrides`), merged on top of the character's own
- * base `variableValues` -- never mutating the base record itself. The
- * focused slot and a fresh (not-yet-edited) instance both pass no
- * overrides, resolving straight off the base record, same as always.
+ * base `variableValues` -- never mutating the base record itself. A
+ * fresh (not-yet-edited) instance passes no overrides, resolving
+ * straight off the base record.
  */
 function resolveVariableValues(character: CharacterRecord, overrides?: Readonly<Record<string, number>>): Readonly<Record<string, number | string>> {
   return overrides ? { ...character.variableValues, ...overrides } : character.variableValues;
 }
 
-/** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues (optionally merged with one instance's own overrides, see resolveVariableValues) and replaces the target's whole `bars` Schema array -- used at join, after any setCharacterVariableValue edit, and for a placed otherCharacters entry, so every connected session always sees a freshly-derived list rather than a stale one, regardless of focus state. */
+/** Re-resolves a character's configured bars (shared/characterSheet.ts's resolveCharacterBars) against its CURRENT variableValues (optionally merged with one instance's own overrides, see resolveVariableValues) and replaces the target's whole `bars` Schema array -- used at join, after any setCharacterVariableValue edit, and for a placed otherCharacters entry, so every connected session always sees a freshly-derived list rather than a stale one. */
 function applyBarsToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number>>): void {
   target.bars.clear();
   for (const resolved of resolveCharacterBars(character.customSheet, resolveVariableValues(character, overrides))) {
@@ -174,153 +209,42 @@ function applyBodySizeToCharacterTarget(target: CharacterSheetTarget, character:
   target.bodyDepth = typeof values.bodyDepth === "number" ? values.bodyDepth : DEFAULT_BODY_DEPTH;
 }
 
-/** Shared by both directions of a focus-swap (WorldRoom.ts's "focusCharacter" handler) -- copies bars + status effects from one character slot (focused OR an otherCharacters entry) onto another, since both are plain Schema arrays of the exact same element types regardless of which side they live on. */
-function copyBarsAndStatusEffects(
-  from: { bars: Iterable<BarStateType>; statusEffects: Iterable<StatusEffectStateType> },
-  to: { bars: { clear(): void; push(bar: BarStateType): void }; statusEffects: { clear(): void; push(effect: StatusEffectStateType): void } },
-): void {
-  to.bars.clear();
-  for (const bar of from.bars) {
-    const copy = new BarState();
-    copy.variableId = bar.variableId;
-    copy.label = bar.label;
-    copy.value = bar.value;
-    copy.max = bar.max;
-    copy.colorR = bar.colorR;
-    copy.colorG = bar.colorG;
-    copy.colorB = bar.colorB;
-    to.bars.push(copy);
-  }
-  to.statusEffects.clear();
-  for (const effect of from.statusEffects) {
-    const copy = new StatusEffectState();
-    copy.icon = effect.icon;
-    copy.label = effect.label;
-    to.statusEffects.push(copy);
-  }
-}
-
-/** Snapshots a session's CURRENTLY-focused character into a brand-new `OtherCharacterState` -- the first half of a Tab/Shift+Tab/Control focus swap (the player's top-level fields are about to be overwritten by the target character's data, so this has to happen first). Gets a FRESH instanceId (the focused slot never has one of its own) and no override entry (the focused slot always resolves straight off the shared record -- there's nothing to carry over). `placedByAccountId` is the player's own accountId: this snapshot is now a world-level entry like any other, and the session that was just piloting it is who "placed" it, same ownership rule as an explicit drag-and-drop placement. */
-function snapshotFocusedCharacter(player: PlayerStateType): OtherCharacterStateType {
-  const snapshot = new OtherCharacterState();
-  snapshot.instanceId = newInstanceId();
-  snapshot.characterId = player.characterId;
-  snapshot.characterName = player.characterName;
-  snapshot.placedByAccountId = player.accountId;
-  snapshot.x = player.x;
-  snapshot.y = player.y;
-  snapshot.z = player.z;
-  snapshot.yaw = player.yaw;
-  snapshot.tokenColorR = player.tokenColorR;
-  snapshot.tokenColorG = player.tokenColorG;
-  snapshot.tokenColorB = player.tokenColorB;
-  snapshot.bodyWidth = player.bodyWidth;
-  snapshot.bodyHeight = player.bodyHeight;
-  snapshot.bodyDepth = player.bodyDepth;
-  copyBarsAndStatusEffects(player, snapshot);
-  return snapshot;
-}
-
 /**
- * True if `characterId` is the SENDER'S OWN currently-FOCUSED character
- * -- the self-edit allowance for setCharacterVariableValue/
- * setStatusEffects/setCharacterToken's non-instance path. MVP goal
- * item 4 follow-up ("multiple instances... for monsters"): this used
- * to also match a sender's own otherCharacters entries by characterId,
- * back when characterId alone identified "the one live representation
- * of this character" -- now that several independent instances can
- * share a characterId, editing "by characterId" can only still mean
- * "my own focused character" unambiguously; editing a SPECIFIC
- * instance goes through `isSendersOwnInstance` instead.
+ * True if `instanceId` is either THIS SENDER'S own currently-piloted
+ * instance, OR a world-level `otherCharacters` entry this sender
+ * placed. The single ownership test for every instance-scoped edit
+ * now (setCharacterVariableValue/setStatusEffects/setCharacterToken) --
+ * real correction, 2026-10-23: these used to have a SEPARATE
+ * characterId-based "is this my own focused character" check, back
+ * when the focused slot had no instance identity of its own to check
+ * against directly. It does now (PlayerState.currentInstance's own
+ * doc), so there's only one check.
  */
-function isSendersOwnCharacter(sender: PlayerStateType | undefined, characterId: string): boolean {
-  return !!sender && sender.characterId === characterId;
+function isSendersOwnInstance(sender: PlayerStateType | undefined, otherCharacters: readonly OtherCharacterStateType[], instanceId: string): boolean {
+  if (!sender) return false;
+  if (sender.currentInstance.instanceId === instanceId) return true;
+  return otherCharacters.some((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
 }
 
-/**
- * True if `instanceId` names a world-level otherCharacters entry THIS
- * SENDER placed -- the instance-edit equivalent of
- * isSendersOwnCharacter above. `otherCharacters` is world-level now
- * (WorldState.ts, real feedback: "the tokens do not persist upon
- * exiting and re-entering games... they should be stored and loaded
- * with the page/world"), so ownership is checked via
- * `placedByAccountId`, not "is it in my own array" (there's only ONE
- * array now, shared by everyone in the room).
- */
-function isSendersOwnInstance(otherCharacters: readonly OtherCharacterStateType[], sender: PlayerStateType | undefined, instanceId: string): boolean {
-  return !!sender && otherCharacters.some((o) => o.instanceId === instanceId && o.placedByAccountId === sender.accountId);
-}
-
+/** Idle-only lookup -- an `otherCharacters` array entry specifically, never a currently-piloted instance. The right choice for anything that needs a target someone could focus/take-over/delete (focusCharacter, removeCharacterInstance): you can't focus, delete, or steal a body someone else (or you, under a different name) is actively piloting. */
 function findInstance(otherCharacters: readonly OtherCharacterStateType[], instanceId: string): OtherCharacterStateType | undefined {
   return otherCharacters.find((o) => o.instanceId === instanceId);
 }
-
-/** The second half of a focus swap -- pulls a (previously-placed) otherCharacters entry's data onto the player's top-level focused fields. Position/yaw included: the newly-focused character should appear where it was last placed/left, same spirit as a fresh join using the respawn anchor. */
-function applyOtherCharacterAsFocused(player: PlayerStateType, other: OtherCharacterStateType): void {
-  player.characterId = other.characterId;
-  player.characterName = other.characterName;
-  player.x = other.x;
-  player.y = other.y;
-  player.z = other.z;
-  player.yaw = other.yaw;
-  player.tokenColorR = other.tokenColorR;
-  player.tokenColorG = other.tokenColorG;
-  player.tokenColorB = other.tokenColorB;
-  player.bodyWidth = other.bodyWidth;
-  player.bodyHeight = other.bodyHeight;
-  player.bodyDepth = other.bodyDepth;
-  copyBarsAndStatusEffects(other, player);
-}
-
-/**
- * MVP goal item 4 follow-up ("characters" tab/popup) -- real bug found
- * live: "updating the popout page variables didn't update the in-game
- * bars, until I selected one bar, escaped, and the other updated."
- * Root cause: characters.ts's standalone page, the in-game popup, and
- * the pop-out window all persist sheet edits via a plain REST PUT
- * (server.ts's putCharacterSheet) -- which has no way to reach a LIVE
- * WorldRoom session for that same character to re-resolve its
- * Schema-synced bars. The "escaping a bar editor updated the OTHER
- * bar too" symptom was `setCharacterVariableValue`'s own handler
- * (below) incidentally re-resolving the WHOLE bars array -- it just
- * takes some UNRELATED room message to trigger that refresh today.
- *
- * This in-process registry (every room lives in the same Node
- * process) tracks which (room, sessionId) pairs are currently FOCUSED
- * on each characterId, so a REST edit can reach them directly -- no
- * new message/poll loop, just a same-process function call. Keyed by
- * characterId since a character can in principle be active in more
- * than one room at once (two tabs/sessions); cleaned up in onLeave,
- * and re-pointed at the new characterId on every focus swap
- * (focusCharacter) -- without that second part, a sheet edit to
- * whatever you just Tab/Control-switched TO would silently stop
- * reaching your screen, since this would still think you were playing
- * whatever you focused BEFORE the swap.
- */
-const activeCharacterSessions = new Map<string, Set<{ room: WorldRoom; sessionId: string }>>();
-
-/**
- * The world-level counterpart to activeCharacterSessions above --
- * which ROOMS currently have a placed otherCharacters instance of this
- * characterId (independent of any particular session; a placed
- * monster has no "session playing it," it just exists in the world).
- * `WorldRoom.syncCharacterRoomRegistration` keeps this current after
- * every otherCharacters mutation; `onDispose` removes this room from
- * every entry it was part of.
- */
-const activeCharacterRooms = new Map<string, Set<WorldRoom>>();
 
 /**
  * Called by server.ts's putCharacterSheet, after persisting, to
  * refresh bars for every live FOCUSED session AND every placed
  * otherCharacters instance of this character, across every WorldRoom
- * that has one (same reason setCharacterVariableValue's own handler
- * now also calls this instead of looping its own room only). Each
- * instance's OWN overrides (instanceVariableOverrides) stay layered on
- * top of the freshly-edited base record, so a template-level sheet
- * edit cascades the new BASE stats into every goblin while each
- * goblin's own accumulated damage/etc. is undisturbed. No-op (not an
- * error) if the character isn't currently played or placed anywhere.
+ * that has one. Each instance's OWN overrides (instanceVariableOverrides,
+ * keyed by instanceId regardless of whether it's idle or currently
+ * piloted -- real simplification, 2026-10-23: there used to be a
+ * SEPARATE focusedVariableOverrides map just for the piloted case,
+ * only because that case had no stable id of its own to key by
+ * before) stay layered on top of the freshly-edited base record, so a
+ * template-level sheet edit cascades the new BASE stats into every
+ * goblin while each goblin's own accumulated damage/etc. is
+ * undisturbed. No-op (not an error) if the character isn't currently
+ * played or placed anywhere.
  */
 export function notifyCharacterSheetChanged(characterId: string): void {
   const character = store.getCharacter(characterId);
@@ -330,15 +254,10 @@ export function notifyCharacterSheetChanged(characterId: string): void {
   if (sessions) {
     for (const { room, sessionId } of sessions) {
       const player = room.state.players.get(sessionId);
-      if (player?.characterId === characterId) {
-        // focusedVariableOverrides' own doc: a session piloting this
-        // character may have its own live deviation (e.g. damage taken
-        // this session) that a sheet-wide change elsewhere must not
-        // silently overwrite -- same protection otherCharacters
-        // instances already get below.
-        const overrides = room.focusedVariableOverrides.get(sessionId);
-        applyBarsToCharacterTarget(player, character, overrides);
-        applyBodySizeToCharacterTarget(player, character, overrides);
+      if (player?.currentInstance.characterId === characterId) {
+        const overrides = room.instanceVariableOverrides.get(player.currentInstance.instanceId);
+        applyBarsToCharacterTarget(player.currentInstance, character, overrides);
+        applyBodySizeToCharacterTarget(player.currentInstance, character, overrides);
       }
     }
   }
@@ -355,6 +274,36 @@ export function notifyCharacterSheetChanged(characterId: string): void {
     }
   }
 }
+
+/**
+ * MVP goal item 4 follow-up ("characters" tab/popup) -- real bug found
+ * live: "updating the popout page variables didn't update the in-game
+ * bars, until I selected one bar, escaped, and the other updated."
+ * Root cause: characters.ts's standalone page, the in-game popup, and
+ * the pop-out window all persist sheet edits via a plain REST PUT
+ * (server.ts's putCharacterSheet) -- which has no way to reach a LIVE
+ * WorldRoom session for that same character to re-resolve its
+ * Schema-synced bars. This in-process registry (every room lives in
+ * the same Node process) tracks which (room, sessionId) pairs are
+ * currently FOCUSED on each characterId, so a REST edit can reach
+ * them directly -- no new message/poll loop, just a same-process
+ * function call. Keyed by characterId since a character can in
+ * principle be active in more than one room at once (two tabs/
+ * sessions); cleaned up in onLeave, and re-pointed at the new
+ * characterId on every focus swap (focusCharacter).
+ */
+const activeCharacterSessions = new Map<string, Set<{ room: WorldRoom; sessionId: string }>>();
+
+/**
+ * The world-level counterpart to activeCharacterSessions above --
+ * which ROOMS currently have a placed otherCharacters instance of this
+ * characterId (independent of any particular session; a placed
+ * monster has no "session playing it," it just exists in the world).
+ * `WorldRoom.syncCharacterRoomRegistration` keeps this current after
+ * every otherCharacters mutation; `onDispose` removes this room from
+ * every entry it was part of.
+ */
+const activeCharacterRooms = new Map<string, Set<WorldRoom>>();
 
 export class WorldRoom extends Room<{ state: WorldStateType }> {
   // Set once in onCreate from the first joiner's options -- paired with
@@ -386,71 +335,40 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   // tracked server-side rather than trusting a client-sent flag (checked
   // once at join via store.isWorldAdmin, not re-derived per message).
   private adminSessionIds = new Set<string>();
-  /** This room's own half of the activeCharacterSessions registry above -- which characterId each currently-connected session is currently FOCUSED on, so onLeave/focusCharacter can find and update the right entry. One characterId per session (whichever is focused right now), not a Set -- otherCharacters moved off PlayerState this round, so a session no longer "holds" more than its one focused characterId at a time. */
+  /** This room's own half of the activeCharacterSessions registry above -- which characterId each currently-connected session is currently FOCUSED on, so onLeave/focusCharacter can find and update the right entry. */
   private sessionCharacterIds = new Map<string, string>();
 
   /**
    * MVP goal item 4 follow-up ("I can't add multiple instances of the
    * same character. I would want to do that for monsters"): each
-   * placed otherCharacters instance's own variable-value DELTAS
-   * (sparse -- only the keys someone has actually edited on THIS
-   * instance, e.g. `{hp: 7}` after one goblin takes damage), merged on
-   * top of the shared CharacterRecord's own variableValues when
-   * resolving that instance's bars/body size (resolveVariableValues
-   * above) -- so five goblins placed from one "Goblin" character sheet
-   * each track their own HP independently instead of all sharing one
-   * pool.
+   * instance's own variable-value DELTAS (sparse -- only the keys
+   * someone has actually edited, e.g. `{hp: 7}` after one goblin takes
+   * damage), merged on top of the shared CharacterRecord's own
+   * variableValues when resolving that instance's bars/body size
+   * (resolveVariableValues above) -- so five goblins placed from one
+   * "Goblin" character sheet each track their own HP independently
+   * instead of all sharing one pool. Keyed by instanceId regardless of
+   * whether that instance is idle (in `otherCharacters`) or currently
+   * piloted (a player's `currentInstance`) -- real simplification,
+   * 2026-10-23: a piloted instance keeps the SAME instanceId the whole
+   * time now (PlayerState.currentInstance's own doc), so there's no
+   * more need to move a deviation between two different maps on every
+   * focus swap the way the old focusedVariableOverrides/
+   * instanceVariableOverrides split required.
    *
-   * Real feedback, reversing last round's "deliberately ephemeral"
-   * call: "the tokens do not persist upon exiting and re-entering
-   * games... they should be stored and loaded with the page/world."
-   * This in-memory map is now just the LIVE working copy -- the real
-   * source of truth is `store.ts`'s `WorldRecord.placedCharacters`
-   * (each record's own `variableOverrides`), loaded back into this map
-   * at `onCreate` and written back out via `persistPlacedCharacters`
-   * after every mutation.
+   * The real source of truth is `store.ts`'s `WorldRecord.
+   * placedCharacters` (each record's own `variableOverrides`), loaded
+   * back into this map at `onCreate` and written back out via
+   * `persistPlacedCharacters` after every mutation.
    */
   instanceVariableOverrides = new Map<string, Record<string, number>>();
-
-  /**
-   * The FOCUSED-slot counterpart to instanceVariableOverrides above --
-   * real request, found live testing multiple instances of the same
-   * character: "if you click your currently controlled character, it
-   * only affects that token... instead of all the others." Editing
-   * your own live bars used to write straight through to the shared
-   * CharacterRecord (`store.updateCharacterVariableValue` +
-   * `notifyCharacterSheetChanged`), which is exactly right for an
-   * actual character-SHEET edit (that's still how the REST sheet
-   * editor behaves), but wrong for "I clicked an HP bar on the body
-   * I'm physically piloting right now" -- that retroactively reset
-   * every OTHER placed instance (and session) of the same character
-   * that didn't have its own deviation yet. Keyed by sessionId, not
-   * characterId/instanceId -- the focused slot has no stable identity
-   * of its own beyond "whichever session is piloting it right now."
-   * Carried across a focus swap in BOTH directions, same spirit as
-   * instanceVariableOverrides' own persistence: swapping AWAY moves
-   * this session's current deltas onto the new otherCharacters
-   * snapshot's own instanceVariableOverrides entry (so they stay
-   * protected once you're no longer the one piloting them); swapping
-   * INTO an instance that already has its own deltas moves them the
-   * other way, into this map, instead of promoting them into the
-   * shared record the way focusCharacter used to. Never persisted to
-   * disk on its own (unlike instance overrides) -- there's nothing to
-   * reload against once nobody's in the focused slot, and unlike a
-   * swap, disconnecting leaves nowhere to carry a live deviation to
-   * (the focused slot isn't an otherCharacters entry, just this
-   * session's own presence) -- onLeave bakes whatever's left here into
-   * the permanent record instead, so a real edit still survives a
-   * refresh, same as before this map existed.
-   */
-  focusedVariableOverrides = new Map<string, Record<string, number>>();
 
   /** Which characterIds THIS room is currently registered under in the module-level `activeCharacterRooms` map -- tracked so `onDispose` can remove this room from exactly those entries (and only those) when the room is destroyed. */
   private registeredRoomCharacterIds = new Set<string>();
 
-  /** Keeps `activeCharacterRooms` (module-level) and `registeredRoomCharacterIds` (this room's own bookkeeping of it) in sync for one characterId, by simply re-deriving "does this room still have ANY placed instance of it" from current Schema state -- called after every otherCharacters mutation that could have added or removed the last instance of a given characterId. */
+  /** Keeps `activeCharacterRooms` (module-level) and `registeredRoomCharacterIds` (this room's own bookkeeping of it) in sync for one characterId, by simply re-deriving "does this room still have ANY instance of it -- idle OR currently piloted" from current Schema state -- called after every mutation that could have added or removed the last instance of a given characterId. */
   private syncCharacterRoomRegistration(characterId: string): void {
-    const stillPresent = this.state.otherCharacters.some((o) => o.characterId === characterId);
+    const stillPresent = this.state.otherCharacters.some((o) => o.characterId === characterId) || Array.from(this.state.players.values()).some((p) => p.currentInstance.characterId === characterId);
     if (stillPresent) {
       this.registeredRoomCharacterIds.add(characterId);
       const rooms = activeCharacterRooms.get(characterId) ?? new Set<WorldRoom>();
@@ -465,9 +383,41 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     }
   }
 
-  /** Serializes this room's CURRENT otherCharacters (+ each one's own override deltas) and writes the whole list to store.ts -- called after every place/remove/instance-edit/focus-swap. Whole-list overwrite, not a diff, same shape as store.ts's own setPlacedCharactersForWorld (and setWorldRespawnAnchor before it). */
+  /**
+   * Finds the live instance with this id, wherever it currently lives
+   * -- an idle entry in `otherCharacters`, OR whichever session is
+   * CURRENTLY piloting it. The canonical lookup for anything that
+   * needs to reach a specific instance's current data regardless of
+   * who's piloting it (turn-order Add, stat/color/status-effect
+   * edits). `findInstance` (array-only, module-level function above)
+   * stays the right choice for anything that specifically needs an
+   * IDLE target (focusCharacter, removeCharacterInstance, Control/
+   * Delete) -- you can't take over or delete a body someone's
+   * actively piloting.
+   */
+  private findAnyInstance(instanceId: string): OtherCharacterStateType | undefined {
+    for (const player of this.state.players.values()) {
+      if (player.currentInstance.instanceId === instanceId) return player.currentInstance;
+    }
+    return findInstance(this.state.otherCharacters, instanceId);
+  }
+
+  /**
+   * Serializes every live instance this room currently has -- idle
+   * `otherCharacters` entries AND every connected session's own
+   * currently-piloted `currentInstance` (real correction, 2026-10-23:
+   * a piloted character's edits used to never reach disk until
+   * disconnect; now a stat/color edit made WHILE piloting is captured
+   * immediately too, same as an idle instance's always was) -- and
+   * writes the whole list to store.ts. Called after every place/
+   * remove/instance-edit/focus-swap/join/leave, NOT on every "pos"
+   * update (position alone isn't worth a disk write every few ticks;
+   * the one case that matters, a clean disconnect, already pushes the
+   * leaving instance into `otherCharacters` before this runs).
+   */
   private persistPlacedCharacters(): void {
-    const records: PlacedCharacterInstanceRecord[] = this.state.otherCharacters.map((o) => ({
+    const live = [...this.state.otherCharacters, ...Array.from(this.state.players.values(), (p) => p.currentInstance).filter((i) => i.characterId !== "")];
+    const records: PlacedCharacterInstanceRecord[] = live.map((o) => ({
       instanceId: o.instanceId,
       characterId: o.characterId,
       placedByAccountId: o.placedByAccountId,
@@ -480,6 +430,78 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       variableOverrides: this.instanceVariableOverrides.get(o.instanceId) ?? {},
     }));
     store.setPlacedCharactersForWorld(this.worldId, records);
+  }
+
+  /** Serializes this room's CURRENT turn order and writes it to store.ts -- same whole-state-overwrite shape as persistPlacedCharacters above, called after every add/remove/clear/reorder/next-turn. */
+  private persistTurnOrder(): void {
+    const entries: TurnOrderEntryRecord[] = this.state.turnOrder.map((e) => ({
+      turnEntryId: e.turnEntryId,
+      label: e.label,
+      instanceId: e.instanceId,
+      characterId: e.characterId,
+      hasRollValue: e.hasRollValue,
+      rollValue: e.rollValue,
+    }));
+    store.setTurnOrderForWorld(this.worldId, { entries, currentIndex: this.state.turnOrderCurrentIndex, round: this.state.turnOrderRound });
+  }
+
+  /**
+   * Rewrites the WHOLE turn order to `newOrder`'s order by reassigning
+   * each slot's own FIELD VALUES onto the array's EXISTING
+   * `TurnOrderEntryState` objects -- never splice/remove/reinsert an
+   * object. Real bug found live, 2026-10-23: the up-arrow button's
+   * own reorder used to splice-remove the moved entry and splice-
+   * insert that SAME object back into the array within one
+   * synchronous mutation, which confused @colyseus/schema's own
+   * change-tracking -- the visible array order silently failed to
+   * change at all, while `turnOrderCurrentIndex`'s own re-lookup
+   * (below) landed on the WRONG entry, reproduced live as "I press up
+   * on hi and it changes to hi's turn instead of moving hi above
+   * bob." Shared by reorderTurnOrder (one-slot move) and
+   * sortTurnOrderByRoll (a full sort) below -- same safe rewrite
+   * either way, and the same "whose turn it is" preservation
+   * (`currentEntryId`) every other turn-order mutation already
+   * applies.
+   */
+  private reassignTurnOrder(newOrder: readonly TurnOrderEntryRecord[]): void {
+    const currentEntryId = this.state.turnOrder[this.state.turnOrderCurrentIndex]?.turnEntryId;
+    newOrder.forEach((data, i) => {
+      const target = this.state.turnOrder[i];
+      target.turnEntryId = data.turnEntryId;
+      target.label = data.label;
+      target.instanceId = data.instanceId;
+      target.characterId = data.characterId;
+      target.hasRollValue = data.hasRollValue;
+      target.rollValue = data.rollValue;
+    });
+    if (currentEntryId) {
+      const newCurrentIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === currentEntryId);
+      if (newCurrentIndex !== -1) this.state.turnOrderCurrentIndex = newCurrentIndex;
+    }
+  }
+
+  /** Plain-data snapshot of the CURRENT turn order, in its current order -- the starting point reassignTurnOrder's own callers (reorderTurnOrder, sortTurnOrderByRoll) reorder/sort before writing back. */
+  private snapshotTurnOrder(): TurnOrderEntryRecord[] {
+    return this.state.turnOrder.map((e) => ({ turnEntryId: e.turnEntryId, label: e.label, instanceId: e.instanceId, characterId: e.characterId, hasRollValue: e.hasRollValue, rollValue: e.rollValue }));
+  }
+
+  /** Removes one turn-order entry by its own id, keeping `turnOrderCurrentIndex` pointing at the SAME logical entry (shifting it back by one if the removed entry was earlier in the list; clamping if it WAS the current entry and was also the last one). Shared by removeFromTurnOrder and removeTurnOrderEntriesByInstanceId below -- same adjustment either way. */
+  private removeTurnOrderEntryById(turnEntryId: string): void {
+    const index = this.state.turnOrder.findIndex((e) => e.turnEntryId === turnEntryId);
+    if (index === -1) return;
+    this.state.turnOrder.splice(index, 1);
+    if (index < this.state.turnOrderCurrentIndex) this.state.turnOrderCurrentIndex--;
+    else if (index === this.state.turnOrderCurrentIndex && this.state.turnOrderCurrentIndex >= this.state.turnOrder.length) {
+      this.state.turnOrderCurrentIndex = Math.max(0, this.state.turnOrder.length - 1);
+    }
+    this.persistTurnOrder();
+  }
+
+  /** removeCharacterInstance's own cleanup -- a turn-order entry can't outlive the live instance it points to. A bare-label entry (no instanceId) is never touched by this, same as it's never touched by any other instance-scoped operation. */
+  private removeTurnOrderEntriesByInstanceId(instanceId: string): void {
+    for (const entry of [...this.state.turnOrder]) {
+      if (entry.instanceId === instanceId) this.removeTurnOrderEntryById(entry.turnEntryId);
+    }
   }
 
   /** Registers (room, sessionId) as the session CURRENTLY FOCUSED on characterId -- used at join and on every focus swap (focusCharacter). Each session only ever has ONE focused characterId at a time (unlike the room-level registry above, which can have several placed instances) -- callers always pair this with unregisterActiveCharacter for whatever characterId the session was PREVIOUSLY focused on. */
@@ -553,14 +575,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // MVP goal item 4 follow-up -- real bug found live: "the tokens do
     // not persist upon exiting and re-entering games, so if gms/players
     // refresh, then monsters will disappear." Loads every persisted
-    // instance for this world back into live Schema state, synchronous
-    // (store.ts is a synchronous JSON-file store, same as the
-    // respawnAnchor seeding right above), re-resolving bars/body size
-    // fresh against the character's CURRENT sheet + this instance's own
-    // overrides (never persisted redundantly -- see
-    // PlacedCharacterInstanceRecord's own doc). A character record
-    // deleted since this was last saved is skipped, not a crash -- same
-    // "stale id, not an error" convention as every other lookup here.
+    // IDLE instance for this world back into live Schema state --
+    // currently-piloted instances load back differently, via onJoin's
+    // own `instanceId` resume path below, since they need a connecting
+    // session to attach to. Synchronous (store.ts is a synchronous
+    // JSON-file store, same as the respawnAnchor seeding right above),
+    // re-resolving bars/body size fresh against the character's
+    // CURRENT sheet + this instance's own overrides (never persisted
+    // redundantly -- see PlacedCharacterInstanceRecord's own doc). A
+    // character record deleted since this was last saved is skipped,
+    // not a crash -- same "stale id, not an error" convention as every
+    // other lookup here.
     for (const record of world?.placedCharacters ?? []) {
       const character = store.getCharacter(record.characterId);
       if (!character) continue;
@@ -569,10 +594,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       other.characterId = record.characterId;
       other.characterName = character.name;
       other.placedByAccountId = record.placedByAccountId;
-      other.x = record.x;
-      other.y = record.y;
-      other.z = record.z;
-      other.yaw = record.yaw;
+      // Real bug found live, 2026-10-23: a client-side NaN from the
+      // PlayerState/OtherCharacterState refactor got persisted to disk
+      // before the "pos" handler's own validation (above) existed --
+      // JSON.stringify turns NaN into null, so a record already
+      // corrupted this way loads back as `null`, not `NaN`, and would
+      // otherwise reproduce the exact same "infinite blue space"
+      // symptom forever. Self-heals any already-corrupted record on
+      // load by falling back to a safe spawn position instead of
+      // propagating the bad value -- the same fallback a genuinely
+      // fresh join gets.
+      const [sx, sy, sz] = Number.isFinite(record.x) && Number.isFinite(record.y) && Number.isFinite(record.z) ? [record.x, record.y, record.z] : spawnPositionFor(this.worldId, this.worldGen);
+      other.x = sx;
+      other.y = sy;
+      other.z = sz;
+      other.yaw = Number.isFinite(record.yaw) ? record.yaw : 0;
       other.tokenColorR = record.tokenColor[0];
       other.tokenColorG = record.tokenColor[1];
       other.tokenColorB = record.tokenColor[2];
@@ -587,6 +623,25 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       applyBodySizeToCharacterTarget(other, character, record.variableOverrides);
       this.state.otherCharacters.push(other);
       this.syncCharacterRoomRegistration(record.characterId);
+    }
+
+    // docs/BATTLE_SYSTEM.md's turn-order tracker -- same load-back
+    // shape as placedCharacters just above, survives a room being
+    // recreated and a disconnect/refresh/rejoin (nothing here
+    // references a sessionId, see TurnOrderEntryState's own doc).
+    if (world?.turnOrder) {
+      for (const record of world.turnOrder.entries) {
+        const entry = new TurnOrderEntryState();
+        entry.turnEntryId = record.turnEntryId;
+        entry.label = record.label;
+        entry.instanceId = record.instanceId;
+        entry.characterId = record.characterId;
+        entry.hasRollValue = record.hasRollValue;
+        entry.rollValue = record.rollValue;
+        this.state.turnOrder.push(entry);
+      }
+      this.state.turnOrderCurrentIndex = world.turnOrder.currentIndex;
+      this.state.turnOrderRound = world.turnOrder.round;
     }
 
     // Admin-only: sets the shared respawn anchor (Schema fields, auto-
@@ -608,17 +663,17 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       // fly could easily be inside solid rock). Refuse rather than
       // silently accept a bad anchor -- same two-voxels-of-headroom check
       // worldGen.ts's own safe-spawn scan uses.
-      const px = Math.floor(player.x);
-      const py = Math.floor(player.y);
-      const pz = Math.floor(player.z);
+      const px = Math.floor(player.currentInstance.x);
+      const py = Math.floor(player.currentInstance.y);
+      const pz = Math.floor(player.currentInstance.z);
       const isSafe = genBlockAt(this.worldId, px, py, pz, this.worldGen) === AIR && genBlockAt(this.worldId, px, py + 1, pz, this.worldGen) === AIR;
       if (!isSafe) return;
 
       this.state.hasRespawnAnchor = true;
-      this.state.respawnAnchorX = player.x;
-      this.state.respawnAnchorY = player.y;
-      this.state.respawnAnchorZ = player.z;
-      store.setWorldRespawnAnchor(this.worldId, { x: player.x, y: player.y, z: player.z });
+      this.state.respawnAnchorX = player.currentInstance.x;
+      this.state.respawnAnchorY = player.currentInstance.y;
+      this.state.respawnAnchorZ = player.currentInstance.z;
+      store.setWorldRespawnAnchor(this.worldId, { x: player.currentInstance.x, y: player.currentInstance.y, z: player.currentInstance.z });
     });
 
     // GM-only panel (gmPanel.ts) -- admin-gated the same way setRespawnAnchor
@@ -678,110 +733,71 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // No anti-cheat / physics-verification requirement (per the migration
     // plan) -- the client owns its own movement simulation and just reports
     // position; the server's job here is broadcast via Schema sync, not
-    // re-validating the move.
+    // re-validating the move. Writes straight to the piloted instance now
+    // (PlayerState.currentInstance's own doc) -- it's the only place
+    // position lives any more, characterless or not.
     this.onMessage<PlayerInput>("pos", (client, { x, y, z, yaw }) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
-      player.x = x;
-      player.y = y;
-      player.z = z;
-      player.yaw = yaw;
+      // Real bug found live, 2026-10-23: a client-side NaN (the
+      // PlayerState/OtherCharacterState refactor briefly teleported a
+      // resuming player to [undefined, undefined, undefined]) got sent
+      // here, written straight into Schema state, then PERSISTED on
+      // that session's leave (persistPlacedCharacters) -- corrupting
+      // this instance's position on disk permanently (JSON.stringify
+      // turns NaN into null), reproduced as "infinite blue
+      // space... character disappears" on every subsequent resume,
+      // even after the client bug itself was fixed. Never trust a
+      // client-reported position blindly (same "never trusted
+      // blindly" convention every other id/value in this file already
+      // follows) -- silently dropping a non-finite update is a safe
+      // no-op, leaving the last good position in place instead of
+      // corrupting it.
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !Number.isFinite(yaw)) return;
+      player.currentInstance.x = x;
+      player.currentInstance.y = y;
+      player.currentInstance.z = z;
+      player.currentInstance.yaw = yaw;
     });
 
     // Click-to-edit bars backend (MVP goal items 1-2, generalized per
     // docs/ROADMAP.md item 4's follow-up -- was HP/MP-specific
-    // setCharacterStat). Gated to the editing character's own owner
-    // session or an admin -- same spirit as setRespawnAnchor's admin
-    // gate above, plus a self-edit allowance since this is a
-    // per-character value a player edits on their own token.
-    //
-    // MVP goal item 4 follow-up ("multiple instances... for monsters"):
-    // an `instanceId` routes this edit to ONE placed instance's own
-    // persisted override instead -- never touching the shared
-    // CharacterRecord, never visible to any other instance or the
-    // focused slot. See instanceVariableOverrides's own doc.
+    // setCharacterStat). `instanceId` is now ALWAYS required (real
+    // correction, 2026-10-23 -- see SetCharacterVariableValueMessage's
+    // own doc): editing your own currently-piloted character and
+    // editing an idle placed instance are the same code path now,
+    // since both have a real, stable instanceId.
     this.onMessage<SetCharacterVariableValueMessage>("setCharacterVariableValue", (client, { characterId, instanceId, variableId, value }) => {
       const sender = this.state.players.get(client.sessionId);
       const isAdmin = this.adminSessionIds.has(client.sessionId);
-
-      if (instanceId) {
-        if (!isSendersOwnInstance(this.state.otherCharacters, sender, instanceId) && !isAdmin) return;
-        const entry = findInstance(this.state.otherCharacters, instanceId);
-        if (!entry || entry.characterId !== characterId) return; // instanceId must actually belong to the claimed characterId -- sanity check, not just trust
-        const character = store.getCharacter(characterId);
-        if (!character) return;
-        const overrides = { ...(this.instanceVariableOverrides.get(instanceId) ?? {}), [variableId]: value };
-        this.instanceVariableOverrides.set(instanceId, overrides);
-        applyBarsToCharacterTarget(entry, character, overrides);
-        applyBodySizeToCharacterTarget(entry, character, overrides);
-        this.persistPlacedCharacters();
-        return;
-      }
-
-      // Real request, found live testing multiple instances of the same
-      // character: "if you click your currently controlled character,
-      // it only affects that token... instead of all the others."
-      // Editing your OWN focused bars now deviates only THIS session's
-      // live copy (focusedVariableOverrides, same shape as an
-      // instance's own overrides) rather than writing through to the
-      // shared CharacterRecord -- a sheet-wide edit (the REST sheet
-      // editor, or an admin editing a DIFFERENT player's focused
-      // character below) is a deliberately separate path; it still
-      // writes the shared record and cascades, since there's no
-      // per-instance deviation to protect there.
-      if (isSendersOwnCharacter(sender, characterId)) {
-        const character = store.getCharacter(characterId);
-        if (!character) return;
-        const overrides = { ...(this.focusedVariableOverrides.get(client.sessionId) ?? {}), [variableId]: value };
-        this.focusedVariableOverrides.set(client.sessionId, overrides);
-        applyBarsToCharacterTarget(sender!, character, overrides);
-        applyBodySizeToCharacterTarget(sender!, character, overrides);
-        return;
-      }
-
-      if (!isAdmin) return;
-      store.updateCharacterVariableValue(characterId, variableId, value);
-      notifyCharacterSheetChanged(characterId);
+      if (!isSendersOwnInstance(sender, this.state.otherCharacters, instanceId) && !isAdmin) return;
+      const entry = this.findAnyInstance(instanceId);
+      if (!entry || entry.characterId !== characterId) return; // instanceId must actually belong to the claimed characterId -- sanity check, not just trust
+      const character = store.getCharacter(characterId);
+      if (!character) return;
+      const overrides = { ...(this.instanceVariableOverrides.get(instanceId) ?? {}), [variableId]: value };
+      this.instanceVariableOverrides.set(instanceId, overrides);
+      applyBarsToCharacterTarget(entry, character, overrides);
+      applyBodySizeToCharacterTarget(entry, character, overrides);
+      this.persistPlacedCharacters();
     });
 
     // Backs the "Select status effects" context-menu item -- same
     // gating/instanceId routing as setCharacterVariableValue above.
-    // Non-instance path only ever touches the FOCUSED slot (never loops
-    // over otherCharacters by characterId match) -- once instances are
-    // independently editable, a base-record edit shouldn't
-    // retroactively repaint every placed instance that happens to
-    // share a characterId.
     this.onMessage<SetStatusEffectsMessage>("setStatusEffects", (client, { characterId, instanceId, statusEffects }) => {
       const sender = this.state.players.get(client.sessionId);
       const isAdmin = this.adminSessionIds.has(client.sessionId);
-
-      if (instanceId) {
-        if (!isSendersOwnInstance(this.state.otherCharacters, sender, instanceId) && !isAdmin) return;
-        const entry = findInstance(this.state.otherCharacters, instanceId);
-        if (!entry || entry.characterId !== characterId) return;
-        entry.statusEffects.clear();
-        for (const effect of statusEffects) {
-          const effectState = new StatusEffectState();
-          effectState.icon = effect.icon;
-          effectState.label = effect.label;
-          entry.statusEffects.push(effectState);
-        }
-        this.persistPlacedCharacters();
-        return;
+      if (!isSendersOwnInstance(sender, this.state.otherCharacters, instanceId) && !isAdmin) return;
+      const entry = this.findAnyInstance(instanceId);
+      if (!entry || entry.characterId !== characterId) return;
+      entry.statusEffects.clear();
+      for (const effect of statusEffects) {
+        const effectState = new StatusEffectState();
+        effectState.icon = effect.icon;
+        effectState.label = effect.label;
+        entry.statusEffects.push(effectState);
       }
-
-      if (!isSendersOwnCharacter(sender, characterId) && !isAdmin) return;
-      store.setCharacterStatusEffects(characterId, statusEffects);
-      for (const player of this.state.players.values()) {
-        if (player.characterId !== characterId) continue;
-        player.statusEffects.clear();
-        for (const effect of statusEffects) {
-          const effectState = new StatusEffectState();
-          effectState.icon = effect.icon;
-          effectState.label = effect.label;
-          player.statusEffects.push(effectState);
-        }
-      }
+      this.persistPlacedCharacters();
     });
 
     // Backs the "Edit token properties" context-menu item -- same
@@ -790,66 +806,46 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.onMessage<SetCharacterTokenMessage>("setCharacterToken", (client, { characterId, instanceId, color }) => {
       const sender = this.state.players.get(client.sessionId);
       const isAdmin = this.adminSessionIds.has(client.sessionId);
-
-      if (instanceId) {
-        if (!isSendersOwnInstance(this.state.otherCharacters, sender, instanceId) && !isAdmin) return;
-        const entry = findInstance(this.state.otherCharacters, instanceId);
-        if (!entry || entry.characterId !== characterId) return;
-        entry.tokenColorR = color[0];
-        entry.tokenColorG = color[1];
-        entry.tokenColorB = color[2];
-        this.persistPlacedCharacters();
-        return;
-      }
-
-      if (!isSendersOwnCharacter(sender, characterId) && !isAdmin) return;
-      store.setCharacterToken(characterId, color);
-      for (const player of this.state.players.values()) {
-        if (player.characterId !== characterId) continue;
-        player.tokenColorR = color[0];
-        player.tokenColorG = color[1];
-        player.tokenColorB = color[2];
-      }
+      if (!isSendersOwnInstance(sender, this.state.otherCharacters, instanceId) && !isAdmin) return;
+      const entry = this.findAnyInstance(instanceId);
+      if (!entry || entry.characterId !== characterId) return;
+      entry.tokenColorR = color[0];
+      entry.tokenColorG = color[1];
+      entry.tokenColorB = color[2];
+      this.persistPlacedCharacters();
     });
 
     // MVP goal item 4 follow-up (drag-and-drop character placement):
     // drops one of the SENDER'S OWN characters (never someone else's --
     // no admin override, matching linkCharacterToGame's own self-
-    // service shape) at a world position. The sender's live `x/y/z` is
-    // always their FOCUSED character's position (PlayerState's own
-    // meaning, unchanged) -- distance is re-validated server-side
-    // against that, never trusting the client's own pre-check, same
-    // "light validation on meaningful actions" spirit as
-    // setRespawnAnchor's not-underground check.
+    // service shape) at a world position. The sender's live position is
+    // always their CURRENTLY-PILOTED instance's own x/y/z -- distance
+    // is re-validated server-side against that, never trusting the
+    // client's own pre-check, same "light validation on meaningful
+    // actions" spirit as setRespawnAnchor's not-underground check.
     //
-    // ALWAYS creates a brand-new instance now -- real request: "I
-    // can't add multiple instances of the same character. I would
-    // want to do that for monsters for example." The old
-    // find-an-existing-entry-by-characterId-and-move-it behavior is
-    // gone; dragging the same character onto the world twice now
-    // places TWO independent instances, not one moved entry. Pushed to
-    // the WORLD-level `otherCharacters` now (real feedback: placed
-    // instances need to survive the placing session disconnecting, not
-    // just exist for as long as it's connected).
+    // ALWAYS creates a brand-new instance -- real request: "I can't
+    // add multiple instances of the same character. I would want to
+    // do that for monsters for example." Dragging the same character
+    // onto the world twice places TWO independent instances. Pushed to
+    // the WORLD-level `otherCharacters` (real feedback: placed
+    // instances need to survive the placing session disconnecting).
     //
-    // Real correction: a previous round rejected placing the character
-    // you're CURRENTLY focused on ("it already has a live position,
-    // wherever you are") -- that made sense back when characterId alone
-    // was an instance's identity (there was only ever "one Bob" to
-    // place), but it's wrong now: "if you're controlling an instance of
-    // 'bob' and you drag in another 'bob', that should still work."
-    // Placing another instance of your own focused character is just
-    // as valid as placing any other character you own -- no special
-    // case needed any more.
+    // Real correction: placing another instance of the character
+    // you're CURRENTLY piloting is explicitly fine -- "if you're
+    // controlling an instance of 'bob' and you drag in another 'bob',
+    // that should still work." No special case needed: this always
+    // creates a genuinely new, independent instance regardless of
+    // what the sender currently has focused.
     this.onMessage<PlaceCharacterMessage>("placeCharacter", (client, { characterId, x, y, z }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
       const character = store.getCharacter(characterId);
       if (!character || character.ownerAccountId !== sender.accountId) return;
 
-      const dx = x - sender.x;
-      const dy = y - sender.y;
-      const dz = z - sender.z;
+      const dx = x - sender.currentInstance.x;
+      const dy = y - sender.currentInstance.y;
+      const dz = z - sender.currentInstance.z;
       if (Math.sqrt(dx * dx + dy * dy + dz * dz) > MAX_CHARACTER_PLACEMENT_DISTANCE) return;
 
       const other = new OtherCharacterState();
@@ -880,31 +876,27 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // the right-click "Control" item -- same message/handler for both,
     // "direction" is the only thing that differs, see
     // FocusCharacterMessage's own doc). Self-only (must be a
-    // world-level otherCharacters entry THIS SENDER placed -- no-op,
-    // not an error, otherwise). Swaps the currently-focused character's
-    // live data into a fresh otherCharacters entry, and the target's
-    // stored data onto the top-level focused fields -- never a
-    // different physics entity (noa.playerEntity stays the one and
-    // only), purely a client-side teleport+relabel in response to
-    // this.
+    // world-level otherCharacters entry THIS SENDER placed, or an
+    // admin) -- no-op, not an error, otherwise. Moves the SAME
+    // `OtherCharacterState` objects between `otherCharacters` and
+    // `currentInstance` (real simplification, 2026-10-23 -- no more
+    // field-by-field copying: `t.ref` lets the target's own object
+    // identity just become the new focused slot directly, and the
+    // outgoing one becomes a real otherCharacters entry the same way,
+    // not a freshly-constructed snapshot of it). Never a different
+    // physics entity (noa.playerEntity stays the one and only) --
+    // purely a client-side teleport+relabel in response to this.
     //
     // Real request: "for tab/shift tab/control swapping from context,
     // those should thus set the character sheet details from the
-    // token" -- `applyOtherCharacterAsFocused` below copies the
-    // target's own current bars straight across, so the focused slot
-    // immediately reflects whatever body you're piloting (the reverse
-    // direction -- a sheet edit refreshing the focused token's bars --
-    // already worked via notifyCharacterSheetChanged, unrelated to
-    // this). This USED to also merge the target's own override deltas
-    // into the character's PERMANENT sheet record, but a later, real
-    // correction found that just as wrong as a direct bar edit cascading
-    // to every other placed instance ("if you click your currently
-    // controlled character, it only affects that token... instead of
-    // all the others") -- see focusedVariableOverrides' own doc.
-    // Swapping now just moves a live deviation between
-    // focusedVariableOverrides and instanceVariableOverrides, in
-    // whichever direction matches which side of the swap it's on; the
-    // shared record is never touched by a swap at all.
+    // token" -- moving the target's own object in means the focused
+    // slot immediately reflects whatever body you're piloting,
+    // including its own override deltas (instanceVariableOverrides
+    // stays keyed by the SAME instanceId the whole time now, nothing
+    // to move between maps the way an earlier round of this feature
+    // needed). The reverse direction (a sheet edit refreshing the
+    // focused token's bars) already works via notifyCharacterSheetChanged,
+    // unrelated to this.
     // Re-points this session's FOCUSED-slot registration at the new
     // characterId too (activeCharacterSessions) -- without that, a
     // sheet edit to whatever you just switched TO would stop reaching
@@ -912,36 +904,16 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.onMessage<FocusCharacterMessage>("focusCharacter", (client, { instanceId, direction }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
-      // Real gap (docs/ROADMAP.md item 2 follow-up, "better ownership
-      // check"): every OTHER instance-scoped handler in this file
-      // (setCharacterVariableValue/setStatusEffects/setCharacterToken)
-      // already has this admin bypass -- Control/Delete-instance were
-      // added later and never got it, so a GM's client could now open
-      // the context menu on someone else's placed instance (net.ts's
-      // own half of this fix) but have the action silently no-op here.
       const isAdmin = this.adminSessionIds.has(client.sessionId);
       const targetIndex = this.state.otherCharacters.findIndex((o) => o.instanceId === instanceId && (o.placedByAccountId === sender.accountId || isAdmin));
       if (targetIndex === -1) return;
 
       const target = this.state.otherCharacters[targetIndex];
-      const previousCharacterId = sender.characterId;
+      const previousCharacterId = sender.currentInstance.characterId;
 
-      // Move any live deviation across the swap boundary -- never
-      // through the shared record (see focusedVariableOverrides' own
-      // doc). The outgoing side's deltas (if any) become the fresh
-      // otherCharacters snapshot's own instance override below; the
-      // incoming side's instance deltas (if any) become THIS session's
-      // focused-slot override instead.
-      const previousFocusedOverrides = this.focusedVariableOverrides.get(client.sessionId);
-      const targetOverrides = this.instanceVariableOverrides.get(target.instanceId);
-      this.instanceVariableOverrides.delete(target.instanceId);
-      this.focusedVariableOverrides.delete(client.sessionId);
-      if (targetOverrides) this.focusedVariableOverrides.set(client.sessionId, targetOverrides);
-
-      const previouslyFocused = snapshotFocusedCharacter(sender);
-      applyOtherCharacterAsFocused(sender, target);
-      if (previousFocusedOverrides) this.instanceVariableOverrides.set(previouslyFocused.instanceId, previousFocusedOverrides);
       this.state.otherCharacters.splice(targetIndex, 1);
+      const previouslyFocused = sender.currentInstance;
+      sender.currentInstance = target;
       if (direction === "previous") this.state.otherCharacters.unshift(previouslyFocused);
       else this.state.otherCharacters.push(previouslyFocused);
 
@@ -957,13 +929,11 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // character record or its game link (those are PR A's REST-backed
     // deleteCharacter/unlinkCharacterFromGame, a completely separate
     // action). Self-only (must be a world-level entry THIS SENDER
-    // placed) UNLESS admin -- same GM-escape-hatch bypass as
-    // focusCharacter just above. Keyed by `instanceId`, not
-    // `characterId` -- see RemoveCharacterInstanceMessage's own doc:
-    // this can no longer even ADDRESS the focused slot (it has no
-    // instanceId), so "can't delete the character you're controlling"
-    // (real request: "that keeps at least one controllable instance")
-    // is now structural, not a separate check to maintain.
+    // placed) UNLESS admin. Searches `otherCharacters` ONLY (`findInstance`,
+    // not `findAnyInstance`) -- "can't delete the character you're
+    // controlling" (real request: "that keeps at least one controllable
+    // instance") stays structural: a currently-piloted instance simply
+    // isn't in that array to find.
     this.onMessage<RemoveCharacterInstanceMessage>("removeCharacterInstance", (client, { instanceId }) => {
       const sender = this.state.players.get(client.sessionId);
       if (!sender) return;
@@ -975,6 +945,123 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       this.instanceVariableOverrides.delete(instanceId);
       this.syncCharacterRoomRegistration(removed.characterId);
       this.persistPlacedCharacters();
+      // docs/BATTLE_SYSTEM.md: a turn-order entry can't outlive the
+      // live instance it points to -- there's nothing left to track
+      // position/stats for or Reset Turn against.
+      this.removeTurnOrderEntriesByInstanceId(instanceId);
+    });
+
+    // docs/BATTLE_SYSTEM.md's turn-order tracker, phase 1. Real
+    // correction, 2026-10-23: a character-scoped add is now allowed
+    // for whoever OWNS that instance (admin OR isSendersOwnInstance),
+    // not admin-only -- "if it's the player owning their own
+    // characters, then sure, they should be able to... add their
+    // characters." A bare-label (non-character) add stays admin-only
+    // -- that's the "Add non-character..." free-text fallback for
+    // traps/environmental effects with no owner to check, same tier as
+    // Next Turn/Clear All below. `findAnyInstance` (not `findInstance`)
+    // -- a currently-piloted instance is just as real and addable as
+    // an idle one ("I cannot add my currently controlled character to
+    // the turn order... even though I should be able to").
+    this.onMessage<AddToTurnOrderMessage>("addToTurnOrder", (client, { label, instanceId, characterId }) => {
+      const sender = this.state.players.get(client.sessionId);
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
+      const entry = new TurnOrderEntryState();
+      entry.turnEntryId = newInstanceId();
+      if (instanceId && characterId) {
+        if (!isSendersOwnInstance(sender, this.state.otherCharacters, instanceId) && !isAdmin) return;
+        const existing = this.findAnyInstance(instanceId);
+        if (!existing || existing.characterId !== characterId) return; // instanceId must actually belong to the claimed characterId -- sanity check, not just trust
+        entry.instanceId = instanceId;
+        entry.characterId = characterId;
+        entry.label = existing.characterName;
+      } else {
+        if (!isAdmin) return;
+        entry.label = label;
+      }
+      this.state.turnOrder.push(entry);
+      this.persistTurnOrder();
+    });
+
+    // Real correction, 2026-10-23: same ownership relaxation as
+    // addToTurnOrder above -- a player can remove their OWN
+    // character's entry, but a bare-label (non-character) entry, or
+    // someone else's character, still requires admin.
+    this.onMessage<RemoveFromTurnOrderMessage>("removeFromTurnOrder", (client, { turnEntryId }) => {
+      const sender = this.state.players.get(client.sessionId);
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
+      const entry = this.state.turnOrder.find((e) => e.turnEntryId === turnEntryId);
+      if (!entry) return;
+      const ownsEntry = !!entry.instanceId && isSendersOwnInstance(sender, this.state.otherCharacters, entry.instanceId);
+      if (!ownsEntry && !isAdmin) return;
+      this.removeTurnOrderEntryById(turnEntryId);
+    });
+
+    this.onMessage("clearTurnOrder", (client) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      this.state.turnOrder.clear();
+      this.state.turnOrderCurrentIndex = 0;
+      this.state.turnOrderRound = 1;
+      this.persistTurnOrder();
+    });
+
+    this.onMessage<ReorderTurnOrderMessage>("reorderTurnOrder", (client, { turnEntryId, newIndex }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const oldIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === turnEntryId);
+      if (oldIndex === -1) return;
+      const clampedNewIndex = Math.max(0, Math.min(newIndex, this.state.turnOrder.length - 1));
+      if (clampedNewIndex === oldIndex) return;
+      const snapshot = this.snapshotTurnOrder();
+      const [moved] = snapshot.splice(oldIndex, 1);
+      snapshot.splice(clampedNewIndex, 0, moved);
+      this.reassignTurnOrder(snapshot);
+      this.persistTurnOrder();
+    });
+
+    // Real request: "the gm can't sort by those [roll values], so
+    // there should be sort ascending and sort descending buttons" --
+    // GM-only (confirmed in the same message: "gm only for those sort
+    // buttons of course"). An entry with no roll yet sorts as 0, the
+    // same default the widget already displays for it.
+    this.onMessage<{ direction: "asc" | "desc" }>("sortTurnOrderByRoll", (client, { direction }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const snapshot = this.snapshotTurnOrder();
+      snapshot.sort((a, b) => (direction === "asc" ? a.rollValue - b.rollValue : b.rollValue - a.rollValue));
+      this.reassignTurnOrder(snapshot);
+      this.persistTurnOrder();
+    });
+
+    // GM-only, real request: "the number (default 0 if no roll)...
+    // editable by gm and not others" -- a manual, directly-typed
+    // initiative value (not the `[[]]` roll-eval function, a later
+    // phase). Not ownership-relaxed like add/remove above -- unlike
+    // "which characters are IN the order," what number they're
+    // sorted/displayed by is a GM-tier call.
+    this.onMessage<SetTurnOrderRollValueMessage>("setTurnOrderRollValue", (client, { turnEntryId, value }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      if (!Number.isFinite(value)) return;
+      const entry = this.state.turnOrder.find((e) => e.turnEntryId === turnEntryId);
+      if (!entry) return;
+      entry.rollValue = value;
+      entry.hasRollValue = true;
+      this.persistTurnOrder();
+    });
+
+    // GM-only, confirmed directly ("Only the GM should be able to
+    // click next turn") -- a deliberate change from the old game's own
+    // turn_tracker.gd, which had no permission check at all. No-op on
+    // an empty order (nothing to advance through).
+    this.onMessage("nextTurn", (client) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      if (this.state.turnOrder.length === 0) return;
+      this.state.turnOrderCurrentIndex++;
+      if (this.state.turnOrderCurrentIndex >= this.state.turnOrder.length) {
+        this.state.turnOrderCurrentIndex = 0;
+        this.state.turnOrderRound++;
+      }
+      this.persistTurnOrder();
+      // Reset Turn's own snapshot-on-advance (docs/BATTLE_SYSTEM.md
+      // section 3) lands in a later pass, not this one.
     });
   }
 
@@ -997,15 +1084,6 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
   onJoin(client: Client, options?: JoinOptions) {
     const player = new PlayerState();
     player.name = options?.name || `Player-${client.sessionId.slice(0, 4)}`;
-    // Join at the admin-set anchor if one exists (a DM-prepared landing
-    // spot, e.g. "the party's camp," should apply to new joiners too, not
-    // only to explicit Shift+R respawns) -- otherwise the safe-spawn scan.
-    const [sx, sy, sz] = this.state.hasRespawnAnchor
-      ? [this.state.respawnAnchorX, this.state.respawnAnchorY, this.state.respawnAnchorZ]
-      : spawnPositionFor(this.worldId, this.worldGen);
-    player.x = sx;
-    player.y = sy;
-    player.z = sz;
     this.state.players.set(client.sessionId, player);
 
     const isAdmin = store.isWorldAdmin(this.worldId, options?.accountId);
@@ -1013,6 +1091,35 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     player.isAdmin = isAdmin;
     // Mirrors GameState.ts's own presence.accountId (GameRoom.ts) -- MVP goal item 4 follow-up: needed so placeCharacter can verify ownership.
     player.accountId = options?.accountId ?? "";
+
+    // Real correction (2026-10-23): resume the EXACT instance (position,
+    // stats, everything) this account was last piloting, if it names
+    // one and still owns it -- "disconnecting and reconnecting puts
+    // the player back to where they were exactly instead of
+    // respawning." Never trusted blindly (same spirit as every other
+    // id in this file): must actually exist, idle, and belong to this
+    // account.
+    const resumeIndex = options?.instanceId ? this.state.otherCharacters.findIndex((o) => o.instanceId === options.instanceId && o.placedByAccountId === player.accountId) : -1;
+    if (resumeIndex !== -1) {
+      const [resumed] = this.state.otherCharacters.splice(resumeIndex, 1);
+      player.currentInstance = resumed;
+      this.registerActiveCharacter(client.sessionId, resumed.characterId);
+      this.syncCharacterRoomRegistration(resumed.characterId);
+      console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}, resuming ${resumed.characterName}`);
+      return;
+    }
+
+    // No resumable instance -- a genuinely fresh join (or the
+    // previously-resumed instance is gone/not found). Spawn at the
+    // admin-set anchor if one exists (a DM-prepared landing spot should
+    // apply to new joiners too, not only explicit Shift+R respawns),
+    // otherwise the safe-spawn scan.
+    const [sx, sy, sz] = this.state.hasRespawnAnchor
+      ? [this.state.respawnAnchorX, this.state.respawnAnchorY, this.state.respawnAnchorZ]
+      : spawnPositionFor(this.worldId, this.worldGen);
+    player.currentInstance.x = sx;
+    player.currentInstance.y = sy;
+    player.currentInstance.z = sz;
 
     // MVP goal items 1-2: flattened once at join, same precedent as isAdmin
     // above. Real request found live: a characterless join used to leave
@@ -1024,54 +1131,62 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     // picked. Only a join with no accountId at all (or an unknown one)
     // still has nothing to default to -- genuinely nothing to attach a
     // character to in that case.
-    const character = (options?.characterId ? store.getCharacter(options.characterId) : undefined) ?? store.getDefaultCharacterForAccount(options?.accountId ?? "");
+    const character = (options?.characterId ? store.getCharacter(options.characterId) : undefined) ?? store.getDefaultCharacterForAccount(player.accountId);
     if (character) {
-      player.characterId = character.id;
-      player.characterName = character.name;
-      player.tokenColorR = character.token.color[0];
-      player.tokenColorG = character.token.color[1];
-      player.tokenColorB = character.token.color[2];
-      applyBarsToCharacterTarget(player, character);
-      applyBodySizeToCharacterTarget(player, character);
+      player.currentInstance.instanceId = newInstanceId();
+      player.currentInstance.characterId = character.id;
+      player.currentInstance.characterName = character.name;
+      player.currentInstance.placedByAccountId = player.accountId;
+      player.currentInstance.tokenColorR = character.token.color[0];
+      player.currentInstance.tokenColorG = character.token.color[1];
+      player.currentInstance.tokenColorB = character.token.color[2];
+      applyBarsToCharacterTarget(player.currentInstance, character);
+      applyBodySizeToCharacterTarget(player.currentInstance, character);
       this.registerActiveCharacter(client.sessionId, character.id);
       for (const effect of character.statusEffects) {
         const effectState = new StatusEffectState();
         effectState.icon = effect.icon;
         effectState.label = effect.label;
-        player.statusEffects.push(effectState);
+        player.currentInstance.statusEffects.push(effectState);
       }
+      this.syncCharacterRoomRegistration(character.id);
     }
 
     console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}${character ? ` as ${character.name}` : ""}`);
   }
 
   onLeave(client: Client) {
-    // MVP goal item 4 follow-up: otherCharacters is world-level now (not
-    // per-session), so a disconnecting session's placed instances are
-    // NOT touched here at all -- that's the actual point ("if gms/
-    // players refresh, then monsters will disappear" is exactly the bug
-    // this round fixes). Only the FOCUSED-slot registry needs cleanup.
-    const characterId = this.sessionCharacterIds.get(client.sessionId);
-    // The focused slot itself has nowhere to go on disconnect -- it's
-    // not an otherCharacters entry, just this session's own live
-    // presence, so there's no instance to carry a live deviation into
-    // the way a focus SWAP does (see focusedVariableOverrides' own
-    // doc). Bake whatever it ended up at into the permanent record
-    // instead, same as every edit used to do immediately before that
-    // isolation existed -- otherwise a real edit (take damage, then
-    // refresh) would simply vanish instead of surviving like the rest
-    // of this round's persistence work expects.
-    const overrides = this.focusedVariableOverrides.get(client.sessionId);
-    if (overrides && characterId) {
-      for (const [key, value] of Object.entries(overrides)) {
-        store.updateCharacterVariableValue(characterId, key, value);
+    // Real correction (2026-10-23): the piloted instance is NOT
+    // discarded any more -- it's pushed back into `otherCharacters`
+    // (idle, exactly where it was) and persisted, same as any other
+    // placed instance already was. Fixes a real bug found live: "the
+    // controlled player starts in spawn instead [of where they were],
+    // which is 100% wrong" -- onLeave used to delete the whole
+    // PlayerState outright, discarding position/stats entirely.
+    // Genuinely characterless (characterId === "") has nothing worth
+    // keeping -- discarded, same as always.
+    const player = this.state.players.get(client.sessionId);
+    if (player) {
+      const instance = player.currentInstance;
+      const characterId = instance.characterId;
+      // Removed from `players` BEFORE pushing into `otherCharacters` and
+      // persisting -- real bug found while fixing this refactor:
+      // persistPlacedCharacters's own `live` list reads BOTH
+      // `otherCharacters` and every connected player's `currentInstance`,
+      // so doing this in the other order double-counted the SAME
+      // instance (still "connected" AND freshly pushed) into one
+      // duplicated persisted record.
+      this.state.players.delete(client.sessionId);
+      if (characterId) {
+        this.state.otherCharacters.push(instance);
+        this.syncCharacterRoomRegistration(characterId);
+        this.persistPlacedCharacters();
+        this.unregisterActiveCharacter(client.sessionId, characterId);
       }
-      this.focusedVariableOverrides.delete(client.sessionId);
-      notifyCharacterSheetChanged(characterId);
+    } else {
+      this.state.players.delete(client.sessionId);
     }
-    this.state.players.delete(client.sessionId);
     this.adminSessionIds.delete(client.sessionId);
-    if (characterId) this.unregisterActiveCharacter(client.sessionId, characterId);
     console.log(`[WorldRoom:${this.worldId}] ${client.sessionId} left`);
   }
 }

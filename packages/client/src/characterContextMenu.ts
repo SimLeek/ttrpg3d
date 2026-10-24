@@ -19,32 +19,46 @@ const CAPTURE_REASON = "characterContextMenu";
 
 /**
  * `instanceId` (MVP goal item 4 follow-up, "multiple instances of the
- * same character... for monsters"): undefined when the menu was
- * opened for the player's own FOCUSED character; the specific placed
- * OtherCharacterState's own id otherwise -- needed so an edit/delete
- * targets the exact instance the menu was opened for, not just "some
- * representation of this characterId" (several can coexist now).
+ * same character... for monsters"): real correction, 2026-10-23 --
+ * always a real id now, whether the menu was opened for the player's
+ * own FOCUSED character or a placed OtherCharacterState entry (see
+ * open()'s own doc for why `isPiloted` took over distinguishing the
+ * two). Needed so an edit/delete targets the exact instance the menu
+ * was opened for, not just "some representation of this characterId"
+ * (several can coexist now).
  */
 export interface CharacterContextMenuCallbacks {
-  onOpenCharacterSheet(characterId: string, instanceId: string | undefined): void;
-  onEditTokenProperties(characterId: string, instanceId: string | undefined): void;
-  onSelectStatusEffects(characterId: string, instanceId: string | undefined): void;
-  /** MVP goal item 4 follow-up -- real request: "add a 'delete' to the right click character menu, which will delete the instance in 3d in the game but not the link or character." Only ever invoked when `open()`'s own `instanceId` was defined (see its own doc) -- never trust that alone, though; net.ts's own "removeCharacterInstance" handler re-enforces the same rule server-side (WorldRoom.ts). */
+  onOpenCharacterSheet(characterId: string, instanceId: string): void;
+  onEditTokenProperties(characterId: string, instanceId: string): void;
+  onSelectStatusEffects(characterId: string, instanceId: string): void;
+  /** MVP goal item 4 follow-up -- real request: "add a 'delete' to the right click character menu, which will delete the instance in 3d in the game but not the link or character." Only ever invoked when `open()`'s own `isPiloted` was false (see its own doc) -- never trust that alone, though; net.ts's own "removeCharacterInstance" handler re-enforces the same rule server-side (WorldRoom.ts, which can only ever address an IDLE instance in the first place). */
   onDeleteInstance(instanceId: string): void;
-  /** MVP goal item 4 follow-up -- real request: "Add context menu item: control - switches current control to this token." Same `instanceId`-defined gate as Delete (switching away from the character you're already controlling, via this menu, never comes up -- it structurally has no instanceId to open the menu with in the first place). */
+  /** MVP goal item 4 follow-up -- real request: "Add context menu item: control - switches current control to this token." Same `isPiloted`-false gate as Delete (switching away from the character you're already controlling, via this menu, never comes up -- it's disabled for exactly the token you already are). */
   onControl(instanceId: string): void;
+  /**
+   * docs/BATTLE_SYSTEM.md's UI/interaction reference -- Roll20's own
+   * "right-click a token, Add to Turn Order" pattern, directly ported
+   * here rather than reinvented. Real correction, 2026-10-23: enabled
+   * for a PILOTED character too now -- "I cannot add my currently
+   * controlled character to the turn order... even though I should be
+   * able to." Every real instanceId (piloted or idle) is addable
+   * (WorldRoom.ts's addToTurnOrder uses `findAnyInstance`).
+   */
+  onAddToTurnOrder(characterId: string, instanceId: string): void;
 }
 
 export interface CharacterContextMenuController {
   /**
    * Opens the menu at the given viewport coordinates (e.g. the
    * pointer-lock-exited click position) for the given character/
-   * instance. `instanceId` ALSO enables/disables the "Delete instance"
-   * button: undefined (the focused character -- it structurally has
-   * no instanceId) disables it -- real request: "make it so that the
+   * instance. `instanceId` is always real now (real correction,
+   * 2026-10-23 -- every character, piloted or idle, has a stable one);
+   * `isPiloted` is what now enables/disables "Control"/"Delete
+   * instance" -- true (the player's own currently-controlled
+   * character) disables both, real request: "make it so that the
    * player cannot delete the character instance they're controlling."
    */
-  open(x: number, y: number, characterId: string, instanceId: string | undefined): void;
+  open(x: number, y: number, characterId: string, instanceId: string, isPiloted: boolean): void;
   close(): void;
   isOpen(): boolean;
   destroy(): void;
@@ -63,6 +77,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
       <button type="button" id="ctx-edit-token">Edit token properties</button>
       <button type="button" id="ctx-status-effects">Select status effects</button>
       <button type="button" id="ctx-control">Control</button>
+      <button type="button" id="ctx-add-turn-order">Add to Turn Order</button>
       <button type="button" id="ctx-delete-instance">Delete instance</button>
     </div>
   `;
@@ -72,11 +87,12 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
   const editTokenBtn = container.querySelector<HTMLButtonElement>("#ctx-edit-token")!;
   const statusEffectsBtn = container.querySelector<HTMLButtonElement>("#ctx-status-effects")!;
   const controlBtn = container.querySelector<HTMLButtonElement>("#ctx-control")!;
+  const addTurnOrderBtn = container.querySelector<HTMLButtonElement>("#ctx-add-turn-order")!;
   const deleteInstanceBtn = container.querySelector<HTMLButtonElement>("#ctx-delete-instance")!;
 
   let open = false;
   let activeCharacterId: string | null = null;
-  let activeInstanceId: string | undefined;
+  let activeInstanceId: string | null = null;
   // Real bug found live, confirmed via direct source reading, not guessed:
   // the SAME right-click mousedown that opens this menu (via net.ts's
   // voxelEditor.ts alt-fire handler, itself synchronously emitted by
@@ -97,7 +113,7 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
     if (!open) return;
     open = false;
     activeCharacterId = null;
-    activeInstanceId = undefined;
+    activeInstanceId = null;
     menu.style.display = "none";
     releaseCapture(CAPTURE_REASON);
   }
@@ -113,19 +129,23 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
   document.addEventListener("keydown", onKeyDown);
 
   openSheetBtn.addEventListener("click", () => {
-    if (activeCharacterId) callbacks.onOpenCharacterSheet(activeCharacterId, activeInstanceId);
+    if (activeCharacterId && activeInstanceId) callbacks.onOpenCharacterSheet(activeCharacterId, activeInstanceId);
     close();
   });
   editTokenBtn.addEventListener("click", () => {
-    if (activeCharacterId) callbacks.onEditTokenProperties(activeCharacterId, activeInstanceId);
+    if (activeCharacterId && activeInstanceId) callbacks.onEditTokenProperties(activeCharacterId, activeInstanceId);
     close();
   });
   statusEffectsBtn.addEventListener("click", () => {
-    if (activeCharacterId) callbacks.onSelectStatusEffects(activeCharacterId, activeInstanceId);
+    if (activeCharacterId && activeInstanceId) callbacks.onSelectStatusEffects(activeCharacterId, activeInstanceId);
     close();
   });
   controlBtn.addEventListener("click", () => {
     if (activeInstanceId && !controlBtn.disabled) callbacks.onControl(activeInstanceId);
+    close();
+  });
+  addTurnOrderBtn.addEventListener("click", () => {
+    if (activeCharacterId && activeInstanceId && !addTurnOrderBtn.disabled) callbacks.onAddToTurnOrder(activeCharacterId, activeInstanceId);
     close();
   });
   deleteInstanceBtn.addEventListener("click", () => {
@@ -134,18 +154,27 @@ export function mountCharacterContextMenu(container: HTMLElement, callbacks: Cha
   });
 
   return {
-    open(x: number, y: number, characterId: string, instanceId: string | undefined): void {
+    open(x: number, y: number, characterId: string, instanceId: string, isPiloted: boolean): void {
       open = true;
       activeCharacterId = characterId;
       activeInstanceId = instanceId;
       menu.style.left = `${x}px`;
       menu.style.top = `${y}px`;
       menu.style.display = "block";
-      const canDelete = instanceId !== undefined;
+      // Real correction, 2026-10-23: "Control"/"Delete instance" stay
+      // disabled for the PILOTED token specifically (can't take over or
+      // delete the character you're already controlling) -- "Add to
+      // Turn Order" is no longer part of this gate at all now that a
+      // piloted character has a real instanceId too: "I cannot add my
+      // currently controlled character to the turn order... even
+      // though I should be able to."
+      const canDelete = !isPiloted;
       deleteInstanceBtn.disabled = !canDelete;
       deleteInstanceBtn.title = canDelete ? "" : "Can't delete the character you're currently controlling";
       controlBtn.disabled = !canDelete;
       controlBtn.title = canDelete ? "" : "Already controlling this character";
+      addTurnOrderBtn.disabled = false;
+      addTurnOrderBtn.title = "";
       requestCapture(CAPTURE_REASON);
       justOpenedThisTick = true;
       setTimeout(() => (justOpenedThisTick = false), 0);

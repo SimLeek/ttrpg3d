@@ -388,6 +388,13 @@ export function startGame(
         noa.container.off("lostPointerLock", onLost);
       };
     },
+    // docs/BATTLE_SYSTEM.md phase 1 -- `connection` (below) is a Promise,
+    // same "call once it resolves" pattern setSeeThroughWalls below
+    // already uses; safe to reference here even though it's declared
+    // textually later -- by the time a user can actually click this
+    // button, the synchronous rest of this function has long finished
+    // assigning it.
+    onToggleTurnTracker: () => void connection.then((c) => c?.toggleTurnTracker()),
   });
 
   // Resolves to the real server connection once joinOrCreate() completes --
