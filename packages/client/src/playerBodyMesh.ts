@@ -116,9 +116,26 @@ export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Me
   noa.entities.setEntitySize(entityId, width, height, depth);
 }
 
-/** The local player's own half of resizeEntityBody -- `noa.playerEntity` is noa's single built-in entity id, always the local player's. */
+/**
+ * The local player's own half of resizeEntityBody -- `noa.playerEntity`
+ * is noa's single built-in entity id, always the local player's. Also
+ * re-anchors the CAMERA's own eye-height follow offset -- real bug
+ * found live: "the camera, when zoomed in fully, would be in the
+ * character and not above them or at their feet." noa's own Camera
+ * constructor sets this offset ONCE at startup (`0.9 * whatever height
+ * the player entity had at that moment`, confirmed directly in noa's
+ * camera.js) and never revisits it afterward; a later height change
+ * (switching characters, a sheet-driven resize) left first-person eye
+ * level pinned to the FIRST character's height regardless of the
+ * current one. noa's own camera.js doc comment names the exact fix:
+ * `noa.ents.getState(noa.camera.cameraTarget, 'followsEntity').
+ * offset[1] = 0.9 * myPlayerHeight`.
+ */
 export function resizeLocalPlayerBody(noa: Engine, body: PlayerBodyMesh, width: number, height: number, depth: number): void {
   resizeEntityBody(noa, noa.playerEntity, body.mesh, body.tokenAnchor, width, height, depth);
+  const ents = noa.ents as unknown as { getState(id: number, name: string): { offset: [number, number, number] } | null };
+  const followState = ents.getState(noa.camera.cameraTarget, noa.entities.names.followsEntity);
+  if (followState) followState.offset[1] = 0.9 * height;
 }
 
 export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {

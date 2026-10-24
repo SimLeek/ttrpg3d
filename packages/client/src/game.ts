@@ -200,6 +200,21 @@ export function startGame(
   coreAtlasTexture.hasAlpha = true;
   coreAtlasMaterial.diffuseTexture = coreAtlasTexture;
   coreAtlasMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+  // Real request: "turn backface culling off for terrain if you don't
+  // want to see the insides of everything with the cutout shader" --
+  // with it on (Babylon's default), looking through a cutout hole in
+  // one face (leaves, ores, etc.) at an adjacent block shows nothing,
+  // since that neighbor's OWN face pointing back at the gap is culled
+  // as a backface from this angle. Safe to disable here with no
+  // glass-style z-fighting risk (see cubeObjectMesh.ts's own doc on
+  // why GLASS specifically must stay culled): every type sharing this
+  // material is `opaque: true` (glass is the only `opaque: false`
+  // cutout type, and it uses its own separate cube-object mesh/
+  // material entirely, untouched by this), so the greedy mesher never
+  // emits two coincident faces for a boundary between two of these --
+  // there's only ONE face per boundary to begin with, just now
+  // rendered from either side.
+  coreAtlasMaterial.backFaceCulling = false;
   new AtlasSamplingPlugin(coreAtlasMaterial, coreAtlasTexture);
   new XrayFadePlugin(coreAtlasMaterial, "cutout");
 

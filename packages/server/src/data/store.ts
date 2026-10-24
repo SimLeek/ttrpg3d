@@ -183,6 +183,22 @@ export interface PlacedCharacterInstanceRecord {
   statusEffects: StatusEffect[];
   /** Sparse per-instance stat deltas on top of the character's own base variableValues (independent stats -- "multiple instances... for monsters," killing one goblin shouldn't zero out the others). Was ephemeral/in-memory-only before this round; persisting it here is the actual fix for "monsters disappear on refresh" losing their damage too, not just their position. */
   variableOverrides: Record<string, number>;
+  /**
+   * Real correction, 2026-10-24: waypoints used to be explicitly
+   * NOT persisted ("scratch measurement data"), but after living
+   * with that: "we'll want to persist those waypoints. Right now I
+   * can exit the page and come back and the waypoints are gone. They
+   * should clear when the turn is changed and stamp the core one,
+   * but they should remain on exit/re-entry." The "clear on turn
+   * change" half already happens for free (nextTurn's own
+   * resetAllCoreWaypoints, unrelated to persistence) -- this field is
+   * only what makes a mid-turn chain survive a disconnect/refresh in
+   * between. Absent/empty is a real state (nothing placed yet), not
+   * an error.
+   */
+  waypoints?: { x: number; y: number; z: number; isCore: boolean }[];
+  /** Same tier as `waypoints` above -- the character's own waypoint-marker color, same reason it needs to survive a disconnect. */
+  waypointColor?: [number, number, number];
 }
 
 export interface StatusEffect {
