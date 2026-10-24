@@ -180,14 +180,20 @@ for this section's own use. N remains confirmed free either way.
   it." A collapsible panel docked to the RIGHT edge of the turn-order
   tracker widget (`turnTracker.ts`), not a separate floating panel of
   its own -- follows the tracker's own position when it's dragged,
-  and is only ever visible while the tracker itself is visible (see
-  the updated "auto-on with turn order" bullet below for the rest of
-  that visibility rule). Two buttons, **`W+`** (add waypoint) and
+  and is visible whenever the tracker itself is, **regardless of
+  whether the turn order currently has any entries** -- real
+  correction: the panel's own visibility is cosmetic/per-client (the
+  tracker can be opened/closed by anyone, at any time), so it isn't
+  the right signal for "is distance measurement relevant right now"
+  -- that's the `waypointsEnabled` state below instead, which gates
+  whether the panel's buttons/M/N actually DO anything, not whether
+  the panel exists. Three buttons: **`W+`** (add waypoint) and
   **`W-`** (revert waypoint) -- plain text labels for now, real icons
   later -- each triggering the EXACT same action its keybind does (M /
   N respectively, including N/`W-`'s own "walk back to the last
-  waypoint first" semantics below). Hovering either button shows a
-  tooltip spelling out the keybind: "Add waypoint (M)" / "Revert
+  waypoint first" semantics below); and a GM-only **on/off toggle**
+  (see below) for `waypointsEnabled` itself. Hovering `W+`/`W-` shows
+  a tooltip spelling out the keybind: "Add waypoint (M)" / "Revert
   waypoint (N)".
 - **M** marks a waypoint at the player's current position; **N**
   removes it -- same "walk back to the last waypoint first, then a
@@ -231,24 +237,44 @@ for this section's own use. N remains confirmed free either way.
   already applies to Tab (`focusCycling.ts`) and Escape (`hotbar.ts`),
   or it will hijack Enter while someone's typing in chat or editing a
   stat value.
-- **Waypoints are automatically active whenever a turn order is
-  running**, not a separately-toggled mode -- real direction: "these
-  waypoints should be on whenever turn order is on." "Running" means
-  the turn order has at least one entry in it -- the tracker widget
-  being merely open with an empty order does NOT turn this on, same
-  as Next Turn/round-counting have no real meaning for an empty order
-  either. The **GM can disable them** for a given turn order (a
-  toggle, GM-only) -- useful for a pure roleplay/conversation-turn-
-  order use case where distance measurement isn't relevant, as
-  opposed to actual combat. **Gated the same way every other "GM-
-  only" turn-tracker control now is** (real correction from the turn-
-  tracker phase-1 round): the toggle itself is admin-only server-side,
-  but the CLIENT only shows it to an admin who also has the G-key
-  `gmOverride` toggle on, so a GM previewing the player view (G off)
-  doesn't see it either. M/N (and the panel's `W+`/`W-` buttons) stop
-  doing anything for EVERYONE while disabled, GM included -- this
-  toggle is "is distance measurement relevant to this turn order at
-  all," not a per-session preference.
+- **`waypointsEnabled`: a real, server-authoritative, per-world
+  on/off state** -- real correction, replacing the first draft's
+  attempt to derive this purely from entry count. "These waypoints
+  should be on whenever turn order is on" is still the DEFAULT
+  behavior, but it's now an explicit, GM-adjustable mechanism, not an
+  always-on derived rule, because the GM needs a way to override it
+  either direction (see "tricky" below):
+  - **Auto-ON**: when the turn order goes from 0 entries to its FIRST
+    entry (empty → non-empty), `waypointsEnabled` is set to `true` --
+    but only if the GM settings checkbox **"Waypoint system auto-on
+    when 1+ character turns"** (default ON) is checked.
+  - **Auto-OFF**: when the turn order goes from 1+ entries down to 0
+    (its LAST entry removed/cleared), `waypointsEnabled` is set to
+    `false` -- but only if the GM settings checkbox **"Waypoint
+    system auto-off when 0 character turns"** (default ON) is
+    checked.
+  - Both checkboxes live in `chatPanel.ts`'s existing GM-only tab
+    (same place `seeThroughWalls`/mod enable-disable already live),
+    default ON, per-GAME (not per-world) same as every other GM
+    setting there.
+  - **Manual override**: the waypoint panel's own on/off toggle
+    button (GM-only) sets `waypointsEnabled` directly, at ANY time,
+    regardless of the current entry count or either checkbox. This is
+    genuinely "tricky," confirmed directly by the user ("...kinda
+    tricky") -- the manual value STICKS until the next 0→1+ or 1+→0
+    TRANSITION whose own checkbox is checked, which then overwrites
+    it again unconditionally. A manual toggle made mid-combat (entry
+    count staying non-zero the whole time) is never touched by either
+    auto-rule, since neither transition happens again until the order
+    actually empties and refills.
+  - **Gated the same way every other "GM-only" turn-tracker control
+    now is** (real correction from the turn-tracker phase-1 round):
+    the toggle button and both checkboxes are admin-only server-side,
+    but the CLIENT only shows them to an admin who also has the G-key
+    `gmOverride` toggle on, so a GM previewing the player view (G off)
+    doesn't see any of them.
+  - M/N and the panel's `W+`/`W-` buttons do nothing for EVERYONE,
+    GM included, while `waypointsEnabled` is `false`.
 
 ### 5. Character-size-aware waypoint markers
 
@@ -416,39 +442,74 @@ Feature: Waypoint distance measurement
     Then that input's own normal Enter behavior happens
     And no waypoint chain is finalized
 
-  Scenario: Waypoints turn on automatically once the turn order has an entry
-    Given the turn tracker is open with an EMPTY turn order
-    Then the waypoint/distance system is NOT active yet
-    When a character is added to the turn order
-    Then the waypoint/distance system becomes active for all players
+  Scenario: Waypoints turn on automatically with the turn order (default)
+    Given the turn order is EMPTY and `waypointsEnabled` is false
+    And the GM settings checkbox "Waypoint system auto-on when 1+
+      character turns" is checked (the default)
+    When a character is added to the turn order (0 -> 1 entries)
+    Then `waypointsEnabled` becomes true, and the waypoint/distance
+      system becomes active for all players
 
-  Scenario: An empty turn order does not count as "running"
-    Given the turn tracker widget is open
-    And the turn order has no entries in it
-    Then the waypoint panel does not appear, and M/N do nothing
+  Scenario: Waypoints turn off automatically when the turn order empties (default)
+    Given the turn order has 1 entry and `waypointsEnabled` is true
+    And the GM settings checkbox "Waypoint system auto-off when 0
+      character turns" is checked (the default)
+    When that last entry is removed (1 -> 0 entries)
+    Then `waypointsEnabled` becomes false for everyone
 
-  Scenario: The GM can disable waypoints for a turn order
-    Given a turn order is running with waypoints active
-    And the GM currently has G-key mode ON
-    When the GM disables waypoints for this turn order
-    Then M/N/distance labels/the waypoint panel's W+/W- buttons all
-      stop functioning for EVERYONE, GM included, until re-enabled
-    And the turn order itself keeps running
+  Scenario: The GM can disable the auto-on checkbox
+    Given the GM settings checkbox "Waypoint system auto-on when 1+
+      character turns" is UNCHECKED
+    And the turn order is EMPTY and `waypointsEnabled` is false
+    When a character is added to the turn order (0 -> 1 entries)
+    Then `waypointsEnabled` stays false -- the GM must turn it on
+      manually via the panel's own toggle
 
-  Scenario: A GM previewing the player view does not see the disable toggle
-    Given a turn order is running with waypoints active
-    And the GM turns G-key mode OFF
-    Then the "disable waypoints" toggle is not visible to them,
-      same as the turn tracker's other GM-only controls
+  Scenario: The GM can disable the auto-off checkbox
+    Given the GM settings checkbox "Waypoint system auto-off when 0
+      character turns" is UNCHECKED
+    And the turn order has 1 entry and `waypointsEnabled` is true
+    When that last entry is removed (1 -> 0 entries)
+    Then `waypointsEnabled` stays true -- a GM measuring distances
+      between combats doesn't get interrupted
+
+  Scenario: The GM's manual toggle overrides the current state
+    Given the turn order has 2 entries and `waypointsEnabled` is true
+    When the GM clicks the panel's own on/off toggle
+    Then `waypointsEnabled` becomes false, even though the turn order
+      still has entries in it (neither auto-rule applies -- no 0<->1+
+      TRANSITION happened)
+
+  Scenario: A later transition still overrides a manual toggle
+    Given the GM manually turned `waypointsEnabled` OFF while the turn
+      order had 2 entries (as in the scenario above)
+    And "Waypoint system auto-off when 0 character turns" is checked
+    When the turn order is later cleared down to 0 entries
+    Then `waypointsEnabled` becomes false (already was, no visible
+      change) -- but if it had instead gone from 0 back up to 1+ with
+      auto-on checked, it would flip back to true, overriding the
+      GM's earlier manual OFF
+
+  Scenario: M/N and the panel's W+/W- do nothing while disabled
+    Given `waypointsEnabled` is false
+    When a player presses M, presses N, or clicks "W+"/"W-"
+    Then nothing happens -- no waypoint is placed, moved to, or removed
+
+  Scenario: The manual toggle button is GM-only, gated by G-key mode
+    Given a turn order is running
+    When a GM with G-key mode OFF looks at the waypoint panel
+    Then the on/off toggle button is not visible to them, same as the
+      turn tracker's other GM-only controls
+    When that GM turns G-key mode back ON
+    Then the toggle button appears again
 
 Feature: Waypoint panel UI (docked to the turn-order tracker)
 
-  Scenario: The panel is docked to the right of the turn tracker
-    Given the turn order is running (has at least one entry) and
-      waypoints are not GM-disabled
-    Then a waypoint panel appears attached to the RIGHT edge of the
-      turn-order tracker widget, not as its own independent floating
-      panel
+  Scenario: The panel is docked to the right of the turn tracker, regardless of entry count
+    Given the turn tracker widget is visible
+    Then a waypoint panel appears attached to the RIGHT edge of it,
+      not as its own independent floating panel -- even if the turn
+      order is currently EMPTY
 
   Scenario: The panel follows the tracker when it's dragged
     Given the waypoint panel is docked next to the turn tracker
@@ -489,11 +550,12 @@ Feature: Waypoint panel UI (docked to the turn-order tracker)
     When the player hovers "W-"
     Then a tooltip reading "Revert waypoint (N)" appears
 
-  Scenario: A non-GM session sees the panel's buttons but not the metric dropdown
+  Scenario: A non-GM session sees the panel's W+/W- but not the toggle or the metric dropdown
     Given a non-GM session has the waypoint panel open, expanded
     Then "W+"/"W-" are visible and usable (everyone can place/revert
-      their OWN waypoints)
-    And the distance-metric dropdown is not visible to them
+      their OWN waypoints, as long as `waypointsEnabled` is true)
+    And the on/off toggle button and the distance-metric dropdown are
+      not visible to them
 ```
 
 ## UI/interaction reference
