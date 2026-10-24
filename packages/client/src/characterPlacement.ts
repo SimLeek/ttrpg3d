@@ -86,9 +86,28 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
+  // Real bug found live: "placing a character now places them in
+  // unexpected locations... super intermittent... the green circle was
+  // correct for the most part when it showed up though, it was just
+  // the final character placement that was off." Root cause: the
+  // HTML5 drag-and-drop spec doesn't guarantee a `drop` event's own
+  // clientX/clientY are meaningful -- a documented, long-standing
+  // cross-browser quirk (seen in both Firefox and Chrome under
+  // various drag-image/retargeting conditions) where `drop` can
+  // report stale or zeroed coordinates even though the preceding
+  // `dragover` stream was reporting correct ones the whole time --
+  // which matches this exactly: the PREVIEW (continuously driven by
+  // `dragover`) stayed right, only the one-shot `drop` read sometimes
+  // didn't. Fix: `drop` no longer reads its own event's coordinates at
+  // all -- it reuses the LAST known-good `dragover` screen point,
+  // which is also better UX regardless (wherever the green marker was
+  // last shown IS where the character lands, guaranteed WYSIWYG).
+  let lastDragoverScreen: { x: number; y: number } | undefined;
+
   canvas.addEventListener("dragover", (event) => {
     event.preventDefault(); // required for "drop" to fire at all -- standard HTML5 drag-and-drop
-    const hit = raycastTerrain(screenPointFor(event));
+    lastDragoverScreen = screenPointFor(event);
+    const hit = raycastTerrain(lastDragoverScreen);
     if (!hit) {
       marker.isVisible = false;
       return;
@@ -104,18 +123,20 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
   });
   canvas.addEventListener("dragend", () => {
     marker.isVisible = false;
+    lastDragoverScreen = undefined;
   });
   canvas.addEventListener("drop", (event) => {
     event.preventDefault();
     marker.isVisible = false;
     const characterId = event.dataTransfer?.getData(CHARACTER_DRAG_MIME);
-    if (!characterId) return;
-    const hit = raycastTerrain(screenPointFor(event));
+    if (!characterId || !lastDragoverScreen) return;
+    const hit = raycastTerrain(lastDragoverScreen);
     // No message sent for an invalid drop (no terrain hit, or out of
     // range) -- same "no visible feedback for an invalid action"
     // convention as everywhere else in this codebase; the marker
     // already showed it was invalid before release.
     if (!hit || !withinPlacementRange(hit)) return;
     room.send("placeCharacter", { characterId, x: hit[0], y: hit[1], z: hit[2] });
+    lastDragoverScreen = undefined;
   });
 }
