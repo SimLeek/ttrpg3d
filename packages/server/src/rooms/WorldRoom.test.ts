@@ -339,6 +339,32 @@ describe("WorldRoom", () => {
       expect(secondRoom.state.otherCharacters.some((o) => o.instanceId === instanceId)).toBe(false); // moved back OUT of the idle array, not duplicated
     });
 
+    it("a SECOND session naming the same instanceId while the FIRST is still connected steals it back and kicks the stale session, instead of silently handing out a brand-new blank instance -- real bug found live via this room's own logs: a reconnect that races ahead of the old tab's own disconnect used to get a fresh 'as X' instance (not 'resuming X'), orphaning the real one (with its position/waypoints) on the still-connected stale session", async () => {
+      const character = store.createCharacter(owner.id, "StolenBack", [1, 0, 0]);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const firstClient = await colyseus.connectTo(room, { accountId: owner.id, characterId: character.id });
+      const instanceId = room.state.players.get(firstClient.sessionId)!.currentInstance.instanceId;
+      firstClient.send("pos", { x: 42, y: 7, z: -3, yaw: 1.5 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // NOT firstClient.leave() -- the first session is still fully
+      // connected, same as a second real browser tab/window would be.
+      const secondClient = await colyseus.connectTo(room, { accountId: owner.id, instanceId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const resumed = room.state.players.get(secondClient.sessionId)!.currentInstance;
+      expect(resumed.instanceId).toBe(instanceId);
+      expect([resumed.x, resumed.y, resumed.z, resumed.yaw]).toEqual([42, 7, -3, 1.5]); // the REAL instance, not a fresh spawn
+
+      // The stale (first) session gets force-disconnected, same as a
+      // real stale browser tab dropping -- its own eventual onLeave
+      // was a harmless no-op (it had nothing worth keeping by then).
+      expect(room.state.players.has(firstClient.sessionId)).toBe(false);
+
+      // No orphaned duplicate left behind anywhere.
+      expect(room.state.otherCharacters.some((o) => o.instanceId === instanceId)).toBe(false);
+    });
+
     it("notifyCharacterSheetChanged refreshes a connected session's bars after a plain REST-style sheet update (real bug found live: a popout/popup/standalone-page edit, which has no WorldRoom connection of its own, left in-game bars stale until an unrelated room message happened to trigger a refresh)", async () => {
       const character = store.createCharacter(owner.id, "RestEdited", [1, 0, 0]);
       const customSheet = { name: "Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [1, 0, 0] as [number, number, number] }] };
