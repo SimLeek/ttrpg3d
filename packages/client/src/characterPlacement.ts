@@ -59,13 +59,36 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
   // OctreeSceneComponent.getActiveMeshCandidates).
   noa.rendering.addMeshToScene(marker, false);
 
-  function raycastTerrain(screenPoint: { x: number; y: number }): [number, number, number] | undefined {
+  function raycastTerrain(screenPoint: { x: number; y: number }, source: "dragover" | "drop"): [number, number, number] | undefined {
     const camera = scene.activeCamera;
     if (!camera) return undefined;
     const ray = scene.createPickingRay(screenPoint.x, screenPoint.y, BABYLON.Matrix.Identity(), camera);
     const pos = [ray.origin.x, ray.origin.y, ray.origin.z];
     const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
     const hit = noa.pick(pos, dir, MAX_CHARACTER_PLACEMENT_DISTANCE + TERRAIN_PICK_MARGIN);
+    // TEMPORARY diagnostic logging -- real bug still unexplained after
+    // the drop-coordinate fix: "the green circle matched the position
+    // on screen, but the elevation was wrong... placement is also
+    // still wrong." Needed real numbers instead of more guessing --
+    // remove once the actual cause is confirmed from this output.
+    // Everything logged is SNAPSHOTTED (spread into a fresh array/
+    // object) -- noa reuses ONE mutable result object across every
+    // pick() call, so logging a live reference to it would show
+    // whatever the NEXT pick happens to mutate it to, not what this
+    // call actually returned.
+    console.log(`[characterPlacement:${source}]`, {
+      screenPoint,
+      cameraGlobalPosition: camera.globalPosition.asArray(),
+      rayOrigin: [...pos],
+      rayDirection: [...dir],
+      worldOriginOffset: [...(noa as unknown as { worldOriginOffset: number[] }).worldOriginOffset],
+      hitPosition: hit ? [...(hit.position as number[])] : undefined,
+      // The anchor the user asked for -- the CONTROLLED character's
+      // own feet position (noa.playerEntity, same entity the camera
+      // itself follows), so a placement "next to" it has something
+      // concrete to compare hitPosition against.
+      controlledCharacterFeetPosition: [...(noa.ents.getPosition(noa.playerEntity) as number[])],
+    });
     return hit ? (hit.position as [number, number, number]) : undefined;
   }
 
@@ -107,7 +130,7 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
   canvas.addEventListener("dragover", (event) => {
     event.preventDefault(); // required for "drop" to fire at all -- standard HTML5 drag-and-drop
     lastDragoverScreen = screenPointFor(event);
-    const hit = raycastTerrain(lastDragoverScreen);
+    const hit = raycastTerrain(lastDragoverScreen, "dragover");
     if (!hit) {
       marker.isVisible = false;
       return;
@@ -130,7 +153,7 @@ export function installCharacterPlacement(noa: Engine, room: Room): void {
     marker.isVisible = false;
     const characterId = event.dataTransfer?.getData(CHARACTER_DRAG_MIME);
     if (!characterId || !lastDragoverScreen) return;
-    const hit = raycastTerrain(lastDragoverScreen);
+    const hit = raycastTerrain(lastDragoverScreen, "drop");
     // No message sent for an invalid drop (no terrain hit, or out of
     // range) -- same "no visible feedback for an invalid action"
     // convention as everywhere else in this codebase; the marker

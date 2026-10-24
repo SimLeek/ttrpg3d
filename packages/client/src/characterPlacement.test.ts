@@ -55,6 +55,7 @@ function fakeNoa(canvas: ReturnType<typeof fakeCanvas>, pick: ReturnType<typeof 
       pick,
       ents: { getPosition: () => [0, 0, 0] },
       playerEntity: 1,
+      worldOriginOffset: [0, 0, 0],
     } as unknown as Engine,
     scene,
   };
