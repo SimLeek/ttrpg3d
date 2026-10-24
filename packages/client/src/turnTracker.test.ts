@@ -39,6 +39,11 @@ afterEach(() => {
 });
 
 describe("mountTurnTracker", () => {
+  it("getDockElement() returns the tracker's own root panel element -- real request: \"attach it as a panel to the turn order on the right of it\" (docs/BATTLE_SYSTEM.md's waypoint panel docks as a CHILD of this element)", () => {
+    const { tracker } = mount();
+    expect(tracker.getDockElement()).toBe(container.querySelector("#turn-tracker"));
+  });
+
   it("remembers its own visibility across a remount via localStorage -- real request: \"whether it was open or not should also persist\"", () => {
     const { tracker: first } = mount();
     first.setVisible(true);

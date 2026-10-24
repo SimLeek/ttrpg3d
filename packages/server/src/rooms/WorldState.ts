@@ -75,6 +75,18 @@ export const BarState = schema(
   "BarState",
 );
 
+/** docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- one marked position in a character INSTANCE's own waypoint chain (M/N keybinds, the panel's W+/W- buttons, operating on whichever instance the sender currently pilots). Snapped to voxel-grid centers client-side before being sent (same "client reports its own position, server trusts it" convention the "pos" message already uses), not re-validated server-side beyond finiteness. */
+export const WaypointState = schema(
+  {
+    x: t.number().default(0),
+    y: t.number().default(0),
+    z: t.number().default(0),
+    /** Real request: "there should be a core waypoint as long as waypoints are on, one that can't be removed from the list, since that would be the waypoint at the start of the turn, for reverting positions." Always index 0 in a session's own `waypoints` array, stamped at that session's CURRENT position whenever `waypointsEnabled` goes from false to true (WorldRoom.ts's `resetWaypointsToCore`) -- `removeWaypoint`/`clearWaypoints` both refuse to let this one go. */
+    isCore: t.boolean().default(false),
+  },
+  "WaypointState",
+);
+
 /**
  * MVP goal item 4 follow-up (drag-and-drop placement + Tab/Shift+Tab
  * focus cycling): one real character instance in this world. Lives in
@@ -137,6 +149,26 @@ export const OtherCharacterState = schema(
     bodyHeight: t.number().default(1.8),
     bodyDepth: t.number().default(0.6),
     statusEffects: t.array(StatusEffectState),
+    /**
+     * docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- real
+     * correction, 2026-10-24: lives on the INSTANCE now, not the
+     * piloting session (PlayerState used to hold this) -- "waypoints
+     * should be per-player... tab through different 3d instances,
+     * [and] waypoints then go in a line from the previous location to
+     * the instance I'm controlling now. It should really be waypoints
+     * just following a specific instance, which would make more
+     * sense with the turn order and swapping control." Since a
+     * piloted instance is the SAME object (`t.ref`, moved -- see this
+     * state's own doc) the whole time, its waypoint chain moves with
+     * it automatically on every focus-swap, with no extra code needed
+     * here -- an idle instance (otherCharacters) keeps whatever chain
+     * it had too, for whenever someone next takes control of it.
+     */
+    waypoints: t.array(WaypointState),
+    /** Same tier/reasoning as `waypoints` above -- moved off PlayerState so each CHARACTER (not each piloting session) has its own distinguishing color, consistent with turn-order membership rather than who happens to be driving it right now. */
+    waypointColorR: t.number().default(1),
+    waypointColorG: t.number().default(0.9),
+    waypointColorB: t.number().default(0.2),
   },
   "OtherCharacterState",
 );
@@ -230,6 +262,29 @@ export const WorldState = schema(
     /** Index into `turnOrder` of whoever's turn it notionally is. Meaningless (0) when `turnOrder` is empty -- not a separate "is combat running" flag; see TurnOrderEntryState's own doc for why phase 1 keeps this simple. */
     turnOrderCurrentIndex: t.number().default(0),
     turnOrderRound: t.number().default(1),
+    /**
+     * docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- the
+     * REAL on/off state for M/N/the panel's W+/W- (not derived purely
+     * from turn-order entry count, real correction: "the panel's own
+     * visibility is cosmetic/per-client... that isn't the right
+     * signal"). Per-WORLD, persisted (store.ts's
+     * `setWaypointsEnabledForWorld`) so it survives a disconnect/
+     * refresh/rejoin/room-recreation like every other world-level
+     * state here. Auto-flips on a 0<->1+ turn-order-entry-count
+     * TRANSITION (WorldRoom.ts's `applyWaypointAutoToggle`, gated by
+     * the two settings below), and independently GM-toggleable at any
+     * time via the panel's own on/off button -- that manual value
+     * sticks until the next qualifying transition overwrites it
+     * again, confirmed directly by the user as the intended (if
+     * "tricky") behavior.
+     */
+    waypointsEnabled: t.boolean().default(false),
+    /** GM settings checkbox (chatPanel.ts's GM tab, same tier as seeThroughWalls/mod toggles) -- per-GAME, default true. When true, `waypointsEnabled` auto-flips to true the moment the turn order goes from 0 to 1+ entries. */
+    waypointAutoOnWithTurnOrder: t.boolean().default(true),
+    /** Same tier as waypointAutoOnWithTurnOrder, independently settable -- per-GAME, default true. When true, `waypointsEnabled` auto-flips to false the moment the turn order goes from 1+ entries down to 0. */
+    waypointAutoOffWithoutTurnOrder: t.boolean().default(true),
+    /** GM-only setting (the panel's expanded state) -- the Minkowski exponent `p` every displayed waypoint distance label uses (shared/src/distance.ts's `minkowskiDistance`). 1 = Manhattan, 2 (default) = ordinary Euclidean. Per-WORLD (not per-game): "a world-level setting shared by everyone's displayed distances, not a per-player one." */
+    waypointDistanceMetricP: t.number().default(2),
   },
   "WorldState",
 );
@@ -241,3 +296,4 @@ export type StatusEffectStateType = InstanceType<typeof StatusEffectState>;
 export type BarStateType = InstanceType<typeof BarState>;
 export type OtherCharacterStateType = InstanceType<typeof OtherCharacterState>;
 export type TurnOrderEntryStateType = InstanceType<typeof TurnOrderEntryState>;
+export type WaypointStateType = InstanceType<typeof WaypointState>;

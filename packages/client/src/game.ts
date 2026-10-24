@@ -113,6 +113,11 @@ export interface RunningGame {
   onSeeThroughWallsChange(cb: (enabled: boolean) => void): () => void;
   /** Sends the admin-gated "setSeeThroughWalls" room message -- chatPanel.ts's GM tab checkbox calls this via main.ts. */
   setSeeThroughWalls(enabled: boolean): void;
+  /** docs/BATTLE_SYSTEM.md's waypoint/distance measurement GM settings checkboxes -- same tier/pattern as onSeeThroughWallsChange/setSeeThroughWalls. */
+  onWaypointAutoOnChange(cb: (enabled: boolean) => void): () => void;
+  onWaypointAutoOffChange(cb: (enabled: boolean) => void): () => void;
+  setWaypointAutoOn(enabled: boolean): void;
+  setWaypointAutoOff(enabled: boolean): void;
   /** No hot-reload exists for mods -- re-launches the player's own current world, same teardown/recreate cycle page-switching already uses. chatPanel.ts's GM tab "Reload this page" button calls this via main.ts. */
   reloadWorld(): void;
 }
@@ -329,6 +334,8 @@ export function startGame(
   let seeThroughWallsEnabled = true;
   const gmActiveListeners = new Set<(active: boolean) => void>();
   const seeThroughWallsListeners = new Set<(enabled: boolean) => void>();
+  const waypointAutoOnListeners = new Set<(enabled: boolean) => void>();
+  const waypointAutoOffListeners = new Set<(enabled: boolean) => void>();
   scene.onBeforeRenderObservable.add(() => {
     // noa.ents.getPosition returns the BOTTOM-CENTER of the player's AABB
     // (confirmed directly in components/position.js's own doc comment),
@@ -434,6 +441,12 @@ export function startGame(
       cameraZoom.setWallClipAllowed(enabled);
       for (const cb of seeThroughWallsListeners) cb(enabled);
     },
+    (enabled) => {
+      for (const cb of waypointAutoOnListeners) cb(enabled);
+    },
+    (enabled) => {
+      for (const cb of waypointAutoOffListeners) cb(enabled);
+    },
   ).catch((err) => {
     console.error("[net] failed to connect to world server:", err);
     return null;
@@ -496,6 +509,24 @@ export function startGame(
 
     setSeeThroughWalls(enabled: boolean): void {
       void connection.then((c) => c?.setSeeThroughWalls(enabled));
+    },
+
+    onWaypointAutoOnChange(cb: (enabled: boolean) => void): () => void {
+      waypointAutoOnListeners.add(cb);
+      return () => waypointAutoOnListeners.delete(cb);
+    },
+
+    onWaypointAutoOffChange(cb: (enabled: boolean) => void): () => void {
+      waypointAutoOffListeners.add(cb);
+      return () => waypointAutoOffListeners.delete(cb);
+    },
+
+    setWaypointAutoOn(enabled: boolean): void {
+      void connection.then((c) => c?.setWaypointAutoOn(enabled));
+    },
+
+    setWaypointAutoOff(enabled: boolean): void {
+      void connection.then((c) => c?.setWaypointAutoOff(enabled));
     },
 
     reloadWorld(): void {
