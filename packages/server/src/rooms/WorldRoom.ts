@@ -1363,47 +1363,6 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       return;
     }
 
-    // Real correction, 2026-10-24: a second tab/window for the SAME
-    // account, naming the SAME instanceId, used to silently fall
-    // through to a brand-new blank instance below whenever the FIRST
-    // session hadn't actually finished disconnecting yet from the
-    // server's own point of view -- confirmed directly against this
-    // room's own logs during testing: a fresh reconnect can land
-    // (and get logged as "joined ... as X", a FRESH instance) WHILE
-    // the stale session is still connected and only "left" a moment
-    // later. The real instance is still sitting in that stale
-    // session's OWN `currentInstance` the whole time -- not idle in
-    // `otherCharacters` -- so the resume lookup above can't find it.
-    // Real bugs this caused: "I had 2 players in 2 tabs without
-    // realizing... Once I closed the other tab, I could delete that
-    // instance" (an orphaned duplicate instance left behind), and
-    // separately, a waypoint chain/position looking "lost" after a
-    // reload that actually raced ahead of the stale tab's own
-    // disconnect instead of genuinely starting fresh. Steals the SAME
-    // live object back from whichever session still holds it (the
-    // same move-by-reference pattern every other focus swap in this
-    // file already uses -- see focusCharacter's own doc), and force-
-    // disconnects that stale session so its tab visibly drops instead
-    // of lingering as an orphaned duplicate.
-    if (options?.instanceId && player.accountId) {
-      for (const [staleSessionId, stalePlayer] of this.state.players) {
-        if (staleSessionId === client.sessionId) continue;
-        if (stalePlayer.currentInstance.instanceId !== options.instanceId) continue;
-        if (stalePlayer.currentInstance.placedByAccountId !== player.accountId) continue;
-        const resumed = stalePlayer.currentInstance;
-        const previousCharacterId = resumed.characterId;
-        stalePlayer.currentInstance = new OtherCharacterState(); // leaves the stale session with nothing worth its own onLeave keeping (characterId === "" is the same "nothing worth keeping" state onLeave already treats as a no-op)
-        player.currentInstance = resumed;
-        this.unregisterActiveCharacter(staleSessionId, previousCharacterId);
-        this.registerActiveCharacter(client.sessionId, previousCharacterId);
-        this.syncCharacterRoomRegistration(previousCharacterId);
-        this.persistPlacedCharacters();
-        console.log(`[WorldRoom:${this.worldId}] ${player.name} (${client.sessionId}) joined${isAdmin ? " [admin]" : ""}, taking back over ${resumed.characterName} from a stale session (${staleSessionId})`);
-        this.clients.getById(staleSessionId)?.leave();
-        return;
-      }
-    }
-
     // No resumable instance -- a genuinely fresh join (or the
     // previously-resumed instance is gone/not found). Spawn at the
     // admin-set anchor if one exists (a DM-prepared landing spot should
