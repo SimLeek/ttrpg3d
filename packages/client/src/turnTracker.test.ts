@@ -14,6 +14,7 @@ function mount(overrides: Partial<TurnTrackerOptions> = {}) {
     onNextTurn: vi.fn(),
     onReorder: vi.fn(),
     onSetRollValue: vi.fn(),
+    onSortByRoll: vi.fn(),
     ...overrides,
   };
   tracker = mountTurnTracker(container, options);
@@ -136,6 +137,8 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector("#turn-tracker-add-input")).not.toBeNull();
     expect(container.querySelector("#turn-tracker-next-btn")).not.toBeNull();
     expect(container.querySelector("#turn-tracker-clear-btn")).not.toBeNull();
+    expect(container.querySelector("#turn-tracker-sort-asc-btn")).not.toBeNull();
+    expect(container.querySelector("#turn-tracker-sort-desc-btn")).not.toBeNull();
     expect(container.querySelector(".turn-tracker-entry-remove")).not.toBeNull();
     expect(container.querySelector(".turn-tracker-entry-arrows")).not.toBeNull();
   });
@@ -147,8 +150,19 @@ describe("mountTurnTracker", () => {
     expect(container.querySelector("#turn-tracker-add-input")).toBeNull();
     expect(container.querySelector("#turn-tracker-next-btn")).toBeNull();
     expect(container.querySelector("#turn-tracker-clear-btn")).toBeNull();
+    expect(container.querySelector("#turn-tracker-sort-asc-btn")).toBeNull();
+    expect(container.querySelector("#turn-tracker-sort-desc-btn")).toBeNull();
     expect(container.querySelector(".turn-tracker-entry-remove")).toBeNull();
     expect(container.querySelector(".turn-tracker-entry-arrows")).toBeNull();
+  });
+
+  it("clicking Sort ascending/descending calls onSortByRoll with the right direction -- real request: \"now there are numbers, editable by gm, but the gm can't sort by those, so there should be sort ascending and sort descending buttons\" (gm only)", () => {
+    const { tracker, options } = mount();
+    tracker.update([entry("1", "A", 5)], 0, 1);
+    container.querySelector<HTMLButtonElement>("#turn-tracker-sort-asc-btn")!.click();
+    expect(options.onSortByRoll).toHaveBeenCalledWith("asc");
+    container.querySelector<HTMLButtonElement>("#turn-tracker-sort-desc-btn")!.click();
+    expect(options.onSortByRoll).toHaveBeenCalledWith("desc");
   });
 
   it("the manual add row's placeholder reads 'Add non-character...' -- real request: distinguish it from the context-menu's per-character 'Add to Turn Order'", () => {

@@ -65,6 +65,8 @@ export interface TurnTrackerOptions {
   onReorder(turnEntryId: string, newIndex: number): void;
   /** Real request: "the number (default 0 if no roll)... editable by gm and not others." GM-only, like onClearAll/onNextTurn/onReorder -- unlike who's IN the order, what number they're sorted/shown by is a GM-tier call. */
   onSetRollValue(turnEntryId: string, value: number): void;
+  /** Real request: "now there are numbers, editable by gm, but the gm can't sort by those, so there should be sort ascending and sort descending buttons" -- "(gm only for those sort buttons of course)". */
+  onSortByRoll(direction: "asc" | "desc"): void;
   /**
    * Real request: "let's get the context menu working for the turn
    * order characters, so if I select a turn order character that I
@@ -203,6 +205,10 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
         <button type="button" id="turn-tracker-add-btn">Add</button>
       </div>
       <div class="turn-tracker-actions">
+        <button type="button" id="turn-tracker-sort-asc-btn" title="Sort by number, ascending">Sort &#x25B2;</button>
+        <button type="button" id="turn-tracker-sort-desc-btn" title="Sort by number, descending">Sort &#x25BC;</button>
+      </div>
+      <div class="turn-tracker-actions">
         <button type="button" id="turn-tracker-next-btn">Next Turn</button>
         <button type="button" id="turn-tracker-clear-btn">Clear All</button>
       </div>
@@ -221,6 +227,12 @@ export function mountTurnTracker(container: HTMLElement, options: TurnTrackerOpt
     });
     gmControls.querySelector<HTMLButtonElement>("#turn-tracker-next-btn")!.addEventListener("click", () => options.onNextTurn());
     gmControls.querySelector<HTMLButtonElement>("#turn-tracker-clear-btn")!.addEventListener("click", () => options.onClearAll());
+    // Real request: "now there are numbers, editable by gm, but the
+    // gm can't sort by those, so there should be sort ascending and
+    // sort descending buttons" -- "(gm only for those sort buttons of
+    // course)", same tier as Next Turn/Clear All above.
+    gmControls.querySelector<HTMLButtonElement>("#turn-tracker-sort-asc-btn")!.addEventListener("click", () => options.onSortByRoll("asc"));
+    gmControls.querySelector<HTMLButtonElement>("#turn-tracker-sort-desc-btn")!.addEventListener("click", () => options.onSortByRoll("desc"));
   }
 
   function renderList(): void {

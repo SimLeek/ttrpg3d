@@ -1102,6 +1102,67 @@ describe("WorldRoom", () => {
       expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(bId); // still B's turn
     });
 
+    it("reorderTurnOrder (GM) moves an entry EARLIER (the up-arrow's own direction) and keeps turnOrderCurrentIndex pointing at the SAME logical entry -- real bug found live: \"I press up on hi and it changes from bob's turn to hi's turn instead of moving hi above bob\" (splice-removing and reinserting the SAME schema object within one mutation silently left the array order unchanged while the current-index re-lookup landed on the wrong entry)", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "bob" });
+      adminClient.send("addToTurnOrder", { label: "hi" });
+      adminClient.send("addToTurnOrder", { label: "root" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // bob is current by default (index 0) -- nobody called nextTurn.
+      const bobId = room.state.turnOrder[0].turnEntryId;
+      const hiId = room.state.turnOrder[1].turnEntryId;
+
+      // The up-arrow on "hi" (index 1) sends newIndex 0.
+      adminClient.send("reorderTurnOrder", { turnEntryId: hiId, newIndex: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder.map((e) => e.turnEntryId)).toEqual([hiId, bobId, room.state.turnOrder[2].turnEntryId]); // hi actually moved above bob
+      expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(bobId); // still bob's turn, not hi's
+    });
+
+    it("sortTurnOrderByRoll (GM) sorts by rollValue (ascending or descending), treating no-roll-yet as 0, and keeps turnOrderCurrentIndex pointing at the SAME logical entry -- real request: \"now there are numbers, editable by gm, but the gm can't sort by those, so there should be sort ascending and sort descending buttons\"", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      adminClient.send("addToTurnOrder", { label: "Low" });
+      adminClient.send("addToTurnOrder", { label: "High" });
+      adminClient.send("addToTurnOrder", { label: "NoRollYet" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const lowId = room.state.turnOrder[0].turnEntryId;
+      const highId = room.state.turnOrder[1].turnEntryId;
+      const noRollId = room.state.turnOrder[2].turnEntryId;
+      adminClient.send("setTurnOrderRollValue", { turnEntryId: lowId, value: 5 });
+      adminClient.send("setTurnOrderRollValue", { turnEntryId: highId, value: 20 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      adminClient.send("nextTurn"); // High (index 1) becomes current
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      adminClient.send("sortTurnOrderByRoll", { direction: "asc" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrder.map((e) => e.turnEntryId)).toEqual([noRollId, lowId, highId]); // 0, 5, 20
+      expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(highId); // still High's turn
+
+      adminClient.send("sortTurnOrderByRoll", { direction: "desc" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.turnOrder.map((e) => e.turnEntryId)).toEqual([highId, lowId, noRollId]); // 20, 5, 0
+      expect(room.state.turnOrder[room.state.turnOrderCurrentIndex].turnEntryId).toBe(highId); // still High's turn
+    });
+
+    it("sortTurnOrderByRoll is refused from a non-admin session", async () => {
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const stranger = await colyseus.connectTo(room);
+      adminClient.send("addToTurnOrder", { label: "A" });
+      adminClient.send("addToTurnOrder", { label: "B" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const before = room.state.turnOrder.map((e) => e.turnEntryId);
+
+      stranger.send("sortTurnOrderByRoll", { direction: "asc" });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.turnOrder.map((e) => e.turnEntryId)).toEqual(before);
+    });
+
     it("setTurnOrderRollValue (GM) sets both rollValue and hasRollValue -- real request: \"the number (default 0 if no roll)... editable by gm and not others\"", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
       const adminClient = await colyseus.connectTo(room, { accountId: owner.id });

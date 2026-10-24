@@ -419,6 +419,7 @@ export async function connectAndStreamWorld(
     onNextTurn: () => room!.send("nextTurn"),
     onReorder: (turnEntryId, newIndex) => room!.send("reorderTurnOrder", { turnEntryId, newIndex }),
     onSetRollValue: (turnEntryId, value) => room!.send("setTurnOrderRollValue", { turnEntryId, value }),
+    onSortByRoll: (direction) => room!.send("sortTurnOrderByRoll", { direction }),
     // Real request: "let's get the context menu working for the turn
     // order characters, so if I select a turn order character that I
     // own, I should be able to click control." Reuses the SAME

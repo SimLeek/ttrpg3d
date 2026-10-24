@@ -445,6 +445,46 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     store.setTurnOrderForWorld(this.worldId, { entries, currentIndex: this.state.turnOrderCurrentIndex, round: this.state.turnOrderRound });
   }
 
+  /**
+   * Rewrites the WHOLE turn order to `newOrder`'s order by reassigning
+   * each slot's own FIELD VALUES onto the array's EXISTING
+   * `TurnOrderEntryState` objects -- never splice/remove/reinsert an
+   * object. Real bug found live, 2026-10-23: the up-arrow button's
+   * own reorder used to splice-remove the moved entry and splice-
+   * insert that SAME object back into the array within one
+   * synchronous mutation, which confused @colyseus/schema's own
+   * change-tracking -- the visible array order silently failed to
+   * change at all, while `turnOrderCurrentIndex`'s own re-lookup
+   * (below) landed on the WRONG entry, reproduced live as "I press up
+   * on hi and it changes to hi's turn instead of moving hi above
+   * bob." Shared by reorderTurnOrder (one-slot move) and
+   * sortTurnOrderByRoll (a full sort) below -- same safe rewrite
+   * either way, and the same "whose turn it is" preservation
+   * (`currentEntryId`) every other turn-order mutation already
+   * applies.
+   */
+  private reassignTurnOrder(newOrder: readonly TurnOrderEntryRecord[]): void {
+    const currentEntryId = this.state.turnOrder[this.state.turnOrderCurrentIndex]?.turnEntryId;
+    newOrder.forEach((data, i) => {
+      const target = this.state.turnOrder[i];
+      target.turnEntryId = data.turnEntryId;
+      target.label = data.label;
+      target.instanceId = data.instanceId;
+      target.characterId = data.characterId;
+      target.hasRollValue = data.hasRollValue;
+      target.rollValue = data.rollValue;
+    });
+    if (currentEntryId) {
+      const newCurrentIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === currentEntryId);
+      if (newCurrentIndex !== -1) this.state.turnOrderCurrentIndex = newCurrentIndex;
+    }
+  }
+
+  /** Plain-data snapshot of the CURRENT turn order, in its current order -- the starting point reassignTurnOrder's own callers (reorderTurnOrder, sortTurnOrderByRoll) reorder/sort before writing back. */
+  private snapshotTurnOrder(): TurnOrderEntryRecord[] {
+    return this.state.turnOrder.map((e) => ({ turnEntryId: e.turnEntryId, label: e.label, instanceId: e.instanceId, characterId: e.characterId, hasRollValue: e.hasRollValue, rollValue: e.rollValue }));
+  }
+
   /** Removes one turn-order entry by its own id, keeping `turnOrderCurrentIndex` pointing at the SAME logical entry (shifting it back by one if the removed entry was earlier in the list; clamping if it WAS the current entry and was also the last one). Shared by removeFromTurnOrder and removeTurnOrderEntriesByInstanceId below -- same adjustment either way. */
   private removeTurnOrderEntryById(turnEntryId: string): void {
     const index = this.state.turnOrder.findIndex((e) => e.turnEntryId === turnEntryId);
@@ -971,16 +1011,23 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       if (oldIndex === -1) return;
       const clampedNewIndex = Math.max(0, Math.min(newIndex, this.state.turnOrder.length - 1));
       if (clampedNewIndex === oldIndex) return;
-      // Keep `turnOrderCurrentIndex` pointing at the SAME logical entry
-      // through the move, not wherever that array slot ends up next --
-      // a reorder must never silently change whose turn it is.
-      const currentEntryId = this.state.turnOrder[this.state.turnOrderCurrentIndex]?.turnEntryId;
-      const [moved] = this.state.turnOrder.splice(oldIndex, 1);
-      this.state.turnOrder.splice(clampedNewIndex, 0, moved);
-      if (currentEntryId) {
-        const newCurrentIndex = this.state.turnOrder.findIndex((e) => e.turnEntryId === currentEntryId);
-        if (newCurrentIndex !== -1) this.state.turnOrderCurrentIndex = newCurrentIndex;
-      }
+      const snapshot = this.snapshotTurnOrder();
+      const [moved] = snapshot.splice(oldIndex, 1);
+      snapshot.splice(clampedNewIndex, 0, moved);
+      this.reassignTurnOrder(snapshot);
+      this.persistTurnOrder();
+    });
+
+    // Real request: "the gm can't sort by those [roll values], so
+    // there should be sort ascending and sort descending buttons" --
+    // GM-only (confirmed in the same message: "gm only for those sort
+    // buttons of course"). An entry with no roll yet sorts as 0, the
+    // same default the widget already displays for it.
+    this.onMessage<{ direction: "asc" | "desc" }>("sortTurnOrderByRoll", (client, { direction }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      const snapshot = this.snapshotTurnOrder();
+      snapshot.sort((a, b) => (direction === "asc" ? a.rollValue - b.rollValue : b.rollValue - a.rollValue));
+      this.reassignTurnOrder(snapshot);
       this.persistTurnOrder();
     });
 
