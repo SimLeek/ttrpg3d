@@ -24,3 +24,19 @@ export function releaseCapture(reason: string): void {
 export function isCaptured(): boolean {
   return activeReasons.size > 0;
 }
+
+/**
+ * docs/BATTLE_SYSTEM.md's measurement shapes -- "Measure mode" claims
+ * capture itself (to freeze character movement -- PlayerController.ts's
+ * own `isCaptured() ? {} : noa.inputs.state` check), but its OWN WASD/
+ * Space/Shift/Tab point-editing keydown handler can't just check plain
+ * `isCaptured()` too, or it would immediately block itself. Ignores
+ * exactly one reason (the caller's own) while still respecting any
+ * OTHER real claimant (e.g. chat being focused) the normal way.
+ */
+export function isCapturedByOther(excludeReason: string): boolean {
+  for (const reason of activeReasons) {
+    if (reason !== excludeReason) return true;
+  }
+  return false;
+}

@@ -332,10 +332,32 @@ turn tracker are not involved.
 
 **Shared interaction model, every shape type:**
 
+- **Measure mode** -- real correction, 2026-10-24: "Measure should be
+  the distance button in the mode panel. It should put you in measure
+  mode, and you control and tab through the points then, not the
+  character, and the view/camera remain in place while the wasd space
+  shift are pressed and while the mouse moves." The mode-panel's own
+  "Distance" button (`modePanel.ts`, previously stubbed) is the real
+  entry point -- a THIRD exclusive mode alongside Default/Select.
+  While active: character movement is frozen entirely (WASD/Space/
+  Shift are repurposed for point-editing below, not movement), and
+  the camera does not rotate from mouse movement (same free-cursor
+  state Select mode already has) -- aiming to place a NEW point still
+  works via the free cursor's own click/ghost-preview, same as always,
+  just with the 3D view itself held fixed rather than mouse-look-
+  rotatable. Picking a shape-type button in the measurement panel
+  also auto-enters Measure mode as a convenience; clicking Default or
+  Select exits it again (not a second click on Distance itself).
 - Clicking a shape-type button in the panel starts placing that
   shape. The first click (on terrain OR a character instance, same
   target choice waypoints/`characterPlacement.ts` already support)
-  places the first point.
+  places the first point -- real correction, 2026-10-24: this is
+  ALWAYS a real click, never auto-seeded from the player's current
+  position ("when I select a shape it should reset the points" -- the
+  first implementation wrongly seeded point 1 from the player's live
+  position the moment a shape type was picked, which is why every
+  shape looked like it "started from the character" whether or not
+  that was ever clicked).
 - Moving the mouse afterward shows a live PREVIEW of where the NEXT
   point would land if clicked now -- the same ghost-preview mechanism
   `characterPlacement.ts` already has for dropping a character onto
@@ -389,11 +411,16 @@ turn tracker are not involved.
     bounding box; for a cone/frustum, the bounding box of its own
     mesh), then size the billboard exactly as if a CHARACTER had that
     bounding box as its own body dimensions -- the same scale formula
-    a character's billboard already uses (`tokenScaleFor(bodyHeight)`
-    in net.ts), fed this AABB instead of a real character's body size.
-    One function, called with a different box per shape, not four
-    separate sizing rules. The distance chain and beam are excepted --
-    their billboards stay the existing fixed/default size (a thin
+    a character's billboard already uses, fed this AABB's own LARGEST
+    axis (real correction, 2026-10-24: "should probably select the max
+    largest axis, since I just made a wide short box and it had a tiny
+    billboard" -- not just the AABB's height; applies to the
+    character's own billboard sizing in net.ts too now, not only
+    measurement shapes: `max(bodyWidth, bodyHeight, bodyDepth)`
+    instead of `bodyHeight` alone). One function, called with a
+    different box per shape, not four separate sizing rules. The
+    distance chain and beam are excepted -- their billboards stay the
+    existing fixed/default size (a thin
     line's own AABB wouldn't produce a meaningful character-equivalent
     box), same as the waypoint system's segment labels already are.
   - **Positioning -- per shape**:
@@ -441,7 +468,11 @@ turn tracker are not involved.
   point." The toggle only changes the FAR end's own cross-section
   shape: **cone** = round, **frustum** = "just a rectangle/square end
   instead of circular" (a square-based pyramid, not a truncated
-  cone).
+  cone). **Point order is fixed and confirmed**: "it should still be
+  first point start and second part wide flat part" -- the FIRST
+  point placed is always the narrow/point end, the SECOND is always
+  the wide flat end, regardless of which one happens to be nearer the
+  player when placing.
 - **Beam**: a start point and an end point, plus a numeric **beam
   width** setting.
 - Each shape type's own settings (degrees/frustum toggle for cone,
@@ -742,9 +773,40 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then it appears as its own independent floating window
     And it is fully usable with no turn order and no `waypointsEnabled` state involved
 
+  Scenario: Clicking Distance in the mode panel enters Measure mode, freezing movement and camera look
+    Given a session is in Default mode, free to move and look around
+    When they click "Distance" in the mode panel
+    Then character movement stops responding to WASD/Space/Shift
+    And mouse movement no longer rotates the camera
+    And the panel's own shape-type buttons are now the way to start placing something
+
+  Scenario: Selecting a shape type also enters Measure mode as a convenience
+    Given a session is in Default mode, not yet in Measure mode
+    When they select a shape type directly from the measurement panel
+    Then Measure mode becomes active, same as clicking "Distance" first would have
+
+  Scenario: Clicking Default or Select exits Measure mode
+    Given a session is in Measure mode
+    When they click "Default" (or "Select") in the mode panel
+    Then character movement and camera look both work normally again
+    And whatever shape was still being placed (not yet finalized) is discarded
+
+  Scenario: Selecting a shape type never auto-seeds a point from the player's position
+    Given a session has just selected a shape type, with no click in the 3D world yet
+    Then no point exists yet at all -- not even one at the player's own current position
+    When they click somewhere in the 3D world
+    Then THAT click places the first point, wherever it was aimed
+
+  Scenario: Selecting a DIFFERENT shape type resets the points, discarding whatever was in progress
+    Given a session has placed one point of a "Cube" and not yet finished it
+    When they select "Sphere" instead
+    Then the cube's in-progress point is discarded
+    And the sphere starts completely fresh, with no points carried over
+
   Scenario: Starting a distance chain and placing its first point
     Given the measurement-shapes panel is open
-    When a session selects "Distance chain" and clicks on terrain
+    And the session is in Measure mode
+    When they select "Distance chain" and click on terrain
     Then a first point is placed there, and it becomes the selected point
 
   Scenario: A live preview follows the mouse before the next point is placed
@@ -804,6 +866,15 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then the panel shows a numeric "degrees" field and a toggle between
       "Cone" (round far end) and "Frustum" (square far end) -- both
       options are a true point at the near end, always
+
+  Scenario: A cone's first point is always the narrow end, regardless of which point is nearer the player
+    Given a session places a cone's FIRST point far away, then its
+      SECOND point right next to themselves
+    Then the far point (placed first) is the narrow/point end
+    And the near point (placed second) is the wide flat end
+    And this holds the same way even if the points are placed in the
+      opposite physical arrangement -- point ORDER decides which end
+      is which, not proximity to the player
 
   Scenario: Beam has a width setting
     Given a session selects "Beam" and has placed its start and end point

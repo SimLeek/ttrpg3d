@@ -347,6 +347,13 @@ export function startGame(
   // below) is what stops the camera from physically passing through
   // walls at all.
   let seeThroughWallsEnabled = true;
+  // docs/BATTLE_SYSTEM.md's measurement shapes -- the mode-panel's own
+  // "Distance" button highlight. Only modePanel.ts needs to know about
+  // this (unlike seeThroughWalls, which chatPanel.ts AND cameraZoom.ts
+  // both need), so a plain mirrored local variable is enough -- no
+  // Set-of-listeners needed, just the same "net.ts polls the real
+  // source every tick, calls this callback" idiom as seeThroughWalls.
+  let measureModeActiveLocal = false;
   const gmActiveListeners = new Set<(active: boolean) => void>();
   const seeThroughWallsListeners = new Set<(enabled: boolean) => void>();
   const waypointAutoOnListeners = new Set<(enabled: boolean) => void>();
@@ -399,7 +406,16 @@ export function startGame(
   document.body.appendChild(modePanelContainer);
   const modePanel = mountModePanel(modePanelContainer, {
     isPointerLocked: () => noa.container.hasPointerLock,
-    setPointerLock: (locked) => noa.container.setPointerLock(locked),
+    // Real request, 2026-10-24: Default/Select both exit Measure mode
+    // (not a second click on Distance itself) -- "you control and tab
+    // through the points then, not the character, and the view/
+    // camera remain in place" only applies WHILE in measure mode, so
+    // switching to either of the other two modes needs to hand
+    // movement/camera control back.
+    setPointerLock: (locked) => {
+      noa.container.setPointerLock(locked);
+      void connection.then((c) => c?.setMeasureModeActive(false));
+    },
     onPointerLockChange: (cb) => {
       const onGained = () => cb(true);
       const onLost = () => cb(false);
@@ -417,6 +433,8 @@ export function startGame(
     // button, the synchronous rest of this function has long finished
     // assigning it.
     onToggleTurnTracker: () => void connection.then((c) => c?.toggleTurnTracker()),
+    isMeasureModeActive: () => measureModeActiveLocal,
+    onSelectMeasureMode: () => void connection.then((c) => c?.setMeasureModeActive(true)),
   });
 
   // Resolves to the real server connection once joinOrCreate() completes --
@@ -461,6 +479,9 @@ export function startGame(
     },
     (enabled) => {
       for (const cb of waypointAutoOffListeners) cb(enabled);
+    },
+    (active) => {
+      measureModeActiveLocal = active;
     },
   ).catch((err) => {
     console.error("[net] failed to connect to world server:", err);

@@ -8,14 +8,17 @@
 // content (Phase 9's battle system) will be per-world/page too, so
 // there's no reason for it to survive a page switch.
 //
-// Default/Select are real, wired to game.ts's RunningGame.setPointerLock
+// Default/Select are wired to game.ts's RunningGame.setPointerLock
 // (default = pointer-locked FPS-style look; select = cursor free to
-// click UI). Distance-measurement and Turn-tracker are the real Phase 9
-// (battle system) modes. "Turns" is now real (docs/BATTLE_SYSTEM.md
-// phase 1, turnTracker.ts) -- toggles that widget's own visibility.
-// "Distance" stays deliberately STUBBED (disabled, no handler) --
-// the waypoint/distance system is a later phase of the same doc, not
-// built yet.
+// click UI). "Turns" toggles the turn-tracker widget's own visibility
+// (docs/BATTLE_SYSTEM.md phase 1, turnTracker.ts). "Distance" is now
+// real too (docs/BATTLE_SYSTEM.md section 6, measurementShapes.ts) --
+// real request, 2026-10-24: "Measure should be the distance button in
+// the mode panel. It should put you in measure mode, and you control
+// and tab through the points then, not the character." A THIRD
+// exclusive mode alongside Default/Select -- entered by clicking
+// Distance, exited by clicking Default or Select (not a second click
+// on Distance itself).
 //
 // Collapsible (real user request, same session chat's own drag-resize
 // correction landed in) -- publishes its OWN live width to
@@ -38,6 +41,10 @@ export interface ModePanelOptions {
   onPointerLockChange: (cb: (locked: boolean) => void) => () => void;
   /** docs/BATTLE_SYSTEM.md phase 1 -- toggles the turn tracker widget's own visibility (net.ts's WorldConnection.toggleTurnTracker). The widget owns its own visible/hidden state; this button doesn't track or reflect it. */
   onToggleTurnTracker: () => void;
+  /** docs/BATTLE_SYSTEM.md's measurement shapes -- whether "Measure mode" (measurementShapes.ts) is currently active, for this button's own highlight. */
+  isMeasureModeActive: () => boolean;
+  /** Clicking Distance -- real request: "It should put you in measure mode." Clicking Default or Select exits it again (ordinary setPointerLock handling below already does that, net.ts's own glue just also calls setMeasureModeActive(false) there). */
+  onSelectMeasureMode: () => void;
 }
 
 export interface ModePanelController {
@@ -62,7 +69,7 @@ export function mountModePanel(container: HTMLElement, options: ModePanelOptions
     <div class="mode-panel" id="mode-panel">
       <button class="mode-btn" id="mode-default" type="button" title="Pointer-locked FPS-style look">Default</button>
       <button class="mode-btn" id="mode-select" type="button" title="Free cursor to click UI">Select</button>
-      <button class="mode-btn" id="mode-distance" type="button" disabled title="Coming with the battle system">Distance</button>
+      <button class="mode-btn" id="mode-distance" type="button" title="Measure mode -- place/adjust distance chains, cubes, spheres, cones, beams">Distance</button>
       <button class="mode-btn" id="mode-turns" type="button" title="Show/hide the turn-order tracker">Turns</button>
       <button class="mode-toggle" id="mode-toggle" type="button" title="Collapse/expand mode panel">&#x25C0;</button>
     </div>
@@ -72,16 +79,23 @@ export function mountModePanel(container: HTMLElement, options: ModePanelOptions
   const toggle = container.querySelector<HTMLButtonElement>("#mode-toggle")!;
   const defaultBtn = container.querySelector<HTMLButtonElement>("#mode-default")!;
   const selectBtn = container.querySelector<HTMLButtonElement>("#mode-select")!;
+  const distanceBtn = container.querySelector<HTMLButtonElement>("#mode-distance")!;
   const turnsBtn = container.querySelector<HTMLButtonElement>("#mode-turns")!;
 
   function render(locked: boolean): void {
-    defaultBtn.classList.toggle("active", locked);
-    selectBtn.classList.toggle("active", !locked);
+    const measuring = options.isMeasureModeActive();
+    defaultBtn.classList.toggle("active", locked && !measuring);
+    selectBtn.classList.toggle("active", !locked && !measuring);
+    distanceBtn.classList.toggle("active", measuring);
   }
   render(options.isPointerLocked());
 
   defaultBtn.addEventListener("click", () => options.setPointerLock(true));
   selectBtn.addEventListener("click", () => options.setPointerLock(false));
+  distanceBtn.addEventListener("click", () => {
+    options.onSelectMeasureMode();
+    render(options.isPointerLocked());
+  });
   turnsBtn.addEventListener("click", () => options.onToggleTurnTracker());
 
   let collapsed = false;

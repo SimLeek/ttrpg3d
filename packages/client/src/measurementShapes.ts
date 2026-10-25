@@ -18,13 +18,27 @@ import { minkowskiDistance, type Point3 } from "@ttrpg3d/shared";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { createDistanceLabel, type DistanceLabel } from "./distanceLabel.js";
 import { tokenScaleFor } from "./playerBodyMesh.js";
-import { isCaptured } from "./inputCapture.js";
+import { isCapturedByOther, requestCapture, releaseCapture } from "./inputCapture.js";
 import type { MeasurementShapeKind, SnapMode } from "./measurementPanel.js";
 
 const SHAPE_COLOR = new BABYLON.Color3(0.3, 0.7, 1); // distinguishes a measurement object from the waypoint system's own yellow
 const OBJECT_ALPHA = 0.45; // "rendered semi-transparent"
 const DEFAULT_CONE_DEGREES = 60;
 const DEFAULT_BEAM_WIDTH = 1;
+/**
+ * Real request, 2026-10-24: "Measure should be the distance button in
+ * the mode panel. It should put you in measure mode, and you control
+ * and tab through the points then, not the character, and the view/
+ * camera remain in place while the wasd space shift are pressed and
+ * while the mouse moves." Claims capture (freezes character movement
+ * via PlayerController.ts's own `isCaptured() ? {} : noa.inputs.state`
+ * check) and drops pointer-lock (freezes mouse-look, same as Select
+ * mode's own cursor-free state) -- this module's OWN keydown handler
+ * checks `isCapturedByOther` (not plain `isCaptured`), so claiming
+ * this doesn't block its own WASD/Space/Shift/Tab point-editing, only
+ * the character's.
+ */
+const MEASURE_MODE_CAPTURE_REASON = "measurementShapes";
 
 /** chain has no fixed count (keeps growing until Enter finalizes it) -- every other shape finalizes itself the moment its last required point lands. */
 export function requiredPointCount(kind: MeasurementShapeKind): number | undefined {
@@ -100,9 +114,20 @@ export function shapeAabb(kind: MeasurementShapeKind, points: Point3[], coneDegr
   };
 }
 
-/** The shared sizing function itself -- real request: one function, called with a different box per shape. Matches net.ts's own character-token billboard scale exactly (tokenScaleFor), just fed a shape's AABB height instead of a real character's body height. */
-function billboardScaleFor(aabb: { height: number }): number {
-  return tokenScaleFor(aabb.height);
+/**
+ * The shared sizing function itself -- real request: one function,
+ * called with a different box per shape. Real correction, 2026-10-24:
+ * "should probably select the max largest axis, since I just made a
+ * wide short box and it had a tiny billboard" -- feeds the AABB's
+ * LARGEST axis (not just height) into the exact same tokenScaleFor a
+ * character's own billboard uses. Applies to net.ts's own character
+ * billboard sizing too now (max(bodyWidth, bodyHeight, bodyDepth)
+ * instead of bodyHeight alone), same "including for the character"
+ * correction -- tokenScaleFor itself is unchanged either way, just
+ * what's fed into it.
+ */
+function billboardScaleFor(aabb: { width: number; height: number; depth: number }): number {
+  return tokenScaleFor(Math.max(aabb.width, aabb.height, aabb.depth));
 }
 
 interface MeasurementPointLike {
@@ -128,6 +153,9 @@ interface WorldStateLike {
 }
 
 export interface MeasurementShapesController {
+  /** The mode-panel's own "Distance" button -- real request: "It should put you in measure mode, and you control and tab through the points then, not the character, and the view/camera remain in place." */
+  isMeasureModeActive(): boolean;
+  setMeasureModeActive(enabled: boolean): void;
   activeKind(): MeasurementShapeKind | undefined;
   selectKind(kind: MeasurementShapeKind): void;
   snapMode(): SnapMode;
@@ -173,6 +201,8 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     return state()?.ftPerVoxel ?? 5;
   }
 
+  let measureModeActive = false;
+
   // ---- In-progress placement (pure client state until finalized) ----
   let activeKind: MeasurementShapeKind | undefined;
   let activePoints: Point3[] = [];
@@ -187,11 +217,6 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     activeKind = undefined;
     activePoints = [];
     selectedIndex = 0;
-  }
-
-  function myLivePosition(): Point3 | undefined {
-    const pos = noa.ents.getPosition(noa.playerEntity);
-    return pos ? [pos[0], pos[1], pos[2]] : undefined;
   }
 
   function currentPickScreenPoint(): { x: number; y: number } {
@@ -236,7 +261,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     if (event.repeat) return;
     const activeTag = document.activeElement?.tagName;
     if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
-    if (isCaptured()) return;
+    if (isCapturedByOther(MEASURE_MODE_CAPTURE_REASON)) return;
     if (!activeKind || activePoints.length === 0) return;
 
     const point = activePoints[selectedIndex];
@@ -273,7 +298,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
   }
 
   /** Builds every mesh + billboard for one shape, finalized or still a ghost preview -- the SAME builder either way, just a different material/id prefix and (for a chain) a possible trailing live segment to the cursor's own preview point. */
-  function buildShapeVisuals(idPrefix: string, mat: BABYLON.Material, kind: MeasurementShapeKind, points: Point3[], coneDegrees: number, isFrustumFlag: boolean, beamWidth: number): ShapeVisuals {
+  function buildShapeVisuals(idPrefix: string, mat: BABYLON.Material, kind: MeasurementShapeKind, points: Point3[], coneDegrees: number, isFrustumFlag: boolean, beamWidth: number, pickable: boolean): ShapeVisuals {
     const meshes: BABYLON.Mesh[] = [];
     const labels: DistanceLabel[] = [];
     const ftPV = ftPerVoxel();
@@ -291,7 +316,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         const marker = BABYLON.MeshBuilder.CreateSphere(`${idPrefix}-pt-${i}`, { diameter: 0.3 }, scene);
         marker.position = new BABYLON.Vector3(...p);
         marker.material = mat;
-        marker.isPickable = false;
+        marker.isPickable = pickable;
         noa.rendering.addMeshToScene(marker, false);
         meshes.push(marker);
       });
@@ -300,7 +325,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         const b = points[i + 1];
         const tube = BABYLON.MeshBuilder.CreateTube(`${idPrefix}-seg-${i}`, { path: [new BABYLON.Vector3(...a), new BABYLON.Vector3(...b)], radius: 0.08, cap: BABYLON.Mesh.CAP_ALL }, scene);
         tube.material = mat;
-        tube.isPickable = false;
+        tube.isPickable = pickable;
         noa.rendering.addMeshToScene(tube, false);
         meshes.push(tube);
         const mid: Point3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2];
@@ -312,7 +337,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const box = BABYLON.MeshBuilder.CreateBox(`${idPrefix}-cube`, { width: Math.abs(a[0] - b[0]) || 0.01, height: Math.abs(a[1] - b[1]) || 0.01, depth: Math.abs(a[2] - b[2]) || 0.01 }, scene);
       box.position = new BABYLON.Vector3(...mid);
       box.material = mat;
-      box.isPickable = false;
+      box.isPickable = pickable;
       noa.rendering.addMeshToScene(box, false);
       meshes.push(box);
       const aabb = shapeAabb("cube", points);
@@ -323,7 +348,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const sphere = BABYLON.MeshBuilder.CreateSphere(`${idPrefix}-sphere`, { diameter: Math.max(radius, 0.05) * 2 }, scene);
       sphere.position = new BABYLON.Vector3(...center);
       sphere.material = mat;
-      sphere.isPickable = false;
+      sphere.isPickable = pickable;
       noa.rendering.addMeshToScene(sphere, false);
       meshes.push(sphere);
       const aabb = shapeAabb("sphere", points);
@@ -337,12 +362,27 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       // Real correction, 2026-10-24: "it's a cone/frustum from a
       // point and the frustum part would just be a rectangle/square
       // end instead of circular" -- BOTH kinds are a true point at
-      // the near end (topDiameter is always 0, no separate near-cap
-      // radius at all); `isFrustum` only changes the FAR end's own
-      // cross-section shape -- round (a real cone) vs. a 4-sided
-      // square/pyramid (a "frustum" in this feature's own terms).
-      const topDiameter = kind === "beam" ? beamWidth : 0;
-      const bottomDiameter = kind === "beam" ? beamWidth : 2 * axisLength * Math.tan((coneDegrees * Math.PI) / 180 / 2);
+      // the near end (the end at point 'a', the FIRST point placed --
+      // no separate near-cap radius at all); `isFrustum` only changes
+      // the FAR end's (point 'b', "the wide flat part") own cross-
+      // section shape -- round (a real cone) vs. a 4-sided square/
+      // pyramid (a "frustum" in this feature's own terms).
+      //
+      // Real bug found live, confirmed directly against
+      // cylinderBuilder.js: CreateCylinder puts `diameterTop` at its
+      // OWN local +Y end -- and the rotation below aligns local +Y
+      // with the real a->b direction, so `diameterTop` is what ends
+      // up at 'b' (the far/wide end), and `diameterBottom` is what
+      // ends up at 'a' (the near/point end) -- the OPPOSITE of what
+      // the names alone suggest. The first version of this code
+      // assigned 0 to `topDiameter` and the wide formula to
+      // `bottomDiameter`, meaning the WIDE end rendered at 'a' and the
+      // POINT rendered at 'b' -- exactly backwards ("the wide end is
+      // at the character while the point is far away, which is the
+      // opposite of what you want"). Swapped here to match "first
+      // point start[s narrow], second part[is the] wide flat part."
+      const topDiameter = kind === "beam" ? beamWidth : 2 * axisLength * Math.tan((coneDegrees * Math.PI) / 180 / 2);
+      const bottomDiameter = kind === "beam" ? beamWidth : 0;
       const tessellation = kind === "beam" ? 16 : isFrustumFlag ? 4 : 24;
       const mesh = BABYLON.MeshBuilder.CreateCylinder(`${idPrefix}-${kind}`, { height: axisLength, diameterTop: topDiameter, diameterBottom: bottomDiameter, tessellation }, scene);
       mesh.position = mid;
@@ -358,7 +398,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         mesh.rotationQuaternion = BABYLON.Quaternion.RotationAxis(rotAxis, angle);
       }
       mesh.material = mat;
-      mesh.isPickable = false;
+      mesh.isPickable = pickable;
       noa.rendering.addMeshToScene(mesh, false);
       meshes.push(mesh);
       if (kind === "beam") {
@@ -368,12 +408,12 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         // vertex along the vertical axis, regardless of rotation --
         // NOT "the tip" or "the near cap" (see shapeAabb's own doc
         // and this feature's doc for why that framing is wrong once
-        // the shape can be rotated). The near end is always a literal
-        // point (topDiameter 0) now, so its own candidate is just
-        // that point's own Y; the far end is bounded by its own
-        // radius regardless of round-vs-square cross-section.
-        const topCandidate1 = mid.add(halfAxis).y + bottomDiameter / 2;
-        const topCandidate2 = mid.subtract(halfAxis).y;
+        // the shape can be rotated). `mid.add(halfAxis)` is the 'b'
+        // (far/wide) end -- which the diameter swap above puts
+        // `topDiameter` at; `mid.subtract(halfAxis)` is the 'a'
+        // (near/point) end, with `bottomDiameter` (always 0 here).
+        const topCandidate1 = mid.add(halfAxis).y + topDiameter / 2;
+        const topCandidate2 = mid.subtract(halfAxis).y + bottomDiameter / 2;
         const topY = Math.max(topCandidate1, topCandidate2);
         const aabb = shapeAabb("cone", points, coneDegrees);
         addLabelAt([mid.x, topY + 0.3, mid.z], ftPerVoxelLabel(axisLength, ftPV), billboardScaleFor(aabb));
@@ -391,7 +431,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const key = JSON.stringify([activeKind, activePoints, selectedIndex, coneDegreesValue, isFrustumValue, beamWidthValue]);
       if (ghostVisuals?.lastKey !== key) {
         if (ghostVisuals) disposeVisuals(ghostVisuals);
-        ghostVisuals = buildShapeVisuals("measurement-ghost", ghostMaterial, activeKind, activePoints, coneDegreesValue, isFrustumValue, beamWidthValue);
+        ghostVisuals = buildShapeVisuals("measurement-ghost", ghostMaterial, activeKind, activePoints, coneDegreesValue, isFrustumValue, beamWidthValue, false);
         ghostVisuals.lastKey = key;
       }
     } else if (ghostVisuals) {
@@ -411,7 +451,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const existing = visualsByShapeId.get(shape.shapeId);
       if (existing?.lastKey === key) continue;
       if (existing) disposeVisuals(existing);
-      const fresh = buildShapeVisuals(`measurement-${shape.shapeId}`, material, shape.kind as MeasurementShapeKind, points, shape.coneDegrees, shape.isFrustum, shape.beamWidth);
+      const fresh = buildShapeVisuals(`measurement-${shape.shapeId}`, material, shape.kind as MeasurementShapeKind, points, shape.coneDegrees, shape.isFrustum, shape.beamWidth, true);
       fresh.lastKey = key;
       visualsByShapeId.set(shape.shapeId, fresh);
     }
@@ -423,16 +463,36 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     }
   });
 
+  function setMeasureModeActive(enabled: boolean): void {
+    if (enabled === measureModeActive) return;
+    measureModeActive = enabled;
+    if (enabled) {
+      requestCapture(MEASURE_MODE_CAPTURE_REASON);
+      noa.container.setPointerLock(false);
+    } else {
+      releaseCapture(MEASURE_MODE_CAPTURE_REASON);
+      noa.container.setPointerLock(true);
+      resetPlacement(); // discards whatever was still being placed -- nothing in-progress has been sent to the server yet
+    }
+  }
+
   return {
+    isMeasureModeActive: () => measureModeActive,
+    setMeasureModeActive,
     activeKind: () => activeKind,
+    // Real correction, 2026-10-24: "they all seem to be working off of
+    // the current and previous point, but really when I select a new
+    // shape it should reset the points" -- this used to seed point 1
+    // from the player's CURRENT position automatically, which is why
+    // every shape looked like it "started from the character" instead
+    // of waiting for a real first click. Selecting a shape type now
+    // only clears any in-progress placement and picks the kind --
+    // "the first click (on terrain OR a character instance...) places
+    // the first point," same as every point after it, no exceptions.
     selectKind(kind: MeasurementShapeKind): void {
       resetPlacement();
       activeKind = kind;
-      const pos = myLivePosition();
-      if (pos) {
-        activePoints = [snapPoint(pos, snapModeValue)];
-        selectedIndex = 0;
-      }
+      setMeasureModeActive(true); // picking a shape is how you start measuring -- real convenience, not asked for verbatim, but "Distance" alone (no shape yet) should also work on its own
     },
     snapMode: () => snapModeValue,
     setSnapMode(mode: SnapMode): void {
@@ -499,6 +559,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       document.addEventListener("mousedown", closeOnOutsideClick, true);
     },
     destroy(): void {
+      if (measureModeActive) releaseCapture(MEASURE_MODE_CAPTURE_REASON); // don't leak the capture claim past this module's own lifetime (e.g. a page/world switch mid-measure)
       if (ghostVisuals) disposeVisuals(ghostVisuals);
       for (const visuals of visualsByShapeId.values()) disposeVisuals(visuals);
       visualsByShapeId.clear();

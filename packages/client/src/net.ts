@@ -165,6 +165,8 @@ export interface WorldConnection {
   setWaypointAutoOff(enabled: boolean): void;
   /** modePanel.ts's "Turns" button, via game.ts -- toggles the turn tracker widget's own visibility. The widget owns its visibility state itself; this just flips it. */
   toggleTurnTracker(): void;
+  /** modePanel.ts's "Distance" button, via game.ts -- enters/exits Measure mode (measurementShapes.ts), which freezes character movement/camera look while active so WASD/Space/Shift/Tab control the point being placed instead. */
+  setMeasureModeActive(enabled: boolean): void;
 }
 
 export async function connectAndStreamWorld(
@@ -206,6 +208,10 @@ export async function connectAndStreamWorld(
   // onSeeThroughWallsChange just above.
   onWaypointAutoOnChange: (enabled: boolean) => void,
   onWaypointAutoOffChange: (enabled: boolean) => void,
+  // docs/BATTLE_SYSTEM.md's measurement shapes -- same "polled every
+  // tick" idiom, but the source is pure CLIENT state (measurementShapes'
+  // own closure), not a Schema field.
+  onMeasureModeChange: (active: boolean) => void,
 ): Promise<WorldConnection> {
   // noa starts emitting worldDataNeeded for chunks around the spawn point
   // almost immediately (well before a WebSocket connection + Colyseus
@@ -639,8 +645,18 @@ export async function connectAndStreamWorld(
   // bottom edge dropped below the intended clearance and into the box
   // ("intersecting... at 2.8 or 3.8"). Multiplying by the SAME scale
   // factor actually applied to the mesh fixes this for every size.
-  function tokenYOffsetFor(bodyHeight: number): number {
-    const scaledPlaneHeight = TOKEN_PLANE_HEIGHT * tokenScaleFor(bodyHeight);
+  // Real correction, 2026-10-24: "The billboard thing for the boxes,
+  // including for the character, should probably select the max
+  // largest axis, since I just made a wide short box and it had a
+  // tiny billboard." Applies here too, not just measurementShapes.ts's
+  // own cube/sphere/cone billboards -- the SAME tokenScaleFor
+  // function, just fed the largest of width/height/depth instead of
+  // height alone.
+  function billboardScale(bodyWidth: number, bodyHeight: number, bodyDepth: number): number {
+    return tokenScaleFor(Math.max(bodyWidth, bodyHeight, bodyDepth));
+  }
+  function tokenYOffsetFor(bodyWidth: number, bodyHeight: number, bodyDepth: number): number {
+    const scaledPlaneHeight = TOKEN_PLANE_HEIGHT * billboardScale(bodyWidth, bodyHeight, bodyDepth);
     const heightAboveFeet = bodyHeight + TOKEN_CLEARANCE_ABOVE_HEAD + scaledPlaneHeight / 2;
     return heightAboveFeet - bodyHeight / 2;
   }
@@ -844,6 +860,7 @@ export async function connectAndStreamWorld(
     onSeeThroughWallsChange(!!(room.state as { seeThroughWalls?: boolean } | undefined)?.seeThroughWalls);
     onWaypointAutoOnChange((room.state as WorldStateLike | undefined)?.waypointAutoOnWithTurnOrder ?? true);
     onWaypointAutoOffChange((room.state as WorldStateLike | undefined)?.waypointAutoOffWithoutTurnOrder ?? true);
+    onMeasureModeChange(measurementShapes.isMeasureModeActive());
 
     // Over a real connection (unlike @colyseus/testing's in-process
     // harness), the initial full-state sync can arrive a tick or two after
@@ -884,8 +901,8 @@ export async function connectAndStreamWorld(
           // directly -- see PlayerBodyMesh.tokenAnchor's own doc for
           // the real squish/offset-drift bug this fixes.
           localToken.mesh.parent = playerBodyMesh.tokenAnchor;
-          localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(c.bodyHeight), 0);
-          localToken.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
+          localToken.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(c.bodyWidth, c.bodyHeight, c.bodyDepth), 0);
+          localToken.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
           // Real bug found live: a mesh built via plain MeshBuilder and
           // just parented, without ever going through noa's own rendering
           // API, is NEVER added to noa's custom octree-based active-mesh
@@ -971,8 +988,8 @@ export async function connectAndStreamWorld(
 
         if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, c.bodyWidth, c.bodyHeight, c.bodyDepth)) {
           resizeLocalPlayerBody(noa, playerBodyMesh, c.bodyWidth, c.bodyHeight, c.bodyDepth);
-          localToken.mesh.position.y = tokenYOffsetFor(c.bodyHeight);
-          localToken.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
+          localToken.mesh.position.y = tokenYOffsetFor(c.bodyWidth, c.bodyHeight, c.bodyDepth);
+          localToken.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
         }
         localToken.update({
           name: c.characterName || p.name,
@@ -1016,8 +1033,8 @@ export async function connectAndStreamWorld(
         // box's own noa-driven position for free (the anchor is just
         // an extra link in the SAME parent chain).
         token.mesh.parent = anchor;
-        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(c.bodyHeight), 0);
-        token.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
+        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(c.bodyWidth, c.bodyHeight, c.bodyDepth), 0);
+        token.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
         noa.rendering.addMeshToScene(token.mesh, false); // see the matching comment on the local-token branch above -- same real bug, same fix
         remoteTokens.set(sessionId, token);
       } else {
@@ -1025,8 +1042,8 @@ export async function connectAndStreamWorld(
         material.diffuseColor = c.characterId ? new BABYLON.Color3(c.tokenColorR, c.tokenColorG, c.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
         if (bodySizeChanged(sessionId, c.bodyWidth, c.bodyHeight, c.bodyDepth)) {
           resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, c.bodyWidth, c.bodyHeight, c.bodyDepth);
-          token.mesh.position.y = tokenYOffsetFor(c.bodyHeight);
-          token.mesh.scaling.setAll(tokenScaleFor(c.bodyHeight));
+          token.mesh.position.y = tokenYOffsetFor(c.bodyWidth, c.bodyHeight, c.bodyDepth);
+          token.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
         }
       }
 
@@ -1073,8 +1090,8 @@ export async function connectAndStreamWorld(
 
         token = createCharacterToken(scene, other.characterName);
         token.mesh.parent = anchor;
-        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(other.bodyHeight), 0);
-        token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+        token.mesh.position = new BABYLON.Vector3(0, tokenYOffsetFor(other.bodyWidth, other.bodyHeight, other.bodyDepth), 0);
+        token.mesh.scaling.setAll(billboardScale(other.bodyWidth, other.bodyHeight, other.bodyDepth));
         noa.rendering.addMeshToScene(token.mesh, false);
         remoteTokens.set(key, token);
       } else {
@@ -1082,8 +1099,8 @@ export async function connectAndStreamWorld(
         material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
         if (bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth)) {
           resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth);
-          token.mesh.position.y = tokenYOffsetFor(other.bodyHeight);
-          token.mesh.scaling.setAll(tokenScaleFor(other.bodyHeight));
+          token.mesh.position.y = tokenYOffsetFor(other.bodyWidth, other.bodyHeight, other.bodyDepth);
+          token.mesh.scaling.setAll(billboardScale(other.bodyWidth, other.bodyHeight, other.bodyDepth));
         }
       }
 
@@ -1220,6 +1237,10 @@ export async function connectAndStreamWorld(
 
     toggleTurnTracker(): void {
       turnTracker.setVisible(!turnTracker.isVisible());
+    },
+
+    setMeasureModeActive(enabled: boolean): void {
+      measurementShapes.setMeasureModeActive(enabled);
     },
   };
 }
