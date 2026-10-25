@@ -165,6 +165,60 @@ Skills (the 20-row list, each with its own governing-stat + bonus
 formula) and the class/tier `IMPORTRANGE` lookups are real but
 smaller, best slotted in after step 3 rather than blocking it.
 
+### Gherkin
+
+```gherkin
+Feature: Importing a Lyrian Chronicles character sheet
+
+  Scenario: Importing from a URL is a client-side fetch, not a server-side one
+    Given a session has a public Google Sheets export URL for their
+      own filled-out Lyrian Chronicles character
+    When they trigger an import with that URL
+    Then the BROWSER fetches that export directly (no new server-side
+      "fetch an arbitrary URL" capability is ever exercised)
+    And the parsed result is what gets uploaded to the server
+
+  Scenario: Core's raw/point-buy stats become character-sheet variables
+    Given an imported sheet's Core tab has Toughness = 5
+    Then the imported character's own "Toughness" variable is set to 5
+
+  Scenario: A derived Core stat is a live formula, not a frozen snapshot
+    Given an imported character's Toughness is 5 and HP Bonus is 0
+    Then their HP variable shows 20 + (10 * 5) + 0 = 70, computed via a
+      real `{{lyrian-chronicles.hp(...)}}` library call -- matching the
+      sheet's own real formula for HP
+    When that character's Toughness later changes to 6 (e.g. a level-up)
+    Then HP recomputes to 20 + (10 * 6) + 0 = 80 WITHOUT a re-import --
+      the same live behavior the real spreadsheet has, not a value
+      frozen at import time
+
+  Scenario: Abilities, Breakthrough, and Custom Abilities merge into one page
+    Given an imported sheet has rows in its Abilities, Breakthrough, and
+      Custom Abilities tabs
+    Then the imported character has exactly one additional page (after
+      Core) listing every one of those rows together, not three
+      separate pages
+
+  Scenario: Inventory becomes its own page
+    Given an imported sheet has rows in its Inventory tab
+    Then the imported character has a separate "Inventory" page listing
+      those rows
+
+  Scenario: Out-of-scope tabs are not imported at all
+    Given an imported sheet has content in its Backstory, Journals,
+      Images, EXP & Transactions, and Leveling Planner tabs
+    Then none of that content appears anywhere on the imported
+      character's sheet
+
+  Scenario: Initiative gets a real roll button, not just a displayed number
+    Given an imported character's Initiative variable is 7
+    Then their Core page shows a clickable roll button for
+      "[[1d20+{initiative}]]"
+    When they click it
+    Then a real 1d20+7 roll posts to chat, the same way an ordinary
+      dice roll already does
+```
+
 ### Architecture
 
 Per the 2026-10-21 decision this un-defers: *"the import mechanism
@@ -205,7 +259,7 @@ native parsers per format."* Concretely:
    other mod a GM turns on for their game (consistent with the
    existing mod-management tab), or something else?
 
-## Part 2: Character token visuals (current/piloted character only)
+## Part 2: Character token visuals (every character)
 
 ### Request, verbatim
 
@@ -220,9 +274,11 @@ token, onto the character sheet as a fixed non-removable variable
 similar to width height and depth, which should then display on those
 character face billboards."*
 
-Scope, confirmed by "the CURRENT character box" -- only the character
-you're actively piloting/focused on (`playerBodyMesh.ts`'s own body
-mesh), not every remote/placed token in the world, for this pass.
+Scope, real correction 2026-10-25: applies to EVERY character token,
+not just the one you're piloting -- `playerBodyMesh.ts`'s own local
+body mesh AND net.ts's remote-player/other-character boxes
+(`net.ts:1023`/`net.ts:1085`) all get the same wireframe-box +
+circular-billboard treatment.
 
 ### What's there today (read directly, not guessed)
 
@@ -284,10 +340,12 @@ Feature: Current character's box renders as a colored wireframe, with a circular
     And the billboard's own width and height both equal that same
       diameter (a circle, not an ellipse)
 
-  Scenario: Only the currently-piloted character gets this treatment, for now
-    Given a session sees another player's remote character token, or a placed/other-character instance
-    Then that OTHER token still renders with today's existing box/
-      billboard appearance, unchanged by this feature
+  Scenario: Every character token gets this treatment, not just the one you're piloting
+    Given a session sees another player's remote character token, or a
+      placed/other-character instance
+    Then that OTHER token ALSO renders with the wireframe box + circular
+      billboard, tinted by ITS OWN token color -- same treatment as the
+      locally-piloted character, not a special case
 
   Scenario: Importing an image sets the character's token image, a fixed/non-removable variable
     Given a session opens their character's sheet
@@ -305,9 +363,10 @@ Feature: Current character's box renders as a colored wireframe, with a circular
 
   Scenario: A character with no tokenImage set still renders sensibly
     Given a character has never set a tokenImage
-    Then the circular billboard shows a flat fill of that character's
-      own token color (same color the wireframe box uses), not a
-      broken/blank texture
+    Then the circular billboard shows a simple ASCII/text smiley face
+      (e.g. ":)" ), colored to match that character's own token color,
+      not a broken/blank texture -- same spirit as the existing
+      token's own text-based rendering, not a new image asset
 ```
 
 ### Decided / defaulted
@@ -315,11 +374,13 @@ Feature: Current character's box renders as a colored wireframe, with a circular
 - **Image storage, confirmed 2026-10-25**: a new upload endpoint,
   writing to disk; the `tokenImage` variable holds a URL, not base64
   bytes -- keeps the Colyseus-synced character state small.
-- **Fallback for no image set** (defaulted, not explicitly asked): the
-  circular billboard shows a flat fill of the character's own token
-  color, same color the wireframe box itself uses -- no separate
-  placeholder asset needed, and it's never "broken/blank" since every
-  character already has a token color today.
+- **Fallback for no image set, real correction 2026-10-25**: an ASCII/
+  text smiley face (e.g. ":)" ), colored to match the character's own
+  token color -- "we already have text token[s], I think you could
+  just render the ascii smiley face code in a circle that matches the
+  character color." No new placeholder image asset needed; reuses the
+  same GUI-texture-based text rendering the existing billboard (name/
+  bars) already does, just a different control.
 - **Size/format limits** (defaulted): PNG/JPG/WebP, a modest max
   dimension (e.g. 512x512) and file size (e.g. 2MB) enforced at
   upload, same spirit as any ordinary avatar-upload limit elsewhere on
