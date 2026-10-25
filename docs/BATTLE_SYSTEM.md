@@ -373,31 +373,41 @@ turn tracker are not involved.
 - **Every shape gets its own measurement billboard** (real correction,
   2026-10-24, resolving what was an open question above), reusing the
   SAME billboard mechanism waypoints already use
-  (`characterToken.ts`'s billboard plane) -- positioned per shape:
-  - **Distance chain**: same as the existing waypoint system -- one
-    label per segment, positioned at that segment's own midpoint.
-  - **Cube**: one billboard above the cube, sized using the SAME
-    scale formula a character's own billboard already uses
-    (`tokenScaleFor(bodyHeight)` in net.ts, keyed off body dimensions)
-    -- real clarification, 2026-10-24: not a fixed/literal size: "same
-    size as a character's own billboard IF A CHARACTER WERE THAT EXACT
-    SIZE AND SHAPE," i.e. feed the cube's own dimensions through that
-    same formula, not a constant.
-  - **Sphere**: one billboard above the sphere.
-  - **Beam**: one billboard above its MIDDLE, same positioning style
-    the waypoint system already uses for a segment's label.
-  - **Cone/frustum**: one billboard above the mesh's own TOPMOST
-    VERTEX along the vertical axis (global Y, or whichever axis is
-    "up" in this engine) -- real correction, 2026-10-24: NOT "the tip
-    for a pointed cone, the near-cap's topmost point for a frustum"
-    (wrong -- that framing assumes a fixed orientation; rotate the
-    shape in roll/pitch/yaw and the geometric tip is no longer
-    necessarily the topmost point at all). Since a cone/frustum is
-    approximated as a mesh (a tip or far-cap, plus points arranged
-    around a circle for the near-cap/base -- no true curved geometry),
-    "topmost vertex by the up-axis" is a single rule that already
-    handles every rotation correctly, tip-vs-cap distinction or not --
-    no special-casing needed.
+  (`characterToken.ts`'s billboard plane).
+  - **Sizing -- ONE shared function for every shape, except the
+    distance chain and beam** (real correction, 2026-10-24: "these
+    should all be using the same function to keep the code clean"):
+    compute the AXIS-ALIGNED BOUNDING BOX that contains the shape
+    (for a cube that's just the cube itself; for a sphere, its
+    bounding box; for a cone/frustum, the bounding box of its own
+    mesh), then size the billboard exactly as if a CHARACTER had that
+    bounding box as its own body dimensions -- the same scale formula
+    a character's billboard already uses (`tokenScaleFor(bodyHeight)`
+    in net.ts), fed this AABB instead of a real character's body size.
+    One function, called with a different box per shape, not four
+    separate sizing rules. The distance chain and beam are excepted --
+    their billboards stay the existing fixed/default size (a thin
+    line's own AABB wouldn't produce a meaningful character-equivalent
+    box), same as the waypoint system's segment labels already are.
+  - **Positioning -- per shape**:
+    - **Distance chain**: same as the existing waypoint system -- one
+      label per segment, positioned at that segment's own midpoint.
+    - **Cube**: above the cube.
+    - **Sphere**: above the sphere.
+    - **Beam**: above its MIDDLE, same positioning style the waypoint
+      system already uses for a segment's label.
+    - **Cone/frustum**: above the mesh's own TOPMOST VERTEX along the
+      vertical axis (global Y, or whichever axis is "up" in this
+      engine) -- real correction, 2026-10-24: NOT "the tip for a
+      pointed cone, the near-cap's topmost point for a frustum"
+      (wrong -- that framing assumes a fixed orientation; rotate the
+      shape in roll/pitch/yaw and the geometric tip is no longer
+      necessarily the topmost point at all). Since a cone/frustum is
+      approximated as a mesh (a tip or far-cap, plus points arranged
+      around a circle for the near-cap/base -- no true curved
+      geometry), "topmost vertex by the up-axis" is a single rule
+      that already handles every rotation correctly, tip-vs-cap
+      distinction or not -- no special-casing needed.
   - Exact TEXT content per solid shape (radius? full dimensions? both?)
     still open -- see "Open questions" below.
 
@@ -826,30 +836,46 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then their segment's distance label ALSO reads 15 ft, same
       conversion as a measurement-shape label
 
-  Scenario: A cube's billboard sits above it, sized as if a character were that exact size and shape
+  Scenario: A cube's billboard sits above it, sized via its own AABB (which for a cube is just itself)
     Given a cube has been placed with specific width/height/depth
     Then its billboard appears above the cube
     And its size matches whatever a character's own billboard would be
-      IF that character's body dimensions equaled this cube's
-      width/height/depth (the same scale formula, not a fixed size)
+      IF that character's body dimensions equaled this cube's own
+      axis-aligned bounding box (the SAME scale formula every other
+      sized shape below also uses, not a fixed size)
 
-  Scenario: A sphere's billboard sits above it
-    Given a sphere has been placed
+  Scenario: A sphere's billboard sits above it, sized via its own bounding box through the SAME shared function
+    Given a sphere has been placed with a specific radius
     Then its billboard appears above the sphere
+    And its size matches whatever a character's own billboard would be
+      IF that character's body dimensions equaled the sphere's own
+      axis-aligned bounding box -- the exact same sizing function the
+      cube scenario above used, just given a different box
 
-  Scenario: A beam's billboard sits above its middle
-    Given a beam has been placed between a start and end point
-    Then its billboard appears above the segment's own midpoint, same
-      positioning style the waypoint system already uses for a
-      segment label
-
-  Scenario: A cone/frustum's billboard sits above its topmost vertex, regardless of rotation
+  Scenario: A cone/frustum's billboard sits above its topmost vertex, regardless of rotation, sized via its own bounding box
     Given a cone (or frustum) has been placed and then rotated in
       roll/pitch/yaw to some arbitrary orientation
     Then its billboard appears above whichever of its own vertices has
       the highest value along the vertical (up) axis -- NOT
       necessarily its geometric tip or cap, since rotation can put
       either one anywhere
+    And its size matches whatever a character's own billboard would be
+      IF that character's body dimensions equaled the cone/frustum's
+      own (rotation-aware) axis-aligned bounding box -- again, the
+      SAME shared sizing function, not a shape-specific one
+
+  Scenario: The distance chain and beam are excepted from AABB-based sizing -- they keep the existing fixed waypoint-style size
+    Given a distance-chain segment and a beam have each been placed
+    Then both of their billboards use the SAME fixed/default size the
+      existing waypoint system's segment labels already use
+    And neither one is sized via the AABB-to-character-scale function
+      the cube/sphere/cone scenarios above use
+
+  Scenario: A beam's billboard sits above its middle
+    Given a beam has been placed between a start and end point
+    Then its billboard appears above the segment's own midpoint, same
+      positioning style the waypoint system already uses for a
+      segment label
 
   Scenario: A distance chain's billboards match the waypoint system's own per-segment labels
     Given a distance chain has points P1, P2, and P3 placed in order
