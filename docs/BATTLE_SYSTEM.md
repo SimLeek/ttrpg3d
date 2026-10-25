@@ -127,26 +127,42 @@ Concretely:
   "roll → submit → auto-insert-sorted" flow itself is still not built;
   only the number + manual sort exist so far.
 
-### 3. Reset Turn (replaces the earlier Ctrl+Z framing entirely)
+### 3. Reset Turn / Ctrl+Z+Ctrl+Y (real correction, 2026-10-24: reverses the earlier "Ctrl+Z is the wrong mechanism" call)
 
-**Real correction**: Ctrl+Z was the wrong mechanism. A real Ctrl+Z, if
-ever built, should be a genuine multi-step undo history -- not a
-single special-cased "revert to turn start" action wearing that
-keybind. That real undo history is now `docs/DEFERRED.md` work, not
-part of this pass. **No keybind at all for this feature right now** --
-plain buttons and a context-menu item; a keybind can be decided later
-once there's a reason to.
+**History of this section, for context**: the first draft of this doc
+scoped Ctrl+Z as a single special-cased "revert to turn start" action,
+decided that was the wrong framing, split "Reset Turn" out as plain
+buttons/a context-menu item instead, and pushed "a real general-
+purpose Ctrl+Z undo history" to `docs/DEFERRED.md`. **That deferral is
+now reversed** (direct user call, 2026-10-24): "Reset turn would be
+nice but let's just add that in with a whole ctrl+z ctrl+y system
+which would include placing and removing blocks as well, and
+potentially movement/controls or at least pose snapshots." So this is
+now ONE feature again -- a real multi-step Ctrl+Z/Ctrl+Y undo/redo
+history whose scope explicitly includes block placement/removal and
+the turn-start revert this section always described, plus possibly
+movement/pose snapshots. **Not started yet** -- sequenced after
+"Measurement shapes" below (see that section's own note on why
+distance measurement, not this, is the actual next priority). Treat
+everything below as the STILL-VALID shape of the turn-revert half of
+this feature; the block-undo/pose-snapshot half needs its own design
+pass once work on it actually starts (what exactly "pose" snapshots
+means -- just position/yaw, or full movement state -- is explicitly
+open).
 
-The actual problem being solved, unchanged from before: *"if it's A's
-turn, and someone moves their character around to see something then
-forgets where they went... so that A can start their turn in an
-actual fair setup."*
+The turn-revert problem being solved, unchanged from the original
+framing: *"if it's A's turn, and someone moves their character around
+to see something then forgets where they went... so that A can start
+their turn in an actual fair setup."*
 
 - Every time **Next Turn** fires, snapshot every character currently
   in the turn order (position + relevant stat values) as of that
   moment. **Stored as a diff against live state**, not a full copy --
   confirmed by direct user call ("would need less storage and would
-  rarely cause issues").
+  rarely cause issues"). Likely the same storage shape the new block-
+  edit undo history wants too (a diff-based change log), though that's
+  not confirmed -- worth checking for shared implementation once this
+  is actually picked up.
 - **"Reset char"**: a right-click context-menu item on a token's own
   ROW in the turn-tracker widget (a separate context menu from the
   existing 3D-world token right-click menu, scoped to the tracker
@@ -159,6 +175,12 @@ actual fair setup."*
   everyone remembers to self-correct individually.
 - Scoped to while the turn tracker is actively running an order --
   there's no snapshot to revert to otherwise.
+- **Ctrl+Z/Ctrl+Y now ARE live keybinds** for the general undo/redo
+  history (real reversal of the earlier "no keybind... a keybind can
+  be decided later" framing, which only applied to the turn-revert-
+  alone version of this feature) -- scope/interaction with block
+  placement/removal and movement/pose is still open design work, not
+  specified further here yet.
 
 ### 4. Waypoint / distance measurement
 
@@ -285,16 +307,110 @@ of this round's earlier work, not a fixed constant the old game had no
 equivalent of). Confirmed in scope for this pass (low-risk, the sizing
 data already exists for other reasons).
 
+### 6. Measurement shapes (distance chain, cube, sphere, cone, beam)
+
+**The actual next priority** (direct user call, 2026-10-24), ahead of
+Initiative Rolls and the Reset Turn/Ctrl+Z+Ctrl+Y system above:
+"distance measurement makes more sense" to build next than Initiative
+Rolls, which isn't MVP-blocking since a GM can already type a roll
+number in by hand (phase 1's own GM-editable roll field). Not started
+yet -- this section is the requirements pass, same as every other
+section in this doc before it was built.
+
+Its own floating, non-modal panel -- **NOT** docked to the turn
+tracker, unlike the existing waypoint panel (real distinction, direct
+user call: "this should have its own floating box, similar to how
+the turn tracker had its floating ui"). Usable any time, independent
+of turn order/combat state entirely -- `waypointsEnabled` and the
+turn tracker are not involved.
+
+**Shared interaction model, every shape type:**
+
+- Clicking a shape-type button in the panel starts placing that
+  shape. The first click (on terrain OR a character instance, same
+  target choice waypoints/`characterPlacement.ts` already support)
+  places the first point.
+- Moving the mouse afterward shows a live PREVIEW of where the NEXT
+  point would land if clicked now -- the same ghost-preview mechanism
+  `characterPlacement.ts` already has for dropping a character onto
+  the world.
+- The most-recently-placed point is selected by default.
+- **WASD** moves the selected point along the ground: W/S move it
+  along the camera's forward/back direction (projected onto the
+  horizontal plane), snapped to the voxel grid; A/D strafe the same
+  way, camera-relative.
+- **Space** moves the selected point up one voxel; **Shift** moves it
+  down one voxel.
+- **Tab** selects the next point; **Shift+Tab** selects the previous
+  one -- wraps at either end (last point -> first, first point ->
+  last).
+- **Snap mode**: center / corner / free -- whether a placed/moved
+  point snaps to a voxel's center, a voxel's corner, or doesn't snap
+  at all. Exact scope (global panel setting vs. per-point) not yet
+  specified.
+- **Broadcast to others** checkbox -- whether this measurement object
+  is visible to every connected session, or stays local/private to
+  whoever placed it.
+- Each session has ONE current measurement object at a time -- same
+  "one chain" precedent waypoints already established (starting a new
+  one replaces whatever was active before).
+- Once placed/finalized, a measurement object PERSISTS in the world
+  (it does not auto-clear), rendered semi-transparent. Right-clicking
+  it in the 3D world deletes it. The panel also has its own "remove my
+  current measurement object" button, so deleting one doesn't strictly
+  require aiming a right-click at it in the 3D view.
+- Reuses the SAME billboard/distance-label mechanism waypoints already
+  use (`characterToken.ts`'s billboard plane) for whichever number
+  best describes that shape (segment distance for the chain; exact
+  label content for the solid shapes -- radius, dimensions, etc. --
+  not yet specified per shape).
+
+**Per-shape point count and meaning:**
+
+- **Distance chain**: like the existing waypoint chain, but its own
+  separate tool/object, independent of the turn-tracker-gated waypoint
+  feature. Arbitrary number of points; each consecutive pair gets its
+  own distance-labeled segment, same as waypoints already do. Tab
+  cycles through every placed point, not just two.
+- **Cube**: exactly 2 points, opposite corners. Tab toggles between
+  them. Shows a ghost cube preview following the mouse until the
+  second point is actually placed/confirmed.
+- **Sphere**: 2 points -- the first is the center, the second sets
+  only the RADIUS (its distance from the center), not an independent
+  3D position. Tabbable between the two, same as cube.
+- **Cone**: a start point and an end point (its axis), plus a numeric
+  **degrees** setting (the cone's angle) and a toggle between an
+  actual pointed **cone** and a **frustum** (truncated cone with a
+  flat near-cap -- the same shape the old Godot game already has).
+- **Beam**: a start point and an end point, plus a numeric **beam
+  width** setting.
+- Each shape type's own settings (degrees/frustum toggle for cone,
+  width for beam) show in the panel while that shape type is active --
+  "each of these at least some UI."
+
+**Settings:**
+
+- **ft per voxel**: a new per-world setting (lives in the world's own
+  settings/detail page, same place the generator/its params already
+  live), defaulting to **5** -- converts voxel-unit distances into a
+  feet display for every distance label this tool shows. Worth
+  confirming whether the EXISTING waypoint distance labels should also
+  read through this same setting (seems like the natural, consistent
+  answer, but never directly specified for that feature).
+
 ## Explicitly OUT of scope for this pass
 
 Tracked in `docs/DEFERRED.md` under "From item 6" instead of here:
 
-- **A general-purpose, multi-step Ctrl+Z undo history.** Real
-  correction: the earlier draft of this doc wrongly scoped Ctrl+Z as a
-  single "revert to turn start" action. If a real undo history is
-  ever built, it should actually be one -- not this. "Reset Turn"
-  above is the actual feature; it's buttons/context-menu items, no
-  keybind, for now.
+- **Terrain & multi-projective drawing.** Explicitly scoped by the
+  user as later work, not part of this pass or the measurement-shapes
+  section above ("the drawing on ground later on would just draw on
+  ground with an offset..."). Full technical capture lives in
+  `docs/DEFERRED.md`, not repeated here. Related to, but a fresh/
+  different design from, the existing voxel-fill draw tools already
+  scoped in `docs/PORTING_CHECKLIST.md`'s Phase 7 (DM tools) -- that
+  entry predates this one and should be reconciled with it once this
+  is actually picked up.
 - **Auto-triggering an encounter** (some trigger condition starts
   battle mode automatically, with AI/end-condition behavior). Real
   user call: "while it's fun, it's not quite vtt." The original old-
@@ -556,6 +672,109 @@ Feature: Waypoint panel UI (docked to the turn-order tracker)
       their OWN waypoints, as long as `waypointsEnabled` is true)
     And the on/off toggle button and the distance-metric dropdown are
       not visible to them
+
+Feature: Measurement shapes (its own panel, independent of the turn tracker)
+
+  Scenario: The panel is its own floating window, not docked to the turn tracker
+    Given no turn order is running at all
+    When a session opens the measurement-shapes panel
+    Then it appears as its own independent floating window
+    And it is fully usable with no turn order and no `waypointsEnabled` state involved
+
+  Scenario: Starting a distance chain and placing its first point
+    Given the measurement-shapes panel is open
+    When a session selects "Distance chain" and clicks on terrain
+    Then a first point is placed there, and it becomes the selected point
+
+  Scenario: A live preview follows the mouse before the next point is placed
+    Given a shape is actively being placed and has at least one point so far
+    When the session moves the mouse over new terrain (not yet clicking)
+    Then a ghost preview of the next point's position follows the cursor
+    And no new point is actually placed until the next click
+
+  Scenario: A distance chain supports more than two points, each segment labeled independently
+    Given a distance chain has points P1 and P2 placed, with a labeled
+      segment between them
+    When a third point P3 is placed
+    Then a second labeled segment connects P2 to P3
+    And the P1-to-P2 segment and its label are unchanged
+
+  Scenario: Cube placement shows a ghost cube until the second corner is confirmed
+    Given a session selects "Cube" and places its first corner
+    When they move the mouse before placing the second corner
+    Then a ghost preview of the resulting cube (first corner to the
+      cursor's current position) follows the cursor
+    And the real cube is not created until the second corner is placed
+
+  Scenario: Sphere's second point sets only the radius, not an independent position
+    Given a session selects "Sphere" and places its center point
+    When they place a second point elsewhere
+    Then the sphere's radius becomes the distance from the center to
+      that second point, not an independent 3D position
+
+  Scenario: Tab/Shift+Tab cycles through a shape's points, wrapping at the ends
+    Given a distance chain has points [P1, P2, P3] and P3 is selected
+    When the session presses Tab
+    Then P1 becomes selected (wrapped from the last point back to the first)
+    When the session then presses Shift+Tab
+    Then P3 becomes selected again (wrapped from the first point back to the last)
+
+  Scenario: WASD moves the selected point along the camera-relative ground plane, snapped to the voxel grid
+    Given a point is selected
+    When the session presses W
+    Then the selected point moves one voxel step in the camera's
+      forward direction (projected onto the horizontal plane), snapped
+      to the voxel grid
+    And every other point is unaffected
+
+  Scenario: Space/Shift move the selected point up/down one voxel
+    Given a point is selected
+    When the session presses Space
+    Then the selected point moves up by one voxel
+    When the session then presses Shift
+    Then the selected point moves back down by one voxel
+
+  Scenario: Cone has a degrees setting and a cone/frustum toggle
+    Given a session selects "Cone" and has placed its start and end point
+    Then the panel shows a numeric "degrees" field and a toggle between
+      "Cone" (pointed) and "Frustum" (flat near-cap)
+
+  Scenario: Beam has a width setting
+    Given a session selects "Beam" and has placed its start and end point
+    Then the panel shows a numeric "beam width" field
+
+  Scenario: A finalized measurement object persists in the world and is visually transparent
+    Given a shape has been fully placed (all its required points set)
+    Then it remains visible in the 3D world, rendered semi-transparent,
+      and does not disappear on its own
+
+  Scenario: Right-clicking a measurement object deletes it
+    Given a finalized measurement object exists in the world
+    When a session right-clicks it
+    Then it is deleted
+
+  Scenario: The panel's own "remove current" button deletes your active measurement object
+    Given a session has an active/finalized measurement object
+    When they click the panel's "remove my current measurement object" button
+    Then that object is deleted, without needing to right-click it in the 3D view
+
+  Scenario: Starting a new measurement object replaces the previous one
+    Given a session already has one measurement object placed
+    When that session starts placing a new one
+    Then the previous one is removed -- each session has only ONE
+      current measurement object at a time
+
+  Scenario: The broadcast checkbox controls whether others see your measurement object
+    Given a session is placing a measurement object with "Broadcast to
+      others" UNCHECKED
+    Then no other connected session sees that object
+    When that session checks "Broadcast to others"
+    Then every connected session sees it
+
+  Scenario: Distance labels read through the world's "ft per voxel" setting
+    Given a world's "ft per voxel" setting is 5 (the default)
+    And two points are 3 voxels apart
+    Then their distance label reads 15 ft, not "3" (a bare voxel count)
 ```
 
 ## UI/interaction reference
@@ -598,8 +817,13 @@ Feature: Waypoint panel UI (docked to the turn-order tracker)
    own tracker leaves it to the GM rather than baking in one. Whether
    the FUTURE automatic "insert sorted on every Initiative Roll" path
    needs its own separate default is still open.
-3. **"Reset char"/GM-reset keybind**, if any, is explicitly deferred
-   ("we'll decide a keybind later") -- not blocking this pass.
+3. **"Reset char"/GM-reset-everyone has no keybind of its own** -- still
+   true, but real correction 2026-10-24: this no longer means the
+   WHOLE feature is keybind-free. Ctrl+Z/Ctrl+Y are now live keybinds
+   for the broader undo/redo history this section is now part of (see
+   section 3's own history note) -- just not bound specifically to
+   "Reset char"/"reset everyone," which stay buttons/a context-menu
+   item.
 4. **No Finalize ("Enter") button in the waypoint panel**: the panel
    spec above only names `W+`/`W-` buttons, matching what was asked
    for directly -- Finalize stays keybind-only (Enter) for now. A
@@ -609,3 +833,22 @@ Feature: Waypoint panel UI (docked to the turn-order tracker)
    inside the panel's expanded state, a world-level setting) is this
    doc's own best guess at where it should live -- never directly
    specified by the user, unlike everything else in this section.
+6. **Measurement shapes' snap mode** (center/corner/free): whether this
+   is one setting for the whole panel, one per shape type, or one per
+   individual point, isn't specified.
+7. **Measurement shapes' labels for the solid shapes** (cube/sphere/
+   cone/beam): the distance CHAIN's label content is obvious (segment
+   distance, same as waypoints); what number(s) the other shapes show
+   on their own billboard (radius? dimensions? both?) isn't specified.
+8. **Whether the existing waypoint distance labels should also read
+   through the new "ft per voxel" world setting**: seems like the
+   natural, consistent answer (it's the same underlying "distance
+   display" concept), but the user scoped "ft per voxel" while
+   describing measurement shapes specifically, not waypoints -- worth
+   confirming before wiring it through both.
+9. **Measurement-shapes point placement/movement isn't specified as
+   network-synced or not**, beyond the "Broadcast to others" checkbox
+   controlling whether the FINALIZED object is shared -- whether the
+   live drag/placement-in-progress is itself visible to others (if
+   broadcast is checked) or only becomes visible once finalized isn't
+   specified.
