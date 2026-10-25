@@ -51,7 +51,7 @@ function fakeTokenInteraction(overrides: Partial<TokenInteractionHooks> = {}) {
 
 function fakeMeasurementPlacement(overrides: Partial<MeasurementPlacementHooks> = {}) {
   return {
-    isPlacing: () => false,
+    isMeasureModeActive: () => false,
     onPlacePoint: vi.fn(),
     pickObjectAtCursor: () => undefined,
     openContextMenu: vi.fn(),
@@ -162,7 +162,7 @@ describe("installVoxelEditor's Default/Select mode gating (MVP goal items 1-2 fo
 describe("installVoxelEditor's measurementPlacement hook (docs/BATTLE_SYSTEM.md's measurement shapes)", () => {
   it("fire places a measurement point instead of breaking a block, while a shape is actively being placed, even in Default (pointer-locked) mode", () => {
     const { noa, setBlock, fire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
-    const measurementPlacement = fakeMeasurementPlacement({ isPlacing: () => true });
+    const measurementPlacement = fakeMeasurementPlacement({ isMeasureModeActive: () => true });
     installVoxelEditor(noa, () => null, vi.fn(), undefined, undefined, measurementPlacement);
 
     fire();
@@ -173,7 +173,7 @@ describe("installVoxelEditor's measurementPlacement hook (docs/BATTLE_SYSTEM.md'
 
   it("fire falls through to normal block-editing once nothing is being placed", () => {
     const { noa, setBlock, fire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
-    const measurementPlacement = fakeMeasurementPlacement({ isPlacing: () => false });
+    const measurementPlacement = fakeMeasurementPlacement({ isMeasureModeActive: () => false });
     installVoxelEditor(noa, () => null, vi.fn(), undefined, undefined, measurementPlacement);
 
     fire();

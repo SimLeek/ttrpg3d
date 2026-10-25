@@ -44,6 +44,8 @@ export interface MeasurementPanelOptions {
   onSetBeamWidth(width: number): void;
   /** Real request: "there should also be an option to remove your current measurement object in the distance dialog UI" -- same action right-clicking your own placed shape's context menu's "Delete" entry triggers. */
   onRemoveCurrent(): void;
+  /** Real request, 2026-10-24: "capturing the mouse can work but there should be a special capture mouse button for that so the player can move the camera" -- re-acquires pointer-lock for camera look WITHOUT leaving Measure mode (Escape, the browser's own native pointer-lock-exit, is how you come back). */
+  onRequestLookAround(): void;
   /** GM-only, per-world (docs/BATTLE_SYSTEM.md's own cross-reference: "lives in the world's own settings/detail page, same place the generator/its params already live" -- no such page exists yet in this codebase, so this panel is where it lives for now, same precedent the waypoint panel's own distance-metric dropdown already set). */
   isGM: () => boolean;
   ftPerVoxel: () => number;
@@ -53,6 +55,9 @@ export interface MeasurementPanelOptions {
 export interface MeasurementPanelController {
   /** Same "poll fresh every tick, skip the rebuild when nothing relevant changed" idiom turnTracker.ts/waypointPanel.ts's own update() uses. */
   update(): void;
+  /** Real request, 2026-10-24: "similar to the turns button, clicking the distance mode button should open or close the measure floating UI and the measure UI shouldn't just be there always as it currently is." Same setVisible/isVisible shape turnTracker.ts's own widget already has -- hidden (`display: none`) by default, not just collapsed. */
+  setVisible(visible: boolean): void;
+  isVisible(): boolean;
   destroy(): void;
 }
 
@@ -60,7 +65,7 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
   const container = document.createElement("div");
   container.innerHTML = `
     <style>
-      .measurement-panel { position: fixed; top: 80px; left: 260px; width: 170px; display: flex; flex-direction: column; background: rgba(20,20,24,0.92); border: 1px solid rgba(200,200,200,0.4); border-radius: 6px; font-family: system-ui, sans-serif; color: #eee; font-size: 12px; z-index: 500; overflow: hidden; }
+      .measurement-panel { position: fixed; top: 80px; left: 260px; width: 170px; display: none; flex-direction: column; background: rgba(20,20,24,0.92); border: 1px solid rgba(200,200,200,0.4); border-radius: 6px; font-family: system-ui, sans-serif; color: #eee; font-size: 12px; z-index: 500; overflow: hidden; }
       .measurement-panel.collapsed { width: ${COLLAPSED_WIDTH}px !important; }
       .measurement-panel.collapsed .measurement-panel-body { display: none; }
       .measurement-panel-header { display: flex; align-items: center; gap: 4px; padding: 4px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(200,200,200,0.3); cursor: move; }
@@ -96,6 +101,7 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
         </label>
         <div class="measurement-panel-shape-settings" id="measurement-shape-settings"></div>
         <button type="button" id="measurement-remove-current-btn">Remove my current object</button>
+        <button type="button" id="measurement-look-around-btn" title="Temporarily move the camera with the mouse, without leaving Measure mode -- press Esc to go back to placing/editing points">Look around</button>
         <div id="measurement-gm-controls"></div>
       </div>
     </div>
@@ -110,6 +116,7 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
   const broadcastInput = container.querySelector<HTMLInputElement>("#measurement-broadcast-input")!;
   const shapeSettings = container.querySelector<HTMLDivElement>("#measurement-shape-settings")!;
   const removeCurrentBtn = container.querySelector<HTMLButtonElement>("#measurement-remove-current-btn")!;
+  const lookAroundBtn = container.querySelector<HTMLButtonElement>("#measurement-look-around-btn")!;
   const gmControls = container.querySelector<HTMLDivElement>("#measurement-gm-controls")!;
 
   let collapsed = false;
@@ -161,6 +168,7 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
   broadcastInput.addEventListener("change", () => options.onSetBroadcast(broadcastInput.checked));
 
   removeCurrentBtn.addEventListener("click", () => options.onRemoveCurrent());
+  lookAroundBtn.addEventListener("click", () => options.onRequestLookAround());
 
   function renderShapeSettings(): void {
     const kind = options.activeKind();
@@ -209,6 +217,8 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
     }
   }
 
+  let visible = false;
+
   let lastActiveKind = options.activeKind();
   let lastIsGM = options.isGM();
   let lastFtPerVoxel = options.ftPerVoxel();
@@ -232,6 +242,11 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
         renderGmControls();
       }
     },
+    setVisible(nextVisible: boolean): void {
+      visible = nextVisible;
+      panel.style.display = visible ? "flex" : "none";
+    },
+    isVisible: () => visible,
     destroy(): void {
       document.removeEventListener("mousemove", onDocumentMouseMove);
       document.removeEventListener("mouseup", onDocumentMouseUp);

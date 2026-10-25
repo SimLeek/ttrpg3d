@@ -19,6 +19,7 @@ function mount(overrides: Partial<MeasurementPanelOptions> = {}) {
     beamWidth: () => 1,
     onSetBeamWidth: vi.fn(),
     onRemoveCurrent: vi.fn(),
+    onRequestLookAround: vi.fn(),
     isGM: () => true,
     ftPerVoxel: () => 5,
     onSetFtPerVoxel: vi.fn(),
@@ -146,5 +147,29 @@ describe("mountMeasurementPanel", () => {
     panel.update();
     expect(parent.querySelector("#measurement-beam-width")).toBeNull();
     expect(parent.querySelector("#measurement-cone-degrees")).not.toBeNull();
+  });
+
+  it("is hidden by default -- real request: \"the measure UI shouldn't just be there always as it currently is\"", () => {
+    const { panel } = mount();
+    expect(panel.isVisible()).toBe(false);
+    // jsdom's own `.style.display` only reflects an INLINE style, not
+    // the stylesheet's own default -- the inline style only gets set
+    // once setVisible() is actually called (covered below), so the
+    // controller's own isVisible() above is the real assertion here.
+  });
+
+  it("setVisible shows/hides the panel, same toggle shape the turn tracker's own widget uses", () => {
+    const { panel } = mount();
+    panel.setVisible(true);
+    expect(panel.isVisible()).toBe(true);
+    expect(parent.querySelector<HTMLDivElement>("#measurement-panel")!.style.display).toBe("flex");
+    panel.setVisible(false);
+    expect(parent.querySelector<HTMLDivElement>("#measurement-panel")!.style.display).toBe("none");
+  });
+
+  it("the Look around button calls onRequestLookAround -- real request: \"a special capture mouse button... so the player can move the camera\"", () => {
+    const { options } = mount();
+    parent.querySelector<HTMLButtonElement>("#measurement-look-around-btn")!.click();
+    expect(options.onRequestLookAround).toHaveBeenCalledOnce();
   });
 });

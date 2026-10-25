@@ -510,6 +510,7 @@ export async function connectAndStreamWorld(
     beamWidth: () => measurementShapes.beamWidth(),
     onSetBeamWidth: (width) => measurementShapes.setBeamWidth(width),
     onRemoveCurrent: () => measurementShapes.removeCurrentObject(),
+    onRequestLookAround: () => measurementShapes.requestLookAround(),
     isGM: () => isAdmin() && gmOverride.isActive(),
     ftPerVoxel: () => (room!.state as WorldStateLike | undefined)?.ftPerVoxel ?? 5,
     onSetFtPerVoxel: (value) => room!.send("setFtPerVoxel", { ftPerVoxel: value }),
@@ -838,7 +839,7 @@ export async function connectAndStreamWorld(
       },
     },
     {
-      isPlacing: () => measurementShapes.isPlacing(),
+      isMeasureModeActive: () => measurementShapes.isMeasureModeActive(),
       onPlacePoint: () => measurementShapes.onPlacePoint(),
       pickObjectAtCursor: () => measurementShapes.pickObjectAtCursor(),
       openContextMenu: (shapeId, x, y) => measurementShapes.openContextMenu(shapeId, x, y),
@@ -1241,6 +1242,7 @@ export async function connectAndStreamWorld(
 
     setMeasureModeActive(enabled: boolean): void {
       measurementShapes.setMeasureModeActive(enabled);
+      measurementPanel.setVisible(enabled); // real request: "clicking the distance mode button should open or close the measure floating UI," same toggle as the turn tracker's own "Turns" button
     },
   };
 }

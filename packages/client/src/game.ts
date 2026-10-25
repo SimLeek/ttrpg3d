@@ -434,7 +434,13 @@ export function startGame(
     // assigning it.
     onToggleTurnTracker: () => void connection.then((c) => c?.toggleTurnTracker()),
     isMeasureModeActive: () => measureModeActiveLocal,
-    onSelectMeasureMode: () => void connection.then((c) => c?.setMeasureModeActive(true)),
+    // Real request, 2026-10-24: "similar to the turns button, clicking
+    // the distance mode button should open or close the measure
+    // floating UI" -- a real TOGGLE now (open<->close), not an always-
+    // enter. Uses the already-mirrored local flag (kept fresh every
+    // tick below) rather than needing a separate round-trip to ask
+    // net.ts's own measurementShapes for its current state first.
+    onSelectMeasureMode: () => void connection.then((c) => c?.setMeasureModeActive(!measureModeActiveLocal)),
   });
 
   // Resolves to the real server connection once joinOrCreate() completes --

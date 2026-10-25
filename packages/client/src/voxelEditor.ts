@@ -80,16 +80,25 @@ export interface TokenInteractionHooks {
  * above already set, rather than a second competing listener that
  * would ALSO fire for the same click (noa's own input emitter has no
  * concept of one handler consuming an event before another runs).
- * Checked BEFORE every other branch in both handlers -- a shape being
- * actively placed, or an existing finalized shape under the cursor,
- * takes priority over block-editing/token-interaction in EITHER mode
- * (Default or Select), since "the first click (on terrain OR a
+ * Checked BEFORE every other branch in both handlers -- Measure mode
+ * being active at all, or an existing finalized shape under the
+ * cursor, takes priority over block-editing/token-interaction in
+ * EITHER Default/Select mode, since "the first click (on terrain OR a
  * character instance...)" was never scoped to just one of them.
  */
 export interface MeasurementPlacementHooks {
-  /** True while a shape-type button has been picked and the shape isn't finalized yet. */
-  isPlacing: () => boolean;
-  /** Fire while isPlacing() is true -- places (or finalizes, for a fixed-point-count shape's last point) the next point. Resolves its own correct pick point internally (center-screen while pointer-locked, the real cursor otherwise -- same `currentPickScreenPoint()` convention net.ts's own token picking already uses), same reason `pickOwnedToken`/`pickHoveredStatBar` above take no screen-point argument either. */
+  /**
+   * True whenever Measure mode (the mode-panel's "Distance" button) is
+   * active AT ALL -- real correction, 2026-10-24: this used to only be
+   * true once a shape type was actually picked, so clicking while in
+   * Measure mode but before picking one fell through to the normal
+   * Default/Select fire handling below, which could flip pointer-lock
+   * back on ("clicking the screen shouldn't enter into default mode
+   * and back to select, it should specifically be in distance mode").
+   * `onPlacePoint` itself already safely no-ops with nothing picked.
+   */
+  isMeasureModeActive: () => boolean;
+  /** Fire while isMeasureModeActive() is true -- places (or finalizes, for a fixed-point-count shape's last point) the next point. Resolves its own correct pick point internally (center-screen while pointer-locked, the real cursor otherwise -- same `currentPickScreenPoint()` convention net.ts's own token picking already uses), same reason `pickOwnedToken`/`pickHoveredStatBar` above take no screen-point argument either. */
   onPlacePoint: () => void;
   /** Alt-fire's own pick, checked whether or not a shape is currently being placed -- a FINALIZED measurement object persists indefinitely and should be right-clickable any time. Returns the shapeId under the cursor, if any -- same self-resolved pick point as onPlacePoint. */
   pickObjectAtCursor: () => string | undefined;
@@ -160,7 +169,7 @@ export function installVoxelEditor(
   // either/or: block editing ONLY in Default, token/stat/floating-UI
   // interaction ONLY in Select, never both from the same click.
   noa.inputs.down.on("fire", () => {
-    if (measurementPlacement?.isPlacing()) {
+    if (measurementPlacement?.isMeasureModeActive()) {
       measurementPlacement.onPlacePoint();
       return;
     }

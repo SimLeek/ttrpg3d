@@ -169,8 +169,17 @@ export interface MeasurementShapesController {
   beamWidth(): number;
   setBeamWidth(width: number): void;
   removeCurrentObject(): void;
-  /** Wired into voxelEditor.ts's installVoxelEditor as its `measurementPlacement` argument. */
-  isPlacing(): boolean;
+  /**
+   * The mode-panel's own "Look around" button -- real request,
+   * 2026-10-24: "capturing the mouse can work but there should be a
+   * special capture mouse button for that so the player can move the
+   * camera." Re-acquires pointer-lock (camera mouse-look) WITHOUT
+   * leaving Measure mode or releasing the movement-freeze capture --
+   * exiting back to the free cursor happens via the browser's own
+   * native Escape-exits-pointer-lock behavior, nothing bespoke needed.
+   */
+  requestLookAround(): void;
+  /** Wired into voxelEditor.ts's installVoxelEditor as its `measurementPlacement` argument -- reuses isMeasureModeActive() above directly, since a click should never fall through to normal block-editing/token-interaction while Measure mode is on at all, picked shape or not. */
   onPlacePoint(): void;
   pickObjectAtCursor(): string | undefined;
   openContextMenu(shapeId: string, screenX: number, screenY: number): void;
@@ -193,6 +202,16 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
   const ghostMaterial = material.clone("measurement-ghost-mat");
   ghostMaterial.alpha = OBJECT_ALPHA * 0.6; // a touch more transparent than a finalized object, so a preview always reads as "not real yet"
 
+  // Real request, 2026-10-24: "The selected point should change color
+  // so I can tell." A bright, fully-opaque material reused for
+  // whichever ghost point marker is currently selected (Tab/WASD
+  // target) -- distinct from every other marker's own (semi-
+  // transparent) shape-kind color.
+  const selectedPointMaterial = new BABYLON.StandardMaterial("measurement-selected-point-mat", scene);
+  selectedPointMaterial.diffuseColor = new BABYLON.Color3(1, 1, 1);
+  selectedPointMaterial.emissiveColor = new BABYLON.Color3(1, 1, 1);
+  selectedPointMaterial.specularColor = new BABYLON.Color3(0, 0, 0);
+
   function state(): WorldStateLike | undefined {
     return room.state as WorldStateLike | undefined;
   }
@@ -212,11 +231,25 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
   let coneDegreesValue = DEFAULT_CONE_DEGREES;
   let isFrustumValue = false;
   let beamWidthValue = DEFAULT_BEAM_WIDTH;
+  /**
+   * Real request, 2026-10-24: "if it's a 2 point object then holding
+   * should continually set the second point, until release where
+   * it's persisted as the measure object." True between the mousedown
+   * that placed a fixed-point-count shape's FIRST point and the
+   * mouseup that releases it -- every tick in between, point 2 tracks
+   * the cursor's own live raycast target (see the tick loop below),
+   * giving continuous visual feedback of the real shape as it's
+   * dragged, same as dragging a rectangle in a paint program. Never
+   * set for a chain -- each of its clicks is an independent, discrete
+   * new point, no drag-continuation.
+   */
+  let isDraggingSecondPoint = false;
 
   function resetPlacement(): void {
     activeKind = undefined;
     activePoints = [];
     selectedIndex = 0;
+    isDraggingSecondPoint = false;
   }
 
   function currentPickScreenPoint(): { x: number; y: number } {
@@ -231,6 +264,20 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     lastMouseScreen = { x: event.clientX, y: event.clientY };
   });
 
+  // Releases a fixed-point-count shape's own drag -- see
+  // isDraggingSecondPoint's own doc. A raw DOM listener, same
+  // precedent this file's own mousemove tracking above (and
+  // voxelEditor.ts's own lastClickScreen) already set, since noa's
+  // input system only exposes a discrete DOWN event ("fire"), not a
+  // paired up/release one. Real correction, 2026-10-24: release no
+  // longer finalizes by itself -- it just freezes point 2 wherever it
+  // was let go, leaving both points open to further Tab/WASD
+  // adjustment until Enter (shared with the chain's own finalize)
+  // actually persists it.
+  document.addEventListener("mouseup", () => {
+    isDraggingSecondPoint = false;
+  });
+
   /** Real correction, 2026-10-24 (same bug/fix characterPlacement.ts's own doc explains in full): `scene.createPickingRay`'s ray.origin is in noa's LOCAL (origin-shifted) frame, but `noa.pick()` expects GLOBAL and shifts it again internally -- converting back to global first avoids a silent double-shift. */
   function raycastTerrain(screenPoint: { x: number; y: number }): Point3 | undefined {
     const camera = scene.activeCamera;
@@ -239,7 +286,23 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     const pos = noa.localToGlobal([ray.origin.x, ray.origin.y, ray.origin.z], []) as [number, number, number];
     const dir = [ray.direction.x, ray.direction.y, ray.direction.z];
     const hit = noa.pick(pos, dir, 256);
-    return hit ? (hit.position as unknown as Point3) : undefined;
+    if (!hit) return undefined;
+    // Real bug found live: "when I tried free [snap mode], instead of
+    // placing the first dot it just dragged it to wherever the mouse
+    // was, and that happened for all other shapes [too]." noa reuses
+    // ONE mutable result object across every single pick() call (the
+    // same gotcha this file's own earlier diagnostic-logging doc
+    // already flagged for a different reason) -- `snapPoint`'s
+    // center/corner branches both return a freshly built array, which
+    // accidentally hid this by always copying the values out. "free"
+    // returns its input completely unchanged, so every point stored
+    // from a "free"-mode hit was secretly still pointing at noa's own
+    // internal buffer -- any LATER pick() call (the next tick's own
+    // drag update, or anything else that picks) kept mutating it out
+    // from under already-placed points. A plain spread copy here
+    // protects every caller uniformly, regardless of snap mode.
+    const p = hit.position as unknown as Point3;
+    return [p[0], p[1], p[2]];
   }
 
   function finalizeIfReady(): void {
@@ -256,7 +319,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     resetPlacement();
   }
 
-  // ---- Keybinds: WASD/Space/Shift move the selected point; Tab/Shift+Tab cycle selection; Enter finalizes a chain ----
+  // ---- Keybinds: WASD/Space/Shift move the selected point; Tab/Shift+Tab cycle selection; Enter finalizes ----
   window.addEventListener("keydown", (event) => {
     if (event.repeat) return;
     const activeTag = document.activeElement?.tagName;
@@ -278,7 +341,15 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     } else if (event.code === "Tab") {
       event.preventDefault(); // don't let it shift DOM focus away -- same guard focusCycling.ts's own Tab handler already applies
       selectedIndex = cycleIndex(activePoints.length, selectedIndex, event.shiftKey ? -1 : 1);
-    } else if (event.code === "Enter" && activeKind === "chain") {
+    } else if (event.code === "Enter") {
+      // Real correction, 2026-10-24: finalizes ANY kind now, not just
+      // a chain -- "when they're placed, I want to control the start
+      // and end points with tabbing, wasd space shift," which means a
+      // fixed-point-count shape also needs an explicit finalize step
+      // instead of auto-persisting the instant its drag releases.
+      // finalizeIfReady() itself still checks the required count, so
+      // this is a harmless no-op for a fixed-point-count shape that
+      // isn't fully placed yet.
       finalizeIfReady();
     }
   });
@@ -297,8 +368,24 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     for (const label of visuals.labels) label.dispose();
   }
 
-  /** Builds every mesh + billboard for one shape, finalized or still a ghost preview -- the SAME builder either way, just a different material/id prefix and (for a chain) a possible trailing live segment to the cursor's own preview point. */
-  function buildShapeVisuals(idPrefix: string, mat: BABYLON.Material, kind: MeasurementShapeKind, points: Point3[], coneDegrees: number, isFrustumFlag: boolean, beamWidth: number, pickable: boolean): ShapeVisuals {
+  /**
+   * Builds every mesh + billboard for one shape, finalized or still a
+   * ghost preview -- the SAME builder either way, just a different
+   * material/id prefix. `selectedIndex` only matters for a ghost
+   * (`undefined` for a finalized shape, which has no "selected point"
+   * concept any more).
+   *
+   * Real request, 2026-10-24: "no matter what the mode, clicking
+   * should generate a sphere/point so it shows feedback" and "the
+   * lack of ability to... tell if a point is placed make it hard to
+   * test" -- a point marker now renders for EVERY kind (not just
+   * chain), always, even before a 2-point shape has enough points to
+   * build its own real geometry yet. The selected one (Tab/WASD
+   * target) uses `selectedPointMaterial` (bright white) instead of the
+   * shape's own color, so it's visually obvious which point keyboard
+   * input currently affects.
+   */
+  function buildShapeVisuals(idPrefix: string, mat: BABYLON.Material, kind: MeasurementShapeKind, points: Point3[], coneDegrees: number, isFrustumFlag: boolean, beamWidth: number, pickable: boolean, selectedIndex?: number): ShapeVisuals {
     const meshes: BABYLON.Mesh[] = [];
     const labels: DistanceLabel[] = [];
     const ftPV = ftPerVoxel();
@@ -311,15 +398,16 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       labels.push(label);
     }
 
+    points.forEach((p, i) => {
+      const marker = BABYLON.MeshBuilder.CreateSphere(`${idPrefix}-pt-${i}`, { diameter: 0.3 }, scene);
+      marker.position = new BABYLON.Vector3(...p);
+      marker.material = i === selectedIndex ? selectedPointMaterial : mat;
+      marker.isPickable = pickable;
+      noa.rendering.addMeshToScene(marker, false);
+      meshes.push(marker);
+    });
+
     if (kind === "chain") {
-      points.forEach((p, i) => {
-        const marker = BABYLON.MeshBuilder.CreateSphere(`${idPrefix}-pt-${i}`, { diameter: 0.3 }, scene);
-        marker.position = new BABYLON.Vector3(...p);
-        marker.material = mat;
-        marker.isPickable = pickable;
-        noa.rendering.addMeshToScene(marker, false);
-        meshes.push(marker);
-      });
       for (let i = 0; i < points.length - 1; i++) {
         const a = points[i];
         const b = points[i + 1];
@@ -426,12 +514,19 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
   noa.on("tick", () => {
     const s = state();
 
+    // Live-drag point 2 of a fixed-point-count shape -- see
+    // isDraggingSecondPoint's own doc.
+    if (isDraggingSecondPoint && activePoints.length === 2) {
+      const hit = raycastTerrain(currentPickScreenPoint());
+      if (hit) activePoints[1] = snapPoint(hit, snapModeValue);
+    }
+
     // Ghost preview for the shape currently being placed.
     if (activeKind && activePoints.length > 0) {
       const key = JSON.stringify([activeKind, activePoints, selectedIndex, coneDegreesValue, isFrustumValue, beamWidthValue]);
       if (ghostVisuals?.lastKey !== key) {
         if (ghostVisuals) disposeVisuals(ghostVisuals);
-        ghostVisuals = buildShapeVisuals("measurement-ghost", ghostMaterial, activeKind, activePoints, coneDegreesValue, isFrustumValue, beamWidthValue, false);
+        ghostVisuals = buildShapeVisuals("measurement-ghost", ghostMaterial, activeKind, activePoints, coneDegreesValue, isFrustumValue, beamWidthValue, false, selectedIndex);
         ghostVisuals.lastKey = key;
       }
     } else if (ghostVisuals) {
@@ -518,16 +613,36 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const mine = Array.from(state()?.measurementShapes ?? []).find((s) => s.ownerAccountId === accountId);
       if (mine) room.send("deleteMeasurementShape", { shapeId: mine.shapeId });
     },
-    isPlacing: () => !!activeKind,
+    requestLookAround(): void {
+      noa.container.setPointerLock(true);
+    },
     onPlacePoint(): void {
-      if (!activeKind) return;
+      if (!activeKind || isDraggingSecondPoint) return; // already mid-drag -- this mousedown is the SAME press, not a new one (see installVoxelEditor's own "fire" doc: one emission per press)
+      const required = requiredPointCount(activeKind);
+      // Real correction, 2026-10-24: "when they're placed, I want to
+      // control the start and end points with tabbing, wasd space
+      // shift" -- a fixed-point-count shape no longer auto-finalizes
+      // the instant its last point lands (or, now, the instant its
+      // drag releases); once it has its required point count, further
+      // clicks are a no-op (not a 3rd point, not a re-finalize) --
+      // Tab/WASD adjust EITHER point from here, and Enter (below,
+      // shared with the chain's own finalize) actually persists it.
+      if (required !== undefined && activePoints.length >= required) return;
       const hit = raycastTerrain(currentPickScreenPoint());
       if (!hit) return;
       const point = snapPoint(hit, snapModeValue);
+      if (required !== undefined && activePoints.length === 0) {
+        // A fixed-point-count shape's FIRST point starts the drag --
+        // point 2 begins as a duplicate (degenerate until the cursor
+        // actually moves) and live-tracks the cursor every tick until
+        // mouseup (below) releases it.
+        activePoints.push(point, [point[0], point[1], point[2]]); // two INDEPENDENT arrays, not the same reference twice -- see raycastTerrain's own doc on why a shared/stale reference is exactly the kind of bug that bit this file already
+        selectedIndex = 1;
+        isDraggingSecondPoint = true;
+        return;
+      }
       activePoints.push(point);
       selectedIndex = activePoints.length - 1;
-      const required = requiredPointCount(activeKind);
-      if (required !== undefined && activePoints.length >= required) finalizeIfReady();
     },
     pickObjectAtCursor(): string | undefined {
       const screenPoint = currentPickScreenPoint();
@@ -565,6 +680,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       visualsByShapeId.clear();
       material.dispose();
       ghostMaterial.dispose();
+      selectedPointMaterial.dispose();
     },
   };
 }
