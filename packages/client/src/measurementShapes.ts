@@ -3,13 +3,16 @@
 // voxelEditor.ts's MeasurementPlacementHooks is how a world click
 // reaches this file instead of block-editing/token-interaction).
 //
-// Real scoping decision (BATTLE_SYSTEM.md's own doc notes this):
-// everything about a shape that's still being actively PLACED (the
-// ghost preview, WASD/Tab point editing) is pure client-side state --
-// nothing reaches the server until the shape is actually finalized (a
-// chain via Enter, a fixed-point-count shape -- cube/sphere/cone/beam
-// -- automatically the moment its last required point is placed).
-// Only the finalized result is ever sent, via "placeMeasurementShape".
+// Real correction, 2026-10-24: "there shouldn't really be a finalize,
+// once a player makes a measurement that should be the current one
+// and it should persist" -- there is no longer a separate "still
+// being placed, nothing sent yet" phase. A shape is sent to the
+// server (via "placeMeasurementShape") the moment it's first
+// meaningful (a fixed-point-count shape's drag releasing; a chain
+// gaining a 2nd point), and again on every later Tab/WASD edit --
+// see persistCurrent()'s own doc. Entering Measure mode or picking a
+// shape type is still pure client state until that first real point
+// exists.
 
 import * as BABYLON from "@babylonjs/core";
 import type { Engine } from "noa-engine";
@@ -169,6 +172,8 @@ export interface MeasurementShapesController {
   beamWidth(): number;
   setBeamWidth(width: number): void;
   removeCurrentObject(): void;
+  billboardsThroughTerrain(): boolean;
+  setBillboardsThroughTerrain(enabled: boolean): void;
   /**
    * The mode-panel's own "Look around" button -- real request,
    * 2026-10-24: "capturing the mouse can work but there should be a
@@ -188,6 +193,28 @@ export interface MeasurementShapesController {
 
 function ftPerVoxelLabel(voxelDistance: number, ftPerVoxel: number): string {
   return `${(voxelDistance * ftPerVoxel).toFixed(1)} ft`;
+}
+
+/**
+ * Real request, 2026-10-24: "there should also be an option so the
+ * billboards draw over everything similar to the waypoint system,
+ * just add a checkbox for it." Exact same two-part trick
+ * waypoints.ts's own showThroughTerrain already uses and documents in
+ * full (depth-function/no-depth-write for the alpha-blended label
+ * material, PLUS a higher renderingGroupId so draw order is
+ * guaranteed even against other opaque geometry in the same pass) --
+ * duplicated here rather than imported since waypoints.ts keeps its
+ * own copies private, same precedent this file's own billboard-
+ * scaling helper already follows for anything not explicitly shared.
+ * Only applied to the label mesh/material -- "the billboards," not
+ * the shape geometry itself.
+ */
+function applyShowThroughTerrainToLabel(label: DistanceLabel, showThroughTerrain: boolean): void {
+  label.mesh.renderingGroupId = showThroughTerrain ? 1 : 0;
+  if (label.mesh.material) {
+    label.mesh.material.disableDepthWrite = showThroughTerrain;
+    label.mesh.material.depthFunction = showThroughTerrain ? BABYLON.Constants.ALWAYS : BABYLON.Constants.LEQUAL;
+  }
 }
 
 export function installMeasurementShapes(noa: Engine, room: Room, _playerController: PlayerController, accountId: string): MeasurementShapesController {
@@ -221,6 +248,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
   }
 
   let measureModeActive = false;
+  let billboardsThroughTerrainValue = false;
 
   // ---- In-progress placement (pure client state until finalized) ----
   let activeKind: MeasurementShapeKind | undefined;
@@ -275,7 +303,9 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
   // adjustment until Enter (shared with the chain's own finalize)
   // actually persists it.
   document.addEventListener("mouseup", () => {
+    if (!isDraggingSecondPoint) return;
     isDraggingSecondPoint = false;
+    persistCurrent(); // real correction, 2026-10-24: see persistCurrent's own doc -- release is now the actual "make the measurement" moment, not just the end of the drag preview
   });
 
   /** Real correction, 2026-10-24 (same bug/fix characterPlacement.ts's own doc explains in full): `scene.createPickingRay`'s ray.origin is in noa's LOCAL (origin-shifted) frame, but `noa.pick()` expects GLOBAL and shifts it again internally -- converting back to global first avoids a silent double-shift. */
@@ -305,9 +335,34 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     return [p[0], p[1], p[2]];
   }
 
-  function finalizeIfReady(): void {
-    const required = requiredPointCount(activeKind!);
-    if (required !== undefined && activePoints.length < required) return;
+  function lookAround(): void {
+    noa.container.setPointerLock(true);
+  }
+
+  /**
+   * Real correction, 2026-10-24: "there shouldn't really be a
+   * finalize, once a player makes a measurement that should be the
+   * current one and it should persist... the current drag and
+   * measure and then tab and move around is good as the
+   * instantaneously persisted version." Replaces the old Enter-gated
+   * `finalizeIfReady` entirely -- sends the CURRENT point set to the
+   * server the moment there's something meaningful to show (a fixed-
+   * point-count shape's drag releasing; a chain gaining its 2nd+
+   * point), and again on every later Tab/WASD edit, WITHOUT resetting
+   * local state afterward -- `activeKind`/`activePoints` stay live so
+   * the player keeps editing the SAME already-persisted object.
+   * `placeMeasurementShape`'s own server-side handler already
+   * replaces the sender's previous shape on every call (WorldRoom.ts:
+   * "each session has one current measurement object at a time"), so
+   * no shapeId needs to be tracked client-side to know what to
+   * update -- every call here just re-describes the whole shape as it
+   * now stands.
+   */
+  function persistCurrent(): void {
+    if (!activeKind) return;
+    const required = requiredPointCount(activeKind);
+    const minimumMeaningfulPoints = activeKind === "chain" ? 2 : required ?? 1;
+    if (activePoints.length < minimumMeaningfulPoints) return;
     room.send("placeMeasurementShape", {
       kind: activeKind,
       points: activePoints.map(([x, y, z]) => ({ x, y, z })),
@@ -316,7 +371,6 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       isFrustum: isFrustumValue,
       beamWidth: beamWidthValue,
     });
-    resetPlacement();
   }
 
   // ---- Keybinds: WASD/Space/Shift move the selected point; Tab/Shift+Tab cycle selection; Enter finalizes ----
@@ -334,23 +388,23 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const inputY = (event.code === "KeyW" ? 1 : 0) - (event.code === "KeyS" ? 1 : 0);
       const [dx, dz] = movementStep(inputX, inputY, noa.camera.heading);
       activePoints[selectedIndex] = snapPoint([point[0] + dx, point[1], point[2] + dz], snapModeValue);
+      persistCurrent();
     } else if (event.code === "Space") {
       activePoints[selectedIndex] = [point[0], point[1] + 1, point[2]];
+      persistCurrent();
     } else if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
       activePoints[selectedIndex] = [point[0], point[1] - 1, point[2]];
+      persistCurrent();
     } else if (event.code === "Tab") {
       event.preventDefault(); // don't let it shift DOM focus away -- same guard focusCycling.ts's own Tab handler already applies
       selectedIndex = cycleIndex(activePoints.length, selectedIndex, event.shiftKey ? -1 : 1);
     } else if (event.code === "Enter") {
-      // Real correction, 2026-10-24: finalizes ANY kind now, not just
-      // a chain -- "when they're placed, I want to control the start
-      // and end points with tabbing, wasd space shift," which means a
-      // fixed-point-count shape also needs an explicit finalize step
-      // instead of auto-persisting the instant its drag releases.
-      // finalizeIfReady() itself still checks the required count, so
-      // this is a harmless no-op for a fixed-point-count shape that
-      // isn't fully placed yet.
-      finalizeIfReady();
+      // Real correction, 2026-10-24: Enter no longer finalizes anything
+      // (see persistCurrent's own doc on why there's no finalize step
+      // left to trigger) -- it's the "nice enter/esc combo" for camera
+      // control instead, explicitly requested: "enter currently gives
+      // cam control btw, I like it so I'd prefer to keep that."
+      lookAround();
     }
   });
 
@@ -395,6 +449,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       label.mesh.position = new BABYLON.Vector3(...pos);
       label.mesh.scaling.setAll(scale);
       noa.rendering.addMeshToScene(label.mesh, false);
+      applyShowThroughTerrainToLabel(label, billboardsThroughTerrainValue);
       labels.push(label);
     }
 
@@ -477,11 +532,33 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       // Aligns the cylinder's default local +Y axis with the real a->b
       // direction -- the standard "rotation between two vectors"
       // quaternion, since CreateCylinder always builds along local Y.
-      const up = BABYLON.Vector3.Up();
+      //
+      // Real bug found live: "the end square rotates unexpectedly" --
+      // for the frustum's square cross-section (tessellation 4), the
+      // minimal rotation's own roll AROUND the axis is whatever a
+      // cross-product with the reference vector happens to produce,
+      // which is numerically unstable (and visibly snaps/twists) as
+      // axisNormalized sweeps near-parallel to whichever reference
+      // vector feeds that cross product -- Cross(reference, axis) goes
+      // to near-zero length right there, so .normalize() on it
+      // amplifies tiny input changes into big output swings. Using
+      // world "up" as that reference means the singularity sits
+      // exactly where a cone/frustum is most likely to point during
+      // normal play (straight up/down), which is exactly what the
+      // user was hitting while dragging. Picking whichever of two
+      // near-orthogonal references (`up` vs `forward`) is LEAST
+      // parallel to the real axis keeps the cross product's magnitude
+      // away from zero for any axis direction actually reachable by
+      // dragging a point around near-horizontally, which is normal
+      // play -- it doesn't eliminate the one unavoidable singularity
+      // (the hairy ball theorem says no single continuous reference
+      // can), it just moves it somewhere a player is very unlikely to
+      // drag through.
+      const reference = Math.abs(BABYLON.Vector3.Dot(axisVec, BABYLON.Vector3.Up())) / axisLength > 0.9 ? BABYLON.Vector3.Forward() : BABYLON.Vector3.Up();
       const axisNormalized = axisVec.clone().normalize(); // clone first -- normalize() mutates in place, and axisVec's own un-normalized length is still needed below
-      const dot = BABYLON.Vector3.Dot(up, axisNormalized);
+      const dot = BABYLON.Vector3.Dot(reference, axisNormalized);
       if (dot < 0.9999) {
-        const rotAxis = dot < -0.9999 ? new BABYLON.Vector3(1, 0, 0) : BABYLON.Vector3.Cross(up, axisNormalized).normalize();
+        const rotAxis = dot < -0.9999 ? BABYLON.Vector3.Cross(BABYLON.Vector3.Right(), axisNormalized).normalize() : BABYLON.Vector3.Cross(reference, axisNormalized).normalize();
         const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
         mesh.rotationQuaternion = BABYLON.Quaternion.RotationAxis(rotAxis, angle);
       }
@@ -489,20 +566,33 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       mesh.isPickable = pickable;
       noa.rendering.addMeshToScene(mesh, false);
       meshes.push(mesh);
+      // Billboard goes above the mesh's own TOPMOST vertex along the
+      // vertical axis, regardless of rotation -- NOT "the tip"/"the
+      // near cap" (see shapeAabb's own doc and this feature's doc for
+      // why that framing is wrong once the shape can be rotated).
+      // `mid.add(halfAxis)` is the 'b' (far/wide) end -- which the
+      // diameter swap above puts `topDiameter` at; `mid.subtract(
+      // halfAxis)` is the 'a' (near) end, with `bottomDiameter`.
+      //
+      // Real bug found live: "I don't see the billboards over the
+      // cone and beam for some reason" -- beam's own label used to sit
+      // at a fixed `mid.y + 0.3`, which for anything but a thin/near-
+      // vertical beam lands INSIDE the beam's own solid cylinder (its
+      // radius is beamWidth/2 on every side of `mid`, and 0.3 is well
+      // under that for any beamWidth >= 0.6) -- buried inside the
+      // alpha-blended geometry rather than genuinely invisible, so it
+      // never looked "there." Beam now shares the exact same above-
+      // the-mesh placement cone/frustum already used correctly (its
+      // top/bottom diameters are equal, so this reduces to "above
+      // whichever end sits higher"); it keeps its own fixed/default
+      // label SIZE though (not the shared AABB-scale function -- see
+      // this feature's own doc on why beam is excepted from that).
+      const topCandidate1 = mid.add(halfAxis).y + topDiameter / 2;
+      const topCandidate2 = mid.subtract(halfAxis).y + bottomDiameter / 2;
+      const topY = Math.max(topCandidate1, topCandidate2);
       if (kind === "beam") {
-        addLabelAt([mid.x, mid.y + 0.3, mid.z], ftPerVoxelLabel(axisLength, ftPV)); // fixed/default size, same as the chain/waypoint billboards -- NOT the shared AABB-scale function (see this feature's own doc on why beam is excepted)
+        addLabelAt([mid.x, topY + 0.3, mid.z], ftPerVoxelLabel(axisLength, ftPV));
       } else {
-        // Cone/frustum billboard goes above the mesh's own TOPMOST
-        // vertex along the vertical axis, regardless of rotation --
-        // NOT "the tip" or "the near cap" (see shapeAabb's own doc
-        // and this feature's doc for why that framing is wrong once
-        // the shape can be rotated). `mid.add(halfAxis)` is the 'b'
-        // (far/wide) end -- which the diameter swap above puts
-        // `topDiameter` at; `mid.subtract(halfAxis)` is the 'a'
-        // (near/point) end, with `bottomDiameter` (always 0 here).
-        const topCandidate1 = mid.add(halfAxis).y + topDiameter / 2;
-        const topCandidate2 = mid.subtract(halfAxis).y + bottomDiameter / 2;
-        const topY = Math.max(topCandidate1, topCandidate2);
         const aabb = shapeAabb("cone", points, coneDegrees);
         addLabelAt([mid.x, topY + 0.3, mid.z], ftPerVoxelLabel(axisLength, ftPV), billboardScaleFor(aabb));
       }
@@ -523,7 +613,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
 
     // Ghost preview for the shape currently being placed.
     if (activeKind && activePoints.length > 0) {
-      const key = JSON.stringify([activeKind, activePoints, selectedIndex, coneDegreesValue, isFrustumValue, beamWidthValue]);
+      const key = JSON.stringify([activeKind, activePoints, selectedIndex, coneDegreesValue, isFrustumValue, beamWidthValue, billboardsThroughTerrainValue]);
       if (ghostVisuals?.lastKey !== key) {
         if (ghostVisuals) disposeVisuals(ghostVisuals);
         ghostVisuals = buildShapeVisuals("measurement-ghost", ghostMaterial, activeKind, activePoints, coneDegreesValue, isFrustumValue, beamWidthValue, false, selectedIndex);
@@ -542,7 +632,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       if (!shape.broadcast && shape.ownerAccountId !== accountId) continue;
       seen.add(shape.shapeId);
       const points: Point3[] = Array.from(shape.points, (p) => [p.x, p.y, p.z] as Point3);
-      const key = JSON.stringify([shape.kind, points, shape.coneDegrees, shape.isFrustum, shape.beamWidth, ftPerVoxel()]);
+      const key = JSON.stringify([shape.kind, points, shape.coneDegrees, shape.isFrustum, shape.beamWidth, ftPerVoxel(), billboardsThroughTerrainValue]);
       const existing = visualsByShapeId.get(shape.shapeId);
       if (existing?.lastKey === key) continue;
       if (existing) disposeVisuals(existing);
@@ -567,7 +657,11 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     } else {
       releaseCapture(MEASURE_MODE_CAPTURE_REASON);
       noa.container.setPointerLock(true);
-      resetPlacement(); // discards whatever was still being placed -- nothing in-progress has been sent to the server yet
+      // Only clears the LOCAL ghost/editing state -- whatever was
+      // already persisted via persistCurrent() stays on the server
+      // untouched ("once a player makes a measurement that should be
+      // the current one and it should persist").
+      resetPlacement();
     }
   }
 
@@ -613,9 +707,11 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const mine = Array.from(state()?.measurementShapes ?? []).find((s) => s.ownerAccountId === accountId);
       if (mine) room.send("deleteMeasurementShape", { shapeId: mine.shapeId });
     },
-    requestLookAround(): void {
-      noa.container.setPointerLock(true);
+    billboardsThroughTerrain: () => billboardsThroughTerrainValue,
+    setBillboardsThroughTerrain(enabled: boolean): void {
+      billboardsThroughTerrainValue = enabled;
     },
+    requestLookAround: lookAround,
     onPlacePoint(): void {
       if (!activeKind || isDraggingSecondPoint) return; // already mid-drag -- this mousedown is the SAME press, not a new one (see installVoxelEditor's own "fire" doc: one emission per press)
       const required = requiredPointCount(activeKind);
@@ -643,6 +739,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       }
       activePoints.push(point);
       selectedIndex = activePoints.length - 1;
+      persistCurrent(); // a chain has no drag-release moment of its own -- each added point IS the "make it" moment once there are enough to form a segment
     },
     pickObjectAtCursor(): string | undefined {
       const screenPoint = currentPickScreenPoint();

@@ -161,6 +161,20 @@ export function startGame(
     // shared atlas for cube types (see cubeAtlasIndex above), or the
     // plant textures loaded directly in plantMesh.ts's custom mesh.
     texturePath: "/textures/blocks/",
+    // Real bug found live: "it does capture the mouse and start
+    // controlling the camera when adding points to 'chain', which
+    // isn't intuitive." Root cause, confirmed directly in
+    // micro-game-shell's own source: noa's `stickyPointerLock`
+    // defaults to true, which wires a RAW click listener directly on
+    // the canvas element -- completely separate from and invisible to
+    // this project's own fire/alt-fire handling (voxelEditor.ts) --
+    // that re-requests pointer lock on literally every single click,
+    // regardless of mode. This project already has its own complete,
+    // deliberate pointer-lock management (Default/Select/Measure
+    // modes, chat focus, hotbar, the "Look around" button) with no
+    // need for noa's own "any click re-locks" convenience behavior,
+    // which actively fights it. Disabled globally.
+    stickyPointerLock: false,
   });
 
   const scene = noa.rendering.getScene();

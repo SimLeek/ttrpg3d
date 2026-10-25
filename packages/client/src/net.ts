@@ -510,6 +510,8 @@ export async function connectAndStreamWorld(
     beamWidth: () => measurementShapes.beamWidth(),
     onSetBeamWidth: (width) => measurementShapes.setBeamWidth(width),
     onRemoveCurrent: () => measurementShapes.removeCurrentObject(),
+    billboardsThroughTerrain: () => measurementShapes.billboardsThroughTerrain(),
+    onSetBillboardsThroughTerrain: (enabled) => measurementShapes.setBillboardsThroughTerrain(enabled),
     onRequestLookAround: () => measurementShapes.requestLookAround(),
     isGM: () => isAdmin() && gmOverride.isActive(),
     ftPerVoxel: () => (room!.state as WorldStateLike | undefined)?.ftPerVoxel ?? 5,

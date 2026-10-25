@@ -20,6 +20,8 @@ function mount(overrides: Partial<MeasurementPanelOptions> = {}) {
     onSetBeamWidth: vi.fn(),
     onRemoveCurrent: vi.fn(),
     onRequestLookAround: vi.fn(),
+    billboardsThroughTerrain: () => false,
+    onSetBillboardsThroughTerrain: vi.fn(),
     isGM: () => true,
     ftPerVoxel: () => 5,
     onSetFtPerVoxel: vi.fn(),
@@ -103,6 +105,15 @@ describe("mountMeasurementPanel", () => {
     checkbox.checked = false;
     checkbox.dispatchEvent(new Event("change"));
     expect(options.onSetBroadcast).toHaveBeenCalledWith(false);
+  });
+
+  it("the billboards-through-terrain checkbox reflects the current value and calls onSetBillboardsThroughTerrain when toggled -- real request: \"an option so the billboards draw over everything similar to the waypoint system\"", () => {
+    const { options } = mount({ billboardsThroughTerrain: () => true });
+    const checkbox = parent.querySelector<HTMLInputElement>("#measurement-billboards-through-terrain-input")!;
+    expect(checkbox.checked).toBe(true);
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(options.onSetBillboardsThroughTerrain).toHaveBeenCalledWith(false);
   });
 
   it("the remove-current button calls onRemoveCurrent -- real request: \"an option to remove your current measurement object in the distance dialog UI\"", () => {

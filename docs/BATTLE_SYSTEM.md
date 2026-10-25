@@ -348,6 +348,18 @@ turn tracker are not involved.
   rotatable. Picking a shape-type button in the measurement panel
   also auto-enters Measure mode as a convenience; clicking Default or
   Select exits it again (not a second click on Distance itself).
+  Real bug found live, 2026-10-24: clicking to place a point was
+  ALSO re-acquiring pointer-lock/camera control on every click, even
+  though this project's own mode routing correctly stayed in Measure
+  mode -- root cause was noa-engine's own built-in `stickyPointerLock`
+  default (a raw click listener on the canvas, completely separate
+  from and invisible to this feature's own click handling), not
+  anything in this feature itself. Disabled globally
+  (`stickyPointerLock: false` on the Engine). The only way back into
+  camera control from Measure mode is now the panel's own "Look
+  around" button (or pressing **Enter** -- see below); Escape exits
+  that look-around back to placing/editing points, same as it always
+  has for the browser's own native pointer-lock.
 - Clicking a shape-type button in the panel starts placing that
   shape. The first click (on terrain OR a character instance, same
   target choice waypoints/`characterPlacement.ts` already support)
@@ -379,6 +391,12 @@ turn tracker are not involved.
 - **Tab** selects the next point; **Shift+Tab** selects the previous
   one -- wraps at either end (last point -> first, first point ->
   last).
+- **Enter** re-acquires camera control (same as the panel's own "Look
+  around" button) -- real correction, 2026-10-24: there is no longer
+  a separate "finalize" action for Enter to trigger (see below), and
+  the user explicitly asked to keep Enter wired to camera control
+  regardless: "enter currently gives cam control btw, I like it so
+  I'd prefer to keep that, since it's a nice enter/esc combo."
 - **Snap mode**: center / corner / free -- whether a placed/moved
   point snaps to a voxel's center, a voxel's corner, or doesn't snap
   at all. Exact scope (global panel setting vs. per-point) not yet
@@ -389,8 +407,21 @@ turn tracker are not involved.
 - Each session has ONE current measurement object at a time -- same
   "one chain" precedent waypoints already established (starting a new
   one replaces whatever was active before).
-- Once placed/finalized, a measurement object PERSISTS in the world
-  (it does not auto-clear), rendered semi-transparent. **Right-
+- **No separate "finalize" step** -- real correction, 2026-10-24:
+  "there shouldn't really be a finalize, once a player makes a
+  measurement that should be the current one and it should persist."
+  The object is sent to the server (replacing this session's own
+  previous one) the moment it's first meaningful -- a fixed-point-
+  count shape's drag releasing, or a distance chain gaining its 2nd
+  point -- and again on every later Tab/WASD/Space/Shift edit, so
+  Tab-ing between points and nudging them afterward is editing the
+  SAME already-persisted, already-visible-to-others (if broadcast)
+  object the whole time, not a local-only draft. Picking a different
+  shape type abandons further edits to the old one (whatever was last
+  sent stays persisted until a new shape's own first meaningful point
+  replaces it).
+- Once placed, a measurement object PERSISTS in the world (it does
+  not auto-clear), rendered semi-transparent. **Right-
   clicking it in the 3D world opens a context menu** (real correction,
   2026-10-24: not an immediate delete) -- scoped separately from the
   existing character-token context menu, same "its own menu, not
@@ -403,6 +434,14 @@ turn tracker are not involved.
   2026-10-24, resolving what was an open question above), reusing the
   SAME billboard mechanism waypoints already use
   (`characterToken.ts`'s billboard plane).
+  - **"Billboards show through terrain" checkbox** (real request,
+    2026-10-24: "there should also be an option so the billboards
+    draw over everything similar to the waypoint system, just add a
+    checkbox for it") -- a per-player, client-side-only toggle in the
+    measurement panel, same depth-function + renderingGroupId trick
+    the waypoint system's own show-through-terrain toggle already
+    uses, applied here only to the billboards themselves (not the
+    shape geometry).
   - **Sizing -- ONE shared function for every shape, except the
     distance chain and beam** (real correction, 2026-10-24: "these
     should all be using the same function to keep the code clean"):
@@ -428,8 +467,13 @@ turn tracker are not involved.
       label per segment, positioned at that segment's own midpoint.
     - **Cube**: above the cube.
     - **Sphere**: above the sphere.
-    - **Beam**: above its MIDDLE, same positioning style the waypoint
-      system already uses for a segment's label.
+    - **Beam**: above the mesh's own topmost vertex, same rule as
+      cone/frustum below -- real bug found live, 2026-10-24: a beam's
+      billboard previously sat at a fixed height above its own
+      MIDPOINT, which for any beam of normal width lands inside the
+      beam's own solid, alpha-blended cylinder rather than genuinely
+      off-screen ("I don't see the billboards over the cone and beam
+      for some reason" -- it was there, just buried in the geometry).
     - **Cone/frustum**: above the mesh's own TOPMOST VERTEX along the
       vertical axis (global Y, or whichever axis is "up" in this
       engine) -- real correction, 2026-10-24: NOT "the tip for a
@@ -472,7 +516,19 @@ turn tracker are not involved.
   first point start and second part wide flat part" -- the FIRST
   point placed is always the narrow/point end, the SECOND is always
   the wide flat end, regardless of which one happens to be nearer the
-  player when placing.
+  player when placing. Real bug found live, 2026-10-24: a frustum's
+  square far end was visibly twisting/rotating in an unstable way as
+  its axis direction changed ("the end square rotates unexpectedly")
+  -- root cause was the quaternion aligning the mesh's own local +Y to
+  the real axis direction using world "up" as its reference vector,
+  which makes the rotation's roll around the axis numerically
+  unstable exactly when the axis points near-vertically (the most
+  common direction to drag a cone/frustum during normal play). Fixed
+  by switching the reference vector to whichever of world up/forward
+  is LEAST parallel to the current axis -- doesn't eliminate the one
+  unavoidable singularity any single continuous reference vector must
+  have, just moves it somewhere a player is very unlikely to drag
+  through.
 - **Beam**: a start point and an end point, plus a numeric **beam
   width** setting.
 - Each shape type's own settings (degrees/frustum toggle for cone,
@@ -789,7 +845,10 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Given a session is in Measure mode
     When they click "Default" (or "Select") in the mode panel
     Then character movement and camera look both work normally again
-    And whatever shape was still being placed (not yet finalized) is discarded
+    And local point-editing state (which point is selected, the ghost
+      preview) is cleared
+    And whatever was already persisted to the server before that click
+      stays in the world, unaffected
 
   Scenario: Selecting a shape type never auto-seeds a point from the player's position
     Given a session has just selected a shape type, with no click in the 3D world yet
@@ -880,13 +939,34 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Given a session selects "Beam" and has placed its start and end point
     Then the panel shows a numeric "beam width" field
 
-  Scenario: A finalized measurement object persists in the world and is visually transparent
-    Given a shape has been fully placed (all its required points set)
-    Then it remains visible in the 3D world, rendered semi-transparent,
-      and does not disappear on its own
+  Scenario: A measurement object persists in the world as soon as it's meaningful, with no separate finalize step
+    Given a session is placing a "Cube" and has dragged out its second corner
+    When they release the mouse
+    Then the cube is immediately sent to the server and persists in the
+      world, rendered semi-transparent, with no further action needed
+    Given a session is placing a "Distance chain"
+    When they click a second point
+    Then that chain (now with a real segment) is immediately sent to
+      the server too
+
+  Scenario: Tab and WASD/Space/Shift edit the already-persisted object, not a local draft
+    Given a cube has already been persisted (its drag was released)
+    When the session presses Tab and then W to move the selected point
+    Then that edit is sent to the server immediately, updating the SAME
+      object every other session (if broadcast) already sees -- not a
+      new object, and not a local-only change that needs a separate
+      step to take effect
+
+  Scenario: Enter gives camera control, the same as the panel's own "Look around" button
+    Given a session is in Measure mode, mid-edit on a point
+    When they press Enter
+    Then the mouse re-acquires camera control, exactly as clicking
+      "Look around" would
+    And nothing about the measurement object itself changes -- Enter
+      has no finalize behavior of its own
 
   Scenario: Right-clicking a measurement object opens a context menu, not an immediate delete
-    Given a finalized measurement object exists in the world
+    Given a measurement object exists in the world
     When a session right-clicks it
     Then a context menu opens, with "Delete" as its only entry
     And the object is NOT deleted yet
@@ -898,7 +978,7 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then that object is removed from the world
 
   Scenario: The panel's own "remove current" button deletes your active measurement object
-    Given a session has an active/finalized measurement object
+    Given a session has an active/persisted measurement object
     When they click the panel's "remove my current measurement object" button
     Then that object is deleted, without needing to right-click it in the 3D view
 
@@ -914,6 +994,15 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then no other connected session sees that object
     When that session checks "Broadcast to others"
     Then every connected session sees it
+
+  Scenario: The "billboards show through terrain" checkbox makes only the distance labels render on top of everything
+    Given a measurement object's billboard is currently hidden behind
+      terrain from the session's own point of view
+    When they check "Billboards show through terrain" in the panel
+    Then that billboard renders on top of the terrain (and any other
+      mesh) from then on
+    And the shape's own geometry (the cube/sphere/cone/etc. mesh
+      itself) is unaffected -- only its billboard
 
   Scenario: Distance labels read through the world's "ft per voxel" setting
     Given a world's "ft per voxel" setting is 5 (the default)
@@ -1041,9 +1130,11 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
    through the new "ft per voxel" world setting**~~ -- **resolved,
    2026-10-24**: yes, confirmed by direct user call. One setting, both
    features.
-9. **Measurement-shapes point placement/movement isn't specified as
-   network-synced or not**, beyond the "Broadcast to others" checkbox
-   controlling whether the FINALIZED object is shared -- whether the
-   live drag/placement-in-progress is itself visible to others (if
-   broadcast is checked) or only becomes visible once finalized isn't
-   specified.
+9. ~~**Measurement-shapes point placement/movement isn't specified as
+   network-synced or not**~~ -- **resolved, 2026-10-24**: there is no
+   "finalized" milestone left to gate this on (see section 6's own
+   "no separate finalize step" bullet) -- a shape (if broadcast) is
+   visible to others from the moment it's first meaningful (a drag
+   release, a chain's 2nd point), and every later Tab/WASD/Space/Shift
+   edit updates what they see too, live. The mid-drag preview itself
+   (before release) stays purely local/client-side, same as before.

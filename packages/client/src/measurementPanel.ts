@@ -44,6 +44,9 @@ export interface MeasurementPanelOptions {
   onSetBeamWidth(width: number): void;
   /** Real request: "there should also be an option to remove your current measurement object in the distance dialog UI" -- same action right-clicking your own placed shape's context menu's "Delete" entry triggers. */
   onRemoveCurrent(): void;
+  /** Real request, 2026-10-24: "there should also be an option so the billboards draw over everything similar to the waypoint system, just add a checkbox for it." Per-player, client-side only (same scope as waypoints.ts's own showThroughTerrain toggle) -- only affects the distance/info billboards, not the shape geometry itself. */
+  billboardsThroughTerrain: () => boolean;
+  onSetBillboardsThroughTerrain(enabled: boolean): void;
   /** Real request, 2026-10-24: "capturing the mouse can work but there should be a special capture mouse button for that so the player can move the camera" -- re-acquires pointer-lock for camera look WITHOUT leaving Measure mode (Escape, the browser's own native pointer-lock-exit, is how you come back). */
   onRequestLookAround(): void;
   /** GM-only, per-world (docs/BATTLE_SYSTEM.md's own cross-reference: "lives in the world's own settings/detail page, same place the generator/its params already live" -- no such page exists yet in this codebase, so this panel is where it lives for now, same precedent the waypoint panel's own distance-metric dropdown already set). */
@@ -99,6 +102,10 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
           <input type="checkbox" id="measurement-broadcast-input" />
           Broadcast to others
         </label>
+        <label class="measurement-panel-checkbox-row">
+          <input type="checkbox" id="measurement-billboards-through-terrain-input" />
+          Billboards show through terrain
+        </label>
         <div class="measurement-panel-shape-settings" id="measurement-shape-settings"></div>
         <button type="button" id="measurement-remove-current-btn">Remove my current object</button>
         <button type="button" id="measurement-look-around-btn" title="Temporarily move the camera with the mouse, without leaving Measure mode -- press Esc to go back to placing/editing points">Look around</button>
@@ -114,6 +121,7 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
   const shapesContainer = container.querySelector<HTMLDivElement>("#measurement-panel-shapes")!;
   const snapSelect = container.querySelector<HTMLSelectElement>("#measurement-snap-select")!;
   const broadcastInput = container.querySelector<HTMLInputElement>("#measurement-broadcast-input")!;
+  const billboardsThroughTerrainInput = container.querySelector<HTMLInputElement>("#measurement-billboards-through-terrain-input")!;
   const shapeSettings = container.querySelector<HTMLDivElement>("#measurement-shape-settings")!;
   const removeCurrentBtn = container.querySelector<HTMLButtonElement>("#measurement-remove-current-btn")!;
   const lookAroundBtn = container.querySelector<HTMLButtonElement>("#measurement-look-around-btn")!;
@@ -166,6 +174,9 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
 
   broadcastInput.checked = options.broadcast();
   broadcastInput.addEventListener("change", () => options.onSetBroadcast(broadcastInput.checked));
+
+  billboardsThroughTerrainInput.checked = options.billboardsThroughTerrain();
+  billboardsThroughTerrainInput.addEventListener("change", () => options.onSetBillboardsThroughTerrain(billboardsThroughTerrainInput.checked));
 
   removeCurrentBtn.addEventListener("click", () => options.onRemoveCurrent());
   lookAroundBtn.addEventListener("click", () => options.onRequestLookAround());
