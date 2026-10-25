@@ -244,6 +244,61 @@ export const TurnOrderEntryState = schema(
   "TurnOrderEntryState",
 );
 
+/** docs/BATTLE_SYSTEM.md's measurement shapes -- one point in a shape's own point list. Meaning depends on the owning shape's `kind`: for "chain" an arbitrary-length ordered waypoint-style list; for "cube" exactly 2 (opposite corners); for "sphere" exactly 2 (center, then a point whose DISTANCE from the center is the radius -- the point's own position beyond that distance is not otherwise meaningful); for "cone"/"beam" exactly 2 (start, end). */
+export const MeasurementPointState = schema(
+  {
+    x: t.number().default(0),
+    y: t.number().default(0),
+    z: t.number().default(0),
+  },
+  "MeasurementPointState",
+);
+
+/**
+ * docs/BATTLE_SYSTEM.md's "Measurement shapes" -- a finalized,
+ * persisted measurement/area-effect object (distance chain, cube,
+ * sphere, cone/frustum, or beam). Unlike the waypoint system, this is
+ * its OWN standalone tool, independent of the turn tracker/
+ * `waypointsEnabled` entirely.
+ *
+ * Real scoping decision, 2026-10-24 (the doc's own Gherkin leaves this
+ * open): the shared WASD/Tab/ghost-preview INTERACTION while a shape
+ * is still being actively placed is pure CLIENT-side state -- nothing
+ * is sent to the server until the shape is actually finalized (a
+ * chain via Enter, same convention the waypoint system's own Finalize
+ * already uses; a fixed-point-count shape -- cube/sphere/cone/beam --
+ * automatically the moment its LAST required point is placed, since
+ * there's no further editing possible once a 2-point shape has both
+ * points). Only the finalized result ever reaches this schema.
+ *
+ * Real scoping decision for `broadcast=false` ("local/private"):
+ * still persisted here (so it survives OWNER's own disconnect/
+ * refresh, same as everything else in this codebase), but every
+ * OTHER client's own render loop skips any entry whose
+ * `ownerAccountId` isn't theirs AND whose `broadcast` is false --
+ * there's no per-client Schema filtering anywhere in this codebase to
+ * reach for instead, and this project's standing "no anti-cheat, the
+ * client is trusted" stance (docs/ROADMAP.md) already accepts that
+ * tier of non-adversarial privacy elsewhere.
+ */
+export const MeasurementShapeState = schema(
+  {
+    shapeId: t.string().default(""),
+    /** "chain" | "cube" | "sphere" | "cone" | "beam". */
+    kind: t.string().default("chain"),
+    ownerAccountId: t.string().default(""),
+    points: t.array(MeasurementPointState),
+    broadcast: t.boolean().default(false),
+    /** Cone-only: the cone's own angle, in degrees. */
+    coneDegrees: t.number().default(60),
+    /** Cone-only: a flat-near-cap frustum instead of an actual pointed cone. */
+    isFrustum: t.boolean().default(false),
+    /** Beam-only, in voxels (same unit every point coordinate already uses). */
+    beamWidth: t.number().default(1),
+  },
+  "MeasurementShapeState",
+);
+
 export const WorldState = schema(
   {
     players: t.map(PlayerState),
@@ -285,6 +340,10 @@ export const WorldState = schema(
     waypointAutoOffWithoutTurnOrder: t.boolean().default(true),
     /** GM-only setting (the panel's expanded state) -- the Minkowski exponent `p` every displayed waypoint distance label uses (shared/src/distance.ts's `minkowskiDistance`). 1 = Manhattan, 2 (default) = ordinary Euclidean. Per-WORLD (not per-game): "a world-level setting shared by everyone's displayed distances, not a per-player one." */
     waypointDistanceMetricP: t.number().default(2),
+    /** docs/BATTLE_SYSTEM.md's measurement shapes -- every finalized measurement/area-effect object in this world (chain/cube/sphere/cone/beam). See MeasurementShapeState's own doc for the broadcast/privacy model. */
+    measurementShapes: t.array(MeasurementShapeState),
+    /** docs/BATTLE_SYSTEM.md's measurement shapes -- real correction, 2026-10-24: "we should have a 'ft per voxel' setting in the page details that defaults to 5"; retroactively also applies to the waypoint system's own distance labels (section 4's own cross-reference), not just measurement shapes -- one shared conversion, not two independent ones. Per-WORLD, same tier as waypointDistanceMetricP. */
+    ftPerVoxel: t.number().default(5),
   },
   "WorldState",
 );
@@ -297,3 +356,5 @@ export type BarStateType = InstanceType<typeof BarState>;
 export type OtherCharacterStateType = InstanceType<typeof OtherCharacterState>;
 export type TurnOrderEntryStateType = InstanceType<typeof TurnOrderEntryState>;
 export type WaypointStateType = InstanceType<typeof WaypointState>;
+export type MeasurementPointStateType = InstanceType<typeof MeasurementPointState>;
+export type MeasurementShapeStateType = InstanceType<typeof MeasurementShapeState>;

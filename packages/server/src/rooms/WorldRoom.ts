@@ -1,7 +1,7 @@
 import { Room, type Client } from "colyseus";
 import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
-import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, WaypointState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType } from "./WorldState.js";
-import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord, TurnOrderEntryRecord } from "../data/store.js";
+import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, WaypointState, MeasurementShapeState, MeasurementPointState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType, type MeasurementShapeStateType } from "./WorldState.js";
+import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord, TurnOrderEntryRecord, MeasurementShapeRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
 import { createWorldStorage, type WorldStorage } from "../world/storage.js";
 import { mod } from "../world/mathUtils.js";
@@ -450,6 +450,21 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     store.setTurnOrderForWorld(this.worldId, { entries, currentIndex: this.state.turnOrderCurrentIndex, round: this.state.turnOrderRound });
   }
 
+  /** docs/BATTLE_SYSTEM.md's measurement shapes -- same whole-list-overwrite shape as persistTurnOrder above, called after every place/delete. */
+  private persistMeasurementShapes(): void {
+    const shapes: MeasurementShapeRecord[] = this.state.measurementShapes.map((s) => ({
+      shapeId: s.shapeId,
+      kind: s.kind as MeasurementShapeRecord["kind"],
+      ownerAccountId: s.ownerAccountId,
+      points: Array.from(s.points).map((p) => ({ x: p.x, y: p.y, z: p.z })),
+      broadcast: s.broadcast,
+      coneDegrees: s.coneDegrees,
+      isFrustum: s.isFrustum,
+      beamWidth: s.beamWidth,
+    }));
+    store.setMeasurementShapesForWorld(this.worldId, shapes);
+  }
+
   /**
    * Rewrites the WHOLE turn order to `newOrder`'s order by reassigning
    * each slot's own FIELD VALUES onto the array's EXISTING
@@ -739,6 +754,36 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
     this.state.waypointDistanceMetricP = world?.waypointDistanceMetricP ?? 2;
     this.state.waypointAutoOnWithTurnOrder = game?.waypointAutoOnWithTurnOrder ?? true;
     this.state.waypointAutoOffWithoutTurnOrder = game?.waypointAutoOffWithoutTurnOrder ?? true;
+
+    // docs/BATTLE_SYSTEM.md's measurement shapes -- same per-WORLD
+    // persistence tier as waypointDistanceMetricP above (retroactively
+    // shared with the waypoint system's own distance labels too).
+    this.state.ftPerVoxel = world?.ftPerVoxel ?? 5;
+
+    // docs/BATTLE_SYSTEM.md's measurement shapes -- same "survives a
+    // room being recreated" load-back as placedCharacters/turnOrder
+    // above. A 1:1 field copy (MeasurementShapeRecord mirrors
+    // MeasurementShapeState exactly, see both types' own docs), not a
+    // re-resolve-against-something-else load like placedCharacters'
+    // bars/body-size.
+    for (const record of world?.measurementShapes ?? []) {
+      const shape = new MeasurementShapeState();
+      shape.shapeId = record.shapeId;
+      shape.kind = record.kind;
+      shape.ownerAccountId = record.ownerAccountId;
+      shape.broadcast = record.broadcast;
+      shape.coneDegrees = record.coneDegrees;
+      shape.isFrustum = record.isFrustum;
+      shape.beamWidth = record.beamWidth;
+      for (const p of record.points) {
+        const point = new MeasurementPointState();
+        point.x = p.x;
+        point.y = p.y;
+        point.z = p.z;
+        shape.points.push(point);
+      }
+      this.state.measurementShapes.push(shape);
+    }
 
     // Admin-only: sets the shared respawn anchor (Schema fields, auto-
     // synced to every client -- same mechanism the "pos" handler below
@@ -1311,6 +1356,80 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       if (!Number.isFinite(p) || p <= 0) return;
       this.state.waypointDistanceMetricP = p;
       store.setWaypointDistanceMetricForWorld(this.worldId, p);
+    });
+
+    // docs/BATTLE_SYSTEM.md's measurement shapes -- GM-only, per-WORLD,
+    // same tier as setWaypointDistanceMetric above (retroactively
+    // shared with the waypoint system's own distance labels too).
+    this.onMessage<{ ftPerVoxel: number }>("setFtPerVoxel", (client, { ftPerVoxel }) => {
+      if (!this.adminSessionIds.has(client.sessionId)) return;
+      if (!Number.isFinite(ftPerVoxel) || ftPerVoxel <= 0) return;
+      this.state.ftPerVoxel = ftPerVoxel;
+      store.setFtPerVoxelForWorld(this.worldId, ftPerVoxel);
+    });
+
+    // docs/BATTLE_SYSTEM.md's measurement shapes -- sent once, only
+    // when a shape is actually FINALIZED client-side (a chain via
+    // Enter; a fixed-point-count shape -- cube/sphere/cone/beam --
+    // the moment its last required point is placed). Everything
+    // before that (the live ghost-preview/WASD/Tab editing) is pure
+    // client-side state, never reaching the server at all -- see
+    // MeasurementShapeState's own doc for why. `shapeId` is always
+    // SERVER-generated (never trust a client-supplied id for
+    // identity, same convention every other id in this file already
+    // follows) -- the client discovers its own new shape's real id
+    // from the Schema sync that naturally follows this push, not from
+    // this message's own (nonexistent) reply.
+    this.onMessage<{ kind: string; points: { x: number; y: number; z: number }[]; broadcast: boolean; coneDegrees?: number; isFrustum?: boolean; beamWidth?: number }>(
+      "placeMeasurementShape",
+      (client, { kind, points, broadcast, coneDegrees, isFrustum, beamWidth }) => {
+        const sender = this.state.players.get(client.sessionId);
+        if (!sender) return;
+        if (!["chain", "cube", "sphere", "cone", "beam"].includes(kind)) return;
+        if (points.length === 0 || !points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z))) return;
+
+        // Real correction, 2026-10-24: "each session has ONE current
+        // measurement object at a time... starting a new one replaces
+        // whatever was active before" -- placing a new one discards
+        // this sender's own previous shape first (same single-slot
+        // precedent the waypoint chain already established).
+        const previousIndex = this.state.measurementShapes.findIndex((s) => s.ownerAccountId === sender.accountId);
+        if (previousIndex !== -1) this.state.measurementShapes.splice(previousIndex, 1);
+
+        const shape = new MeasurementShapeState();
+        shape.shapeId = newInstanceId();
+        shape.kind = kind;
+        shape.ownerAccountId = sender.accountId;
+        shape.broadcast = broadcast;
+        if (Number.isFinite(coneDegrees)) shape.coneDegrees = coneDegrees!;
+        shape.isFrustum = !!isFrustum;
+        if (Number.isFinite(beamWidth)) shape.beamWidth = beamWidth!;
+        for (const p of points) {
+          const point = new MeasurementPointState();
+          point.x = p.x;
+          point.y = p.y;
+          point.z = p.z;
+          shape.points.push(point);
+        }
+        this.state.measurementShapes.push(shape);
+        this.persistMeasurementShapes();
+      },
+    );
+
+    // The panel's own "remove my current measurement object" button,
+    // AND the 3D right-click context menu's "Delete" entry (both send
+    // the same message -- see MeasurementShapeState's own doc). Self-
+    // only (must own the shape) unless admin, same ownership tier
+    // every other instance-scoped handler in this file already uses.
+    this.onMessage<{ shapeId: string }>("deleteMeasurementShape", (client, { shapeId }) => {
+      const sender = this.state.players.get(client.sessionId);
+      const isAdmin = this.adminSessionIds.has(client.sessionId);
+      const index = this.state.measurementShapes.findIndex((s) => s.shapeId === shapeId);
+      if (index === -1) return;
+      const shape = this.state.measurementShapes[index];
+      if (shape.ownerAccountId !== sender?.accountId && !isAdmin) return;
+      this.state.measurementShapes.splice(index, 1);
+      this.persistMeasurementShapes();
     });
   }
 

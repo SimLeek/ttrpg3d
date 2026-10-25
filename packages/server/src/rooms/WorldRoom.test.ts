@@ -1737,6 +1737,179 @@ describe("WorldRoom", () => {
     });
   });
 
+  describe("measurement shapes (docs/BATTLE_SYSTEM.md)", () => {
+    it("placeMeasurementShape pushes a new, server-id'd shape owned by the sender", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-place-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-place-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Place Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      client.send("placeMeasurementShape", { kind: "chain", points: [{ x: 1, y: 2, z: 3 }, { x: 4, y: 5, z: 6 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.measurementShapes).toHaveLength(1);
+      const shape = room.state.measurementShapes[0];
+      expect(shape.shapeId).not.toBe("");
+      expect(shape.kind).toBe("chain");
+      expect(shape.ownerAccountId).toBe(owner.id);
+      expect(shape.broadcast).toBe(true);
+      expect(shape.points).toHaveLength(2);
+      expect(shape.points[1]).toMatchObject({ x: 4, y: 5, z: 6 });
+    });
+
+    it("rejects an unknown kind or any non-finite point coordinate", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-reject-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-reject-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Reject Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      client.send("placeMeasurementShape", { kind: "not-a-real-kind", points: [{ x: 1, y: 1, z: 1 }], broadcast: true });
+      client.send("placeMeasurementShape", { kind: "chain", points: [{ x: NaN, y: 1, z: 1 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.measurementShapes).toHaveLength(0);
+    });
+
+    it("cone/beam settings (coneDegrees/isFrustum/beamWidth) are stored as sent", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-cone-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-cone-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Cone Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      client.send("placeMeasurementShape", { kind: "cone", points: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 5, z: 0 }], broadcast: true, coneDegrees: 30, isFrustum: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const shape = room.state.measurementShapes[0];
+      expect(shape.coneDegrees).toBe(30);
+      expect(shape.isFrustum).toBe(true);
+    });
+
+    it("placing a new shape replaces the sender's own previous one -- real request: \"each session has ONE current measurement object at a time\"", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-replace-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-replace-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Replace Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      client.send("placeMeasurementShape", { kind: "chain", points: [{ x: 1, y: 1, z: 1 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes).toHaveLength(1);
+
+      client.send("placeMeasurementShape", { kind: "cube", points: [{ x: 2, y: 2, z: 2 }, { x: 3, y: 3, z: 3 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.measurementShapes).toHaveLength(1); // the chain was replaced, not appended
+      expect(room.state.measurementShapes[0].kind).toBe("cube");
+    });
+
+    it("two different sessions each keep their own current shape independently", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-independent-owner-${Date.now()}`);
+      const stranger = trackedAccount(`WorldRoom-test-ms-independent-stranger-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-independent-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Independent Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const a = await colyseus.connectTo(room, { accountId: owner.id });
+      const b = await colyseus.connectTo(room, { accountId: stranger.id });
+
+      a.send("placeMeasurementShape", { kind: "chain", points: [{ x: 1, y: 1, z: 1 }], broadcast: true });
+      b.send("placeMeasurementShape", { kind: "sphere", points: [{ x: 2, y: 2, z: 2 }, { x: 5, y: 2, z: 2 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.measurementShapes).toHaveLength(2);
+
+      a.send("placeMeasurementShape", { kind: "beam", points: [{ x: 9, y: 9, z: 9 }, { x: 10, y: 9, z: 9 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(room.state.measurementShapes).toHaveLength(2); // a's own was replaced, b's own is untouched
+      expect(room.state.measurementShapes.some((s) => s.ownerAccountId === stranger.id && s.kind === "sphere")).toBe(true);
+    });
+
+    it("deleteMeasurementShape (self-only, or admin) removes by shapeId", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-delete-owner-${Date.now()}`);
+      const stranger = trackedAccount(`WorldRoom-test-ms-delete-stranger-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-delete-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Delete Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+      const strangerClient = await colyseus.connectTo(room, { accountId: stranger.id });
+
+      client.send("placeMeasurementShape", { kind: "chain", points: [{ x: 1, y: 1, z: 1 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const shapeId = room.state.measurementShapes[0].shapeId;
+
+      strangerClient.send("deleteMeasurementShape", { shapeId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes).toHaveLength(1); // refused -- not the owner, not admin
+
+      client.send("deleteMeasurementShape", { shapeId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes).toHaveLength(0);
+    });
+
+    it("an admin can delete another session's shape", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-admindelete-owner-${Date.now()}`);
+      const player = trackedAccount(`WorldRoom-test-ms-admindelete-player-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-admindelete-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Admin Delete Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const playerClient = await colyseus.connectTo(room, { accountId: player.id });
+
+      playerClient.send("placeMeasurementShape", { kind: "chain", points: [{ x: 1, y: 1, z: 1 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const shapeId = room.state.measurementShapes[0].shapeId;
+
+      adminClient.send("deleteMeasurementShape", { shapeId });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes).toHaveLength(0);
+    });
+
+    it("measurement shapes and ftPerVoxel survive a room being recreated (real per-world storage)", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-persist-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-persist-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Persist Test World", "limestone_slab", SLAB_PARAMS);
+      const firstRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(firstRoom, { accountId: owner.id });
+      client.send("placeMeasurementShape", { kind: "chain", points: [{ x: 1, y: 1, z: 1 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      store.setFtPerVoxelForWorld(world.id, 10);
+
+      const secondRoom = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      expect(secondRoom.state.ftPerVoxel).toBe(10);
+      expect(secondRoom.state.measurementShapes).toHaveLength(1);
+      expect(secondRoom.state.measurementShapes[0]).toMatchObject({ kind: "chain", ownerAccountId: owner.id });
+      expect(secondRoom.state.measurementShapes[0].points[0]).toMatchObject({ x: 1, y: 1, z: 1 });
+    });
+
+    it("setFtPerVoxel (GM-only) persists per-world, rejects a non-finite/non-positive value, refused from a non-admin", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-ftpervoxel-owner-${Date.now()}`);
+      const stranger = trackedAccount(`WorldRoom-test-ms-ftpervoxel-stranger-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-ftpervoxel-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement FtPerVoxel Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const adminClient = await colyseus.connectTo(room, { accountId: owner.id });
+      const strangerClient = await colyseus.connectTo(room, { accountId: stranger.id });
+      expect(room.state.ftPerVoxel).toBe(5); // default
+
+      strangerClient.send("setFtPerVoxel", { ftPerVoxel: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.ftPerVoxel).toBe(5); // refused
+
+      adminClient.send("setFtPerVoxel", { ftPerVoxel: 0 });
+      adminClient.send("setFtPerVoxel", { ftPerVoxel: NaN });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.ftPerVoxel).toBe(5); // both rejected
+
+      adminClient.send("setFtPerVoxel", { ftPerVoxel: 10 });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.ftPerVoxel).toBe(10);
+      expect(store.getWorld(world.id)?.ftPerVoxel).toBe(10);
+    });
+  });
+
   describe("block edits persist (real per-world storage)", () => {
     it("an edited block is visible to another client in the same room immediately (broadcast)", async () => {
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: testWorldId });
