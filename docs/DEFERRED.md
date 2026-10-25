@@ -66,13 +66,16 @@ these pieces are explicitly NOT part of that first pass:
 
 ## From item 4 (full character-sheet authoring system)
 
-- **Mod-based sheet importers** (Excel sheets from paid westmarches
+- ~~**Mod-based sheet importers**~~ (Excel sheets from paid westmarches
   servers, Roll20/Foundry JSON exports, etc.) -- the import mechanism
   itself was always meant to be a pluggable mod interface, not bespoke
   native parsers per format. **Explicitly held pending real test data**
   (2026-10-21): "hold on mod based importers for now until I get some
   test sheets to work with" -- don't design the importer mod interface
-  against guessed shapes.
+  against guessed shapes. **Un-deferred, 2026-10-25**: real test data
+  now supplied (a public Lyrian Chronicles character sheet) -- full
+  requirements/Gherkin/open questions in
+  [docs/CHARACTER_SHEET_IMPORT.md](CHARACTER_SHEET_IMPORT.md).
 - **A safe/sandboxed scripting system** for calculated variables (e.g.
   a derived modifier) and RNG-driven attacks that auto-roll and post to
   chat. Partially covered today by `characterSheetLibrary` (trusted,
