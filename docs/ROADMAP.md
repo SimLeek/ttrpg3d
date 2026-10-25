@@ -106,7 +106,14 @@ discussion (2026-10-15), in dependency order:
      wouldn't call those small follow ups. We'll probably only do a
      portion of them... we should probably move them to a backlog/
      deferred page... so we can come back to those later while getting
-     a working system now"). The `ModContext` game-state split is in
+     a working system now"). **Mod-based sheet importers un-deferred,
+     2026-10-25** (real test data supplied -- a public Lyrian
+     Chronicles character sheet): full requirements + Gherkin +
+     proposed build order in
+     [docs/CHARACTER_SHEET_IMPORT.md](CHARACTER_SHEET_IMPORT.md), which
+     also covers a second, smaller item from the same request --
+     the piloted character's own token visuals (a colored wireframe
+     box + circular token-image billboard). The `ModContext` game-state split is in
      `docs/DEFERRED.md` too.
    - ~~Player body size as a permanent character-sheet variable~~,
      ~~HP/MP generalized to arbitrary billboard bars~~, ~~chat shows
