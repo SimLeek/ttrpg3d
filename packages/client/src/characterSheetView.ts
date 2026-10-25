@@ -29,8 +29,8 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_BODY_SIZE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
-import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
 
@@ -103,9 +103,38 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     parent.append(row);
   }
 
+  /**
+   * docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the reserved `tokenImage`
+   * variable's own editor row. Reuses `renderVariableRow`'s plain text
+   * widget above for manually typing/pasting a URL directly, and adds
+   * a file picker alongside it that uploads the chosen image and
+   * fills that SAME text widget's value in (same `onChange` write-
+   * back `saveSheet` already uses) -- one value, two ways to set it,
+   * not two competing fields.
+   */
+  function renderTokenImageUpload(parent: HTMLElement, def: CharacterSheetVariableDef): void {
+    renderVariableRow(parent, def);
+    const row = document.createElement("div");
+    row.className = "variable-row";
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/png,image/jpeg,image/webp";
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      void uploadImage(httpUrl, viewerAccountId, file).then(({ url }) => {
+        character.variableValues = { ...character.variableValues, [def.id]: url };
+        saveSheet();
+        renderCoreTabContent(); // refreshes the plain-text widget above so it shows the newly-uploaded URL
+      });
+    });
+    row.append(fileInput);
+    parent.append(row);
+  }
+
   /** Looks up a variable's definition wherever it might live -- the sheet's own variables, or a core reserved one -- for resolving a `{variableId}` reference found in a page's markdown. */
   function findVariableDef(variableId: string): CharacterSheetVariableDef | undefined {
-    return character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === variableId);
+    return character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_CHARACTER_VARIABLES.find((v) => v.id === variableId);
   }
 
   // ---- dependency warning -------------------------------------------
@@ -438,7 +467,8 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
   function renderCoreTabContent(): void {
     sheetTabContentEl.innerHTML = `<div class="sheet-page" id="body-size-section"><h3>Body (core, always present)</h3></div><div class="sheet-page" id="variables-host"></div><div class="sheet-page" id="bars-host"></div>`;
     const bodySizeSection = sheetTabContentEl.querySelector<HTMLDivElement>("#body-size-section")!;
-    for (const def of RESERVED_BODY_SIZE_VARIABLES) renderVariableRow(bodySizeSection, def);
+    for (const def of RESERVED_CHARACTER_VARIABLES) renderVariableRow(bodySizeSection, def);
+    for (const def of RESERVED_TOKEN_IMAGE_VARIABLES) renderTokenImageUpload(bodySizeSection, def);
     variablesSectionEl = sheetTabContentEl.querySelector<HTMLDivElement>("#variables-host")!;
     renderVariablesSection();
     barsSectionEl = sheetTabContentEl.querySelector<HTMLDivElement>("#bars-host")!;

@@ -240,6 +240,32 @@ export async function updateCharacterSheet(httpUrl: string, characterId: string,
 }
 
 /**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 2 -- "a new upload endpoint,
+ * writing to disk." `file` is read+base64-encoded here (no multipart/
+ * FormData handling exists anywhere in this project's HTTP layer --
+ * this keeps the SAME plain-JSON-body convention every other endpoint
+ * already uses). Returns a URL PATH (e.g. "/uploads/<id>.png"), not a
+ * full origin -- same convention `httpUrl` itself already follows;
+ * callers resolve it against `httpUrl`'s own origin when they need an
+ * absolute URL (e.g. to feed a Babylon texture loader).
+ */
+export async function uploadImage(httpUrl: string, accountId: string, file: File): Promise<{ url: string }> {
+  const dataBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const res = await fetch(`${httpUrl}/uploads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, mimeType: file.type, dataBase64 }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "upload failed");
+  return res.json();
+}
+
+/**
  * MVP goal item 4, round 2 -- resolves a page's `{{modId.fn(args)}}`
  * library calls (findLibraryCalls) against the account's own
  * importedModIds, since a mod's real function body is server-side
