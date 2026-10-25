@@ -14,14 +14,44 @@ alongside unrelated work.
 Full requirements for item 6 itself live in `docs/BATTLE_SYSTEM.md` --
 these pieces are explicitly NOT part of that first pass:
 
-- **A general-purpose, multi-step Ctrl+Z undo history.** Real
-  correction (2026-10-23): the first draft of `docs/BATTLE_SYSTEM.md`
-  scoped Ctrl+Z as a single-step "revert to this turn's start" action
-  -- wrong framing. If Ctrl+Z is ever built, it should be a REAL
-  general-purpose undo history, not a special-cased single revert.
-  Not a priority right now -- the actual turn-start-revert feature
-  ships as plain buttons/context-menu items instead (no keybind for
-  now; "we'll decide a keybind later").
+- ~~**A general-purpose, multi-step Ctrl+Z undo history.**~~ **UN-
+  deferred, 2026-10-24**: pulled back into `docs/BATTLE_SYSTEM.md`'s
+  own in-scope section 3 (now "Reset Turn / Ctrl+Z+Ctrl+Y") -- direct
+  user call reversing the 2026-10-23 deferral: "Reset turn would be
+  nice but let's just add that in with a whole ctrl+z ctrl+y system
+  which would include placing and removing blocks as well, and
+  potentially movement/controls or at least pose snapshots." See that
+  doc for the current (still not fully specified) shape.
+- **Terrain & multi-projective drawing.** Real user call (2026-10-24):
+  "the drawing on ground later on" -- explicitly scoped as future
+  work, described in enough detail to resume from, not part of the
+  current "Measurement shapes" push (`docs/BATTLE_SYSTEM.md` section
+  6). Two halves, both novel designs (not a port -- distinct from, but
+  related to, the existing voxel-fill draw tools already scoped in
+  `docs/PORTING_CHECKLIST.md`'s Phase 7, which should be reconciled
+  with this once picked up):
+  - **Ground drawing without z-fighting**: rather than drawing
+    directly on a transparent plane overlaid on terrain (z-fighting
+    risk), place actual voxel-sized planes NEXT TO the relevant
+    terrain voxels (offset outward by a small amount), each carrying a
+    drawable transparent texture -- added as needed, only where
+    drawing actually happens. To keep "which voxels need a plane"
+    simple, odd-shaped block types (tall grass, etc.) are treated as a
+    plain cube occupancy check, not their real visual geometry.
+  - **Multi-projective 3D line drawing**: as the player draws (mouse-
+    picking terrain, or whatever the ray hits), each picked point
+    becomes two points: the picked point itself, and a second point
+    between the pick and the camera's own origin, where that segment
+    intersects the camera's near clip plane. Connecting these in
+    sequence as the player continues builds up a 2D polygon (in that
+    camera's own projected view). The player then repeats the same
+    process from a SECOND, different perspective, producing a second
+    polygon. Finalizing (an "Apply" button, or Enter) computes the
+    INTERSECTION of the two polygons and keeps only that intersection
+    as the actual 3D line drawing, given some width. Effectively
+    manual two-view photogrammetry/triangulation for freehand 3D line
+    art. Real geometry/implementation research needed before this is
+    buildable -- nothing below "the idea" exists yet.
 - **Auto-triggering an encounter** -- some trigger condition
   automatically starts battle mode, with AI involvement and an
   end-condition. Real user call (2026-10-23): "while it's fun, it's
