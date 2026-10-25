@@ -189,7 +189,8 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
         <label class="measurement-panel-checkbox-row"><input type="checkbox" id="measurement-cone-frustum" ${options.isFrustum() ? "checked" : ""} /> Frustum (flat cap)</label>
       `;
       shapeSettings.querySelector<HTMLInputElement>("#measurement-cone-degrees")!.addEventListener("change", (e) => {
-        const value = Number((e.target as HTMLInputElement).value);
+        const input = e.target as HTMLInputElement;
+        const value = Number(input.value);
         if (!Number.isFinite(value)) return;
         // Real request, 2026-10-24: "Cone degrees should be <180 and
         // >0 and go to 179 or 1 if set to those or above/below but
@@ -197,7 +198,18 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
         // strict OPEN interval (0 or 180 degenerate into a flat
         // plane/line), but anything already strictly inside it --
         // even right at the edge -- passes through unchanged.
-        options.onSetConeDegrees(value <= 0 ? 1 : value >= 180 ? 179 : value);
+        const clamped = value <= 0 ? 1 : value >= 180 ? 179 : value;
+        options.onSetConeDegrees(clamped);
+        // Real bug found live, 2026-10-24: "the clamped number isn't
+        // written to the degrees number entry and the old value
+        // remains displaying instead of the actual/current one" --
+        // this panel doesn't re-poll coneDegrees() on its own (update()
+        // only re-renders shape settings when the ACTIVE KIND changes,
+        // not the value within it -- same as every other per-shape
+        // setting here), so the input needs its own value corrected
+        // directly whenever this handler actually changed what got
+        // applied, not left to a future render that may never come.
+        input.value = String(clamped);
       });
       shapeSettings.querySelector<HTMLInputElement>("#measurement-cone-frustum")!.addEventListener("change", (e) => options.onSetIsFrustum((e.target as HTMLInputElement).checked));
     } else if (kind === "beam") {

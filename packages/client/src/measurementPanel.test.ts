@@ -110,6 +110,23 @@ describe("mountMeasurementPanel", () => {
     expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(0.001);
   });
 
+  it("the degrees field's own displayed value is corrected to the clamped number, not left showing whatever was typed -- real bug: \"the clamped number isn't written to the degrees number entry\"", () => {
+    mount({ activeKind: () => "cone" });
+    const degreesInput = parent.querySelector<HTMLInputElement>("#measurement-cone-degrees")!;
+
+    degreesInput.value = "250";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(degreesInput.value).toBe("179");
+
+    degreesInput.value = "-30";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(degreesInput.value).toBe("1");
+
+    degreesInput.value = "179.99";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(degreesInput.value).toBe("179.99"); // unclamped values are left exactly as typed
+  });
+
   it("beam width is DISPLAYED and EDITED in feet, converted to/from voxels via ftPerVoxel -- real request: \"the beam width is currently set by num voxels and should really be set by feet\"", () => {
     const { options } = mount({ activeKind: () => "beam", beamWidth: () => 1, ftPerVoxel: () => 5 });
     const widthInput = parent.querySelector<HTMLInputElement>("#measurement-beam-width")!;
