@@ -29,7 +29,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findExpressionSegments, evaluateExpression, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
@@ -190,14 +190,22 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // no mod/server involved, just this character's own variableValues.
     const variableSegments = findVariableRefs(page.markdown).map((s) => ({ ...s, kind: "variable" as const }));
 
+    // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the real-formula
+    // `{{<arithmetic> with {var} refs}}` expressions resolve entirely
+    // client-side too (plain arithmetic, no mod code involved, same
+    // as a plain variable ref) -- no server round trip needed, unlike
+    // an actual `{{modId.fn(args)}}` library call just below.
+    const expressionSegments = findExpressionSegments(page.markdown).map((s) => ({ ...s, kind: "expression" as const }));
+
     // Always fetches on render (not only on edit) -- a freshly-cloned/
     // just-opened page's library calls must not sit unresolved until
     // the viewer happens to type something.
     void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, character.variableValues).then((result) => {
       const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
-      // Merge both kinds of reference, sorted by position -- a page
-      // can freely mix {varId} and {{modId.fn(args)}} in any order.
-      const allSegments = [...callSegments, ...variableSegments].sort((a, b) => a.start - b.start);
+      // Merge all three reference kinds, sorted by position -- a page
+      // can freely mix {varId}, {{modId.fn(args)}}, and {{expression}}
+      // in any order.
+      const allSegments = [...callSegments, ...variableSegments, ...expressionSegments].sort((a, b) => a.start - b.start);
 
       // Substitute each segment with its own HTML snippet BEFORE
       // handing the text to marked -- by the time a flattened,
@@ -214,6 +222,19 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
             segment.display === "box"
               ? `<span class="computed-value">${escapeHtml(segment.value)}</span>`
               : `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(label)}" data-chip-value="${escapeHtml(segment.value)}">${escapeHtml(segment.value)}</button>`;
+        } else if (segment.kind === "expression") {
+          // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a real imported
+          // formula (e.g. "20 + (10 * {toughness}) + {hpBonus}"),
+          // evaluated fresh against this character's CURRENT
+          // variableValues every render -- live, not a value frozen
+          // at import time.
+          const value = evaluateExpression(segment.expression, character.variableValues);
+          substituted +=
+            value === undefined
+              ? `[invalid expression: ${escapeHtml(segment.expression)}]`
+              : segment.display === "button"
+                ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(value))}">${escapeHtml(String(value))}</button>`
+                : `<span class="computed-value">${escapeHtml(String(value))}</span>`;
         } else {
           const def = findVariableDef(segment.variableId);
           // An inline ref always shows ONE value (box or chip), never

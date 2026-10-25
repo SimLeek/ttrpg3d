@@ -322,3 +322,201 @@ export function findVariableRefs(text: string): VariableRefSegment[] {
   }
   return segments;
 }
+
+/**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25:
+ * a derived stat's formula imports VERBATIM as its own markdown text,
+ * each operand swapped for a `{variableId}` reference, e.g.
+ * `{{20 + (10 * {toughness}) + {hpBonus}}}` -- NOT a call into a
+ * hand-written mod function. A THIRD `{{...}}` kind, alongside the
+ * existing `findLibraryCalls` (`{{modId.fn(args)}}`) -- distinguished
+ * by shape alone (a call always matches that exact dotted-identifier
+ * pattern; a raw expression never does), so both can keep sharing the
+ * same delimiter with no collision. Entirely plain arithmetic (`+ -
+ * * /` and parentheses, numeric literals, nested `{variableId}` refs)
+ * -- deliberately NOT a general scripting language (docs/DEFERRED.md's
+ * own "a safe/sandboxed scripting system... is real design work, not
+ * a quick add" stays deferred; this is just arithmetic, nothing to
+ * sandbox). Resolved entirely CLIENT-side, same as a plain
+ * `{variableId}` ref -- no mod code involved, so no server round trip
+ * needed either.
+ */
+export interface ExpressionSegment {
+  /** Index of the segment's opening `{{` in the original string. */
+  start: number;
+  /** Index just past the segment's closing `}}`. */
+  end: number;
+  /** The raw text between the braces, BEFORE any `{variableId}` substitution -- e.g. `"20 + (10 * {toughness}) + {hpBonus}"`. */
+  expression: string;
+  /** Defaults to "box" (an inert displayed value) -- unlike a library call, showing a computed stat isn't "a roll/action" by default. */
+  display: InlineReferenceDisplay;
+}
+
+/**
+ * Finds every `{{...}}` segment in `text` that is NOT a `{{modId.fn(args)}}`
+ * library call (findLibraryCalls decides that shape) -- i.e. a raw
+ * arithmetic expression. A plain non-greedy regex (`\{\{(.+?)\}\}`)
+ * genuinely mis-splits the common case of an expression ENDING in a
+ * bare variable ref (e.g. `{{20 + {hpBonus}}}` -- found live while
+ * writing this function's own tests, not a hypothetical): the ref's
+ * own closing `}` sits directly against the outer `}}`, so three `}`
+ * in a row, and a lazy match stops at the FIRST two it sees (which
+ * belong to the ref, not the real close), leaving a dangling `}` and
+ * a truncated expression. Scans manually instead, tracking nested
+ * single-brace depth, so a ref's own braces are never mistaken for
+ * the outer close.
+ */
+export function findExpressionSegments(text: string): ExpressionSegment[] {
+  const libraryCallSpans = new Set(findLibraryCalls(text).map((c) => `${c.start}:${c.end}`));
+  const segments: ExpressionSegment[] = [];
+  let i = 0;
+  while (i < text.length - 1) {
+    if (text[i] !== "{" || text[i + 1] !== "{") {
+      i++;
+      continue;
+    }
+    let depth = 0; // unmatched inner '{' (a nested {variableId} ref's own opening brace)
+    let j = i + 2;
+    let closeAt = -1;
+    while (j < text.length) {
+      const ch = text[j];
+      if (ch === "{") {
+        depth++;
+        j++;
+      } else if (ch === "}") {
+        if (depth > 0) {
+          depth--;
+          j++;
+        } else if (text[j + 1] === "}") {
+          closeAt = j;
+          break;
+        } else {
+          j++; // a stray unmatched '}' at depth 0 -- lenient, just skip past it rather than bailing the whole scan
+        }
+      } else {
+        j++;
+      }
+    }
+    if (closeAt === -1) {
+      i++;
+      continue; // no real "}}" close found for this "{{" -- not a valid segment here
+    }
+    const end = closeAt + 2;
+    if (!libraryCallSpans.has(`${i}:${end}`)) {
+      let expression = text.slice(i + 2, closeAt);
+      let display: InlineReferenceDisplay = "box";
+      if (expression.endsWith(":button")) {
+        display = "button";
+        expression = expression.slice(0, -":button".length);
+      } else if (expression.endsWith(":box")) {
+        expression = expression.slice(0, -":box".length);
+      }
+      segments.push({ start: i, end, expression: expression.trim(), display });
+    }
+    i = end;
+  }
+  return segments;
+}
+
+/** Substitutes every `{variableId}`/`{variableId.x}`/`{variableId.y}` reference found WITHIN an expression (findVariableRefs, reused directly -- same single-brace syntax, same rules) with its current numeric value, read straight from `variableValues` (no variable-definition/default context available here, unlike the client's own widget rendering -- a reference to a variable that doesn't exist, or holds a non-numeric value, fails the WHOLE expression rather than silently defaulting to 0). Returns undefined on any unresolvable reference. */
+function substituteExpressionVariables(expression: string, variableValues: Readonly<Record<string, number | string>>): string | undefined {
+  const refs = findVariableRefs(expression);
+  if (refs.length === 0) return expression;
+  let result = "";
+  let cursor = 0;
+  for (const ref of refs) {
+    const key = ref.component === "y" ? xOfYMaxKey(ref.variableId) : ref.variableId;
+    const raw = variableValues[key];
+    const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+    if (!Number.isFinite(value)) return undefined;
+    result += expression.slice(cursor, ref.start) + String(value);
+    cursor = ref.end;
+  }
+  result += expression.slice(cursor);
+  return result;
+}
+
+/**
+ * A small, deliberately minimal recursive-descent parser for plain
+ * arithmetic: `expression := term (('+'|'-') term)*`, `term := factor
+ * (('*'|'/') factor)*`, `factor := number | '(' expression ')' | ('+'
+ * | '-') factor`. No `eval`/`Function()` anywhere -- there is nothing
+ * here BUT arithmetic (no variables, no function calls; those are
+ * already substituted to plain numbers before this runs), so there's
+ * nothing for a sandbox to contain in the first place. Returns
+ * undefined for anything malformed (unbalanced parens, a stray
+ * operator, trailing garbage after a syntactically-complete
+ * expression, division by zero) -- never throws.
+ */
+function evaluateArithmetic(text: string): number | undefined {
+  const s = text.replace(/\s+/g, "");
+  let i = 0;
+
+  function parseExpression(): number | undefined {
+    let value = parseTerm();
+    if (value === undefined) return undefined;
+    while (s[i] === "+" || s[i] === "-") {
+      const op = s[i++];
+      const rhs = parseTerm();
+      if (rhs === undefined) return undefined;
+      value = op === "+" ? value + rhs : value - rhs;
+    }
+    return value;
+  }
+
+  function parseTerm(): number | undefined {
+    let value = parseFactor();
+    if (value === undefined) return undefined;
+    while (s[i] === "*" || s[i] === "/") {
+      const op = s[i++];
+      const rhs = parseFactor();
+      if (rhs === undefined) return undefined;
+      if (op === "/" && rhs === 0) return undefined; // division by zero fails the expression, rather than producing Infinity/NaN
+      value = op === "*" ? value * rhs : value / rhs;
+    }
+    return value;
+  }
+
+  function parseFactor(): number | undefined {
+    if (s[i] === "-") {
+      i++;
+      const value = parseFactor();
+      return value === undefined ? undefined : -value;
+    }
+    if (s[i] === "+") {
+      i++;
+      return parseFactor();
+    }
+    if (s[i] === "(") {
+      i++;
+      const value = parseExpression();
+      if (value === undefined || s[i] !== ")") return undefined;
+      i++;
+      return value;
+    }
+    const match = /^\d+(\.\d+)?/.exec(s.slice(i));
+    if (!match) return undefined;
+    i += match[0].length;
+    return Number(match[0]);
+  }
+
+  if (s === "") return undefined;
+  const value = parseExpression();
+  if (value === undefined || i !== s.length) return undefined; // trailing garbage after an otherwise-valid expression -- malformed
+  return value;
+}
+
+/**
+ * Evaluates one `{{...}}` expression's raw text (an ExpressionSegment's
+ * own `expression` field) against a character's current
+ * `variableValues` -- substitutes every nested `{variableId}` ref
+ * first, then runs the plain-arithmetic parser on the result. Returns
+ * undefined (never throws) for an unresolvable variable or malformed
+ * arithmetic, same "degrade gracefully" spirit resolveCharacterSheetMarkdown
+ * already uses for library calls.
+ */
+export function evaluateExpression(expression: string, variableValues: Readonly<Record<string, number | string>>): number | undefined {
+  const substituted = substituteExpressionVariables(expression, variableValues);
+  if (substituted === undefined) return undefined;
+  return evaluateArithmetic(substituted);
+}

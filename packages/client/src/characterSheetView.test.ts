@@ -100,6 +100,37 @@ describe("mountCharacterSheetView", () => {
     expect(posted).toEqual([["HP", "7"]]);
   });
 
+  it("renders a {{expression}} inline as a computed value box, live against the character's REAL variableValues -- docs/CHARACTER_SHEET_IMPORT.md part 1", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "HP: {{20 + (10 * {toughness}) + {hpBonus}}}", variableIds: [] }];
+    character.variableValues = { toughness: 5, hpBonus: 0 };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const box = container.querySelector(".page-preview .computed-value")!;
+    expect(box).not.toBeNull();
+    expect(box.textContent).toBe("70"); // 20 + (10*5) + 0
+  });
+
+  it("an expression's own :button suffix renders a clickable chip, posting the expression text + computed value, same mechanism a variable/library-call chip already uses", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "Initiative check: {{10 + {agility}:button}}", variableIds: [] }];
+    character.variableValues = { agility: 6 };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const chip = container.querySelector<HTMLButtonElement>(".page-preview .chat-chip")!;
+    expect(chip).not.toBeNull();
+    chip.click();
+    expect(posted).toEqual([["10 + {agility}", "16"]]);
+  });
+
+  it("an unresolvable expression (unknown variable) renders a bracketed error marker instead of silently showing nothing", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "X: {{1 + {doesNotExist}}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    expect(container.querySelector(".page-preview")!.textContent).toContain("invalid expression");
+  });
+
   it("canEdit: false with no sheet yet shows a plain message, no 'start' buttons (those are editing actions)", async () => {
     character.customSheet = null;
     mountCharacterSheetView(container, baseOptions({ canEdit: false }));
