@@ -13,27 +13,27 @@ import type { Engine } from "noa-engine";
 // every such height change already flows through (net.ts calls it
 // whenever bodyHeight changes), so the fix lives here: also re-anchor
 // the camera's own `followsEntity` offset to match.
-function fakeEngine() {
+function fakeEngine(scene: BABYLON.Scene) {
   const followState = { offset: [0, 0.9 * PLAYER_BODY_HEIGHT, 0] as [number, number, number] };
   const getState = vi.fn((id: number, name: string) => (id === 99 && name === "followsEntity" ? followState : null));
+  const meshData: { mesh: BABYLON.Mesh | null; offset: [number, number, number] } = { mesh: null, offset: [0, 0.9, 0] };
   const noa = {
     playerEntity: 1,
     camera: { cameraTarget: 99 },
-    ents: { getState },
+    ents: { getState, getPositionData: vi.fn(() => ({ position: [0, 0, 0] })) },
     entities: {
       names: { followsEntity: "followsEntity" },
-      getMeshData: () => ({ offset: [0, 0.9, 0] as [number, number, number] }),
+      getMeshData: () => meshData,
       setEntitySize: vi.fn(),
     },
+    rendering: { getScene: () => scene, addMeshToScene: vi.fn() },
   } as unknown as Engine;
-  return { noa, followState, getState };
+  return { noa, followState, getState, meshData };
 }
 
-function fakeBody(): PlayerBodyMesh {
-  const engine = new BABYLON.NullEngine();
-  const scene = new BABYLON.Scene(engine);
+function fakeBody(scene: BABYLON.Scene): PlayerBodyMesh {
   const mesh = BABYLON.MeshBuilder.CreateBox("test-body", { width: PLAYER_BODY_WIDTH, height: PLAYER_BODY_HEIGHT, depth: PLAYER_BODY_DEPTH }, scene);
-  return { mesh, material: new BABYLON.StandardMaterial("test-mat", scene), tokenAnchor: createBodyAnchor(mesh), isThirdPerson: () => true };
+  return { mesh, tokenAnchor: createBodyAnchor(mesh), isThirdPerson: () => true };
 }
 
 describe("buildWireframeBox (docs/CHARACTER_SHEET_IMPORT.md, part 2 -- a real settable-width wireframe, not plain material.wireframe)", () => {
@@ -92,31 +92,52 @@ describe("buildWireframeBox (docs/CHARACTER_SHEET_IMPORT.md, part 2 -- a real se
 });
 
 describe("resizeLocalPlayerBody re-anchors the camera's own eye-height offset to the NEW height, not just the body mesh", () => {
-  it("sets the camera's followsEntity offset to 0.9 * the new height, same ratio noa's own Camera constructor uses", () => {
-    const { noa, followState, getState } = fakeEngine();
-    const body = fakeBody();
+  function makeScene(): BABYLON.Scene {
+    return new BABYLON.Scene(new BABYLON.NullEngine());
+  }
+  const color = new BABYLON.Color3(0.3, 0.5, 0.9);
 
-    resizeLocalPlayerBody(noa, body, 0.6, 3.6, 0.6); // a much taller character
+  it("sets the camera's followsEntity offset to 0.9 * the new height, same ratio noa's own Camera constructor uses", () => {
+    const scene = makeScene();
+    const { noa, followState, getState } = fakeEngine(scene);
+    const body = fakeBody(scene);
+
+    resizeLocalPlayerBody(noa, body, 0.6, 3.6, 0.6, color); // a much taller character
 
     expect(getState).toHaveBeenCalledWith(99, "followsEntity");
     expect(followState.offset[1]).toBe(0.9 * 3.6);
   });
 
   it("re-anchors again on a SECOND height change (e.g. tabbing to yet another character), not just once at creation", () => {
-    const { noa, followState } = fakeEngine();
-    const body = fakeBody();
+    const scene = makeScene();
+    const { noa, followState } = fakeEngine(scene);
+    const body = fakeBody(scene);
 
-    resizeLocalPlayerBody(noa, body, 0.6, 3.6, 0.6);
-    resizeLocalPlayerBody(noa, body, 0.4, 0.9, 0.4); // a short character next
+    resizeLocalPlayerBody(noa, body, 0.6, 3.6, 0.6, color);
+    resizeLocalPlayerBody(noa, body, 0.4, 0.9, 0.4, color); // a short character next
 
     expect(followState.offset[1]).toBe(0.9 * 0.9);
   });
 
   it("is a no-op (no crash) if the camera's cameraTarget somehow has no followsEntity state", () => {
-    const { noa } = fakeEngine();
+    const scene = makeScene();
+    const { noa } = fakeEngine(scene);
     (noa.ents as unknown as { getState: ReturnType<typeof vi.fn> }).getState = vi.fn(() => null);
-    const body = fakeBody();
+    const body = fakeBody(scene);
 
-    expect(() => resizeLocalPlayerBody(noa, body, 0.6, 1.8, 0.6)).not.toThrow();
+    expect(() => resizeLocalPlayerBody(noa, body, 0.6, 1.8, 0.6, color)).not.toThrow();
+  });
+
+  it("mutates body.mesh in place to the rebuilt mesh, and reparents tokenAnchor onto it (not left dangling on the disposed old mesh)", () => {
+    const scene = makeScene();
+    const { noa } = fakeEngine(scene);
+    const body = fakeBody(scene);
+    const oldMesh = body.mesh;
+
+    resizeLocalPlayerBody(noa, body, 1.2, 2.4, 1.2, color);
+
+    expect(body.mesh).not.toBe(oldMesh);
+    expect(oldMesh.isDisposed()).toBe(true);
+    expect(body.tokenAnchor.parent).toBe(body.mesh);
   });
 });

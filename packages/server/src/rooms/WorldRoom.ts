@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
+import { CHUNK_SIZE, AIR, DEFAULT_GENERATOR_ID, encodeChunk, resolveCharacterBars, RESERVED_BODY_SIZE_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, MAX_CHARACTER_PLACEMENT_DISTANCE, type ChunkRequest, type GeneratorParams } from "@ttrpg3d/shared";
 import { WorldState, PlayerState, StatusEffectState, BarState, OtherCharacterState, TurnOrderEntryState, WaypointState, MeasurementShapeState, MeasurementPointState, type WorldStateType, type PlayerStateType, type OtherCharacterStateType, type BarStateType, type StatusEffectStateType, type TurnOrderEntryStateType, type MeasurementShapeStateType } from "./WorldState.js";
 import type { StatusEffect, CharacterRecord, PlacedCharacterInstanceRecord, TurnOrderEntryRecord, MeasurementShapeRecord } from "../data/store.js";
 import { fillChunk, spawnPositionFor, blockAt as genBlockAt, type WorldGenInput } from "../world/worldGen.js";
@@ -157,7 +157,7 @@ function newInstanceId(): string {
 
 /**
  * MVP goal item 4 follow-up (multi-character presence): the structural
- * shape `applyBarsToCharacterTarget`/`applyBodySizeToCharacterTarget`
+ * shape `applyBarsToCharacterTarget`/`applyReservedVariablesToCharacterTarget`
  * below operate against -- every `OtherCharacterState` (idle or
  * currently piloted, see that type's own doc) satisfies this.
  */
@@ -166,6 +166,7 @@ interface CharacterSheetTarget {
   bodyWidth: number;
   bodyHeight: number;
   bodyDepth: number;
+  tokenImage: string;
 }
 
 /**
@@ -200,13 +201,15 @@ function applyBarsToCharacterTarget(target: CharacterSheetTarget, character: Cha
 const DEFAULT_BODY_WIDTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyWidth")!.default as number;
 const DEFAULT_BODY_HEIGHT = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyHeight")!.default as number;
 const DEFAULT_BODY_DEPTH = RESERVED_BODY_SIZE_VARIABLES.find((v) => v.id === "bodyDepth")!.default as number;
+const DEFAULT_TOKEN_IMAGE = RESERVED_TOKEN_IMAGE_VARIABLES.find((v) => v.id === "tokenImage")!.default as string;
 
-/** Real bug found live ("I tried adjusting the character width/height/depth and that did nothing"): `RESERVED_BODY_SIZE_VARIABLES` existed as editable sheet data but nothing read it onto anything real. Mirrors applyBarsToCharacterTarget's own shape (including the same optional per-instance `overrides`) -- used at join, after any sheet edit (notifyCharacterSheetChanged below), and for a placed otherCharacters entry, so every connected session always sees the character's CURRENT body size rather than a stale/default one. */
-function applyBodySizeToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number>>): void {
+/** Real bug found live ("I tried adjusting the character width/height/depth and that did nothing"): `RESERVED_BODY_SIZE_VARIABLES` existed as editable sheet data but nothing read it onto anything real. Mirrors applyBarsToCharacterTarget's own shape (including the same optional per-instance `overrides`) -- used at join, after any sheet edit (notifyCharacterSheetChanged below), and for a placed otherCharacters entry, so every connected session always sees the character's CURRENT body size (and, docs/CHARACTER_SHEET_IMPORT.md part 2: tokenImage) rather than a stale/default one. */
+function applyReservedVariablesToCharacterTarget(target: CharacterSheetTarget, character: CharacterRecord, overrides?: Readonly<Record<string, number>>): void {
   const values = resolveVariableValues(character, overrides);
   target.bodyWidth = typeof values.bodyWidth === "number" ? values.bodyWidth : DEFAULT_BODY_WIDTH;
   target.bodyHeight = typeof values.bodyHeight === "number" ? values.bodyHeight : DEFAULT_BODY_HEIGHT;
   target.bodyDepth = typeof values.bodyDepth === "number" ? values.bodyDepth : DEFAULT_BODY_DEPTH;
+  target.tokenImage = typeof values.tokenImage === "string" ? values.tokenImage : DEFAULT_TOKEN_IMAGE;
 }
 
 /**
@@ -257,7 +260,7 @@ export function notifyCharacterSheetChanged(characterId: string): void {
       if (player?.currentInstance.characterId === characterId) {
         const overrides = room.instanceVariableOverrides.get(player.currentInstance.instanceId);
         applyBarsToCharacterTarget(player.currentInstance, character, overrides);
-        applyBodySizeToCharacterTarget(player.currentInstance, character, overrides);
+        applyReservedVariablesToCharacterTarget(player.currentInstance, character, overrides);
       }
     }
   }
@@ -269,7 +272,7 @@ export function notifyCharacterSheetChanged(characterId: string): void {
         if (other.characterId !== characterId) continue;
         const overrides = room.instanceVariableOverrides.get(other.instanceId);
         applyBarsToCharacterTarget(other, character, overrides);
-        applyBodySizeToCharacterTarget(other, character, overrides);
+        applyReservedVariablesToCharacterTarget(other, character, overrides);
       }
     }
   }
@@ -706,7 +709,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       }
       if (Object.keys(record.variableOverrides).length > 0) this.instanceVariableOverrides.set(record.instanceId, record.variableOverrides);
       applyBarsToCharacterTarget(other, character, record.variableOverrides);
-      applyBodySizeToCharacterTarget(other, character, record.variableOverrides);
+      applyReservedVariablesToCharacterTarget(other, character, record.variableOverrides);
       // Real correction, 2026-10-24: restore a persisted waypoint
       // chain too -- see PlacedCharacterInstanceRecord's own doc.
       for (const w of record.waypoints ?? []) {
@@ -919,7 +922,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       const overrides = { ...(this.instanceVariableOverrides.get(instanceId) ?? {}), [variableId]: value };
       this.instanceVariableOverrides.set(instanceId, overrides);
       applyBarsToCharacterTarget(entry, character, overrides);
-      applyBodySizeToCharacterTarget(entry, character, overrides);
+      applyReservedVariablesToCharacterTarget(entry, character, overrides);
       this.persistPlacedCharacters();
     });
 
@@ -1007,7 +1010,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       other.y = y;
       other.z = z;
       applyBarsToCharacterTarget(other, character);
-      applyBodySizeToCharacterTarget(other, character);
+      applyReservedVariablesToCharacterTarget(other, character);
       this.state.otherCharacters.push(other);
       this.syncCharacterRoomRegistration(characterId);
       this.persistPlacedCharacters();
@@ -1514,7 +1517,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       player.currentInstance.tokenColorG = character.token.color[1];
       player.currentInstance.tokenColorB = character.token.color[2];
       applyBarsToCharacterTarget(player.currentInstance, character);
-      applyBodySizeToCharacterTarget(player.currentInstance, character);
+      applyReservedVariablesToCharacterTarget(player.currentInstance, character);
       this.registerActiveCharacter(client.sessionId, character.id);
       for (const effect of character.statusEffects) {
         const effectState = new StatusEffectState();

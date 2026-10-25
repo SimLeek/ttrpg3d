@@ -148,6 +148,8 @@ export const OtherCharacterState = schema(
     bodyWidth: t.number().default(0.6),
     bodyHeight: t.number().default(1.8),
     bodyDepth: t.number().default(0.6),
+    /** docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the reserved tokenImage variable's own synced value (a URL from POST /uploads, or "" for no image set, which renders the circular token billboard's ASCII-smiley fallback instead). Same reserved tier/sync pattern as bodyWidth/Height/Depth above. */
+    tokenImage: t.string().default(""),
     statusEffects: t.array(StatusEffectState),
     /**
      * docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- real

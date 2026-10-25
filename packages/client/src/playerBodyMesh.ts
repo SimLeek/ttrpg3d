@@ -97,7 +97,6 @@ export function buildWireframeBox(scene: BABYLON.Scene, name: string, width: num
 
 export interface PlayerBodyMesh {
   mesh: BABYLON.Mesh;
-  material: BABYLON.StandardMaterial;
   /**
    * MVP goal item 4 follow-up -- real bug found live: "the billboard is
    * now getting squished when character height is shrunk... if you
@@ -138,41 +137,56 @@ export function createBodyAnchor(mesh: BABYLON.Mesh): BABYLON.TransformNode {
 /**
  * MVP goal item 4 follow-up -- real bug found live: "I tried adjusting
  * the character width/height/depth and that did nothing." Resizes ANY
- * entity's body in place -- scales the SAME mesh object (never
- * replaces it, so a caller's own `mesh.parent = ...`/hit-testing
- * references keep working unchanged), re-anchors the mesh ECS
- * component's vertical offset for the new height, and resizes the REAL
- * collision box via noa's `entities.setEntitySize` (confirmed directly
- * in noa's own source: mutates the live physics body's AABB in place
- * -- a no-op for an entity with no physics component at all, like
- * net.ts's remote players, confirmed via `_updateDerivedPositionData`'s
- * own `if (physDat) ...` guard, so this is equally safe to call for
- * local (physics) and remote (no physics) entities).
+ * entity's body, re-anchors the mesh ECS component's vertical offset
+ * for the new height, and resizes the REAL collision box via noa's
+ * `entities.setEntitySize` (confirmed directly in noa's own source:
+ * mutates the live physics body's AABB in place -- a no-op for an
+ * entity with no physics component at all, like net.ts's remote
+ * players, confirmed via `_updateDerivedPositionData`'s own `if
+ * (physDat) ...` guard, so this is equally safe to call for local
+ * (physics) and remote (no physics) entities).
  *
- * Real bug found live, second pass ("the character no longer displays
- * ... just a circle shadow and then nothing"): the offset re-anchor
- * used to go through `entities.addComponentAgain`, which -- confirmed
- * directly in noa's own mesh component source -- is "remove the
- * component, then add it," and the mesh component's `onRemove` calls
- * `state.mesh.dispose()`. That disposed the exact mesh object this
- * function was trying to REUSE (scaled, not rebuilt), so every resize
- * silently destroyed the visible box -- collision kept working because
- * `setEntitySize` touches a completely separate (physics) component,
- * unaffected by the mesh component being torn down. Fixed by mutating
- * the mesh component's OWN existing state object in place instead
- * (`entities.getMeshData`, also noa's own, typed API) -- no
- * remove/re-add, no dispose, nothing else touched.
+ * Real finding, docs/CHARACTER_SHEET_IMPORT.md part 2 (confirmed by
+ * direct measurement, see buildWireframeBox's own test): a GreasedLine
+ * mesh's bounding geometry does NOT follow `mesh.scaling`, so a resize
+ * now REBUILDS the body mesh at the new dimensions/color (via
+ * buildWireframeBox) and swaps it into the ECS mesh component's own
+ * state object (`entities.getMeshData`, the SAME "mutate the state
+ * object in place" API an earlier bug fix here already established --
+ * see this function's own git history for why `addComponentAgain`
+ * silently destroyed the box instead) rather than the OLD scale-in-
+ * place approach a plain CreateBox mesh could get away with. The old
+ * mesh is disposed only AFTER `tokenAnchor` is reparented onto the
+ * NEW one -- Babylon's own `dispose()` cascades to children by
+ * default, and tokenAnchor (plus whatever's attached to it -- the
+ * name/bars billboard, the circular token-face billboard) is exactly
+ * the kind of child that would otherwise vanish along with the mesh
+ * being replaced.
  */
-export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Mesh, tokenAnchor: BABYLON.TransformNode, width: number, height: number, depth: number): void {
-  const scaleX = width / PLAYER_BODY_WIDTH;
-  const scaleY = height / PLAYER_BODY_HEIGHT;
-  const scaleZ = depth / PLAYER_BODY_DEPTH;
-  mesh.scaling.set(scaleX, scaleY, scaleZ);
-  // Exact inverse -- see tokenAnchor's own doc on PlayerBodyMesh for why this has to stay in lockstep with the line above, not just be set once at creation.
-  tokenAnchor.scaling.set(1 / scaleX, 1 / scaleY, 1 / scaleZ);
+export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Mesh, tokenAnchor: BABYLON.TransformNode, width: number, height: number, depth: number, color: BABYLON.Color3): BABYLON.Mesh {
+  const scene = noa.rendering.getScene();
+  const newMesh = buildWireframeBox(scene, mesh.name, width, height, depth, color);
+  tokenAnchor.parent = newMesh; // reparent BEFORE disposing the old mesh -- see this function's own doc on why
   const meshData = noa.entities.getMeshData(entityId);
-  if (meshData) meshData.offset[1] = height / 2;
+  if (meshData) {
+    meshData.mesh = newMesh;
+    meshData.offset[1] = height / 2;
+  }
+  // Mirrors noa's own mesh component `onAdd` exactly (confirmed
+  // directly in its source): passing the entity's current GLOBAL
+  // position explicitly, rather than leaving `addMeshToScene` fall
+  // back to the fresh mesh's own default (0,0,0) local position --
+  // same "local vs. global, don't let it silently double-shift"
+  // lesson this project has already paid for twice elsewhere
+  // (characterPlacement.ts, measurementShapes.ts's raycastTerrain).
+  // `renderSystem` would eventually correct a wrong initial position
+  // on its own next frame regardless, but there's no reason to rely
+  // on that when the real position is one call away.
+  const posDat = noa.ents.getPositionData(entityId);
+  noa.rendering.addMeshToScene(newMesh, false, posDat?.position);
+  mesh.dispose();
   noa.entities.setEntitySize(entityId, width, height, depth);
+  return newMesh;
 }
 
 /**
@@ -189,9 +203,15 @@ export function resizeEntityBody(noa: Engine, entityId: number, mesh: BABYLON.Me
  * current one. noa's own camera.js doc comment names the exact fix:
  * `noa.ents.getState(noa.camera.cameraTarget, 'followsEntity').
  * offset[1] = 0.9 * myPlayerHeight`.
+ *
+ * Mutates `body.mesh` in place to the REBUILT mesh (resizeEntityBody's
+ * own return value) -- callers that read `playerBodyMesh.mesh`
+ * afterward (net.ts's own `isVisible` toggling, tokenPicking.ts's
+ * hitbox) see the new mesh automatically, same object identity
+ * `PlayerBodyMesh` has always promised.
  */
-export function resizeLocalPlayerBody(noa: Engine, body: PlayerBodyMesh, width: number, height: number, depth: number): void {
-  resizeEntityBody(noa, noa.playerEntity, body.mesh, body.tokenAnchor, width, height, depth);
+export function resizeLocalPlayerBody(noa: Engine, body: PlayerBodyMesh, width: number, height: number, depth: number, color: BABYLON.Color3): void {
+  body.mesh = resizeEntityBody(noa, noa.playerEntity, body.mesh, body.tokenAnchor, width, height, depth, color);
   const ents = noa.ents as unknown as { getState(id: number, name: string): { offset: [number, number, number] } | null };
   const followState = ents.getState(noa.camera.cameraTarget, noa.entities.names.followsEntity);
   if (followState) followState.offset[1] = 0.9 * height;
@@ -200,13 +220,11 @@ export function resizeLocalPlayerBody(noa: Engine, body: PlayerBodyMesh, width: 
 export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
   const scene = noa.rendering.getScene();
 
-  // Same box dims/material style as net.ts's remote-player avatars (just a
-  // different color, so you can tell your own body apart from a nearby
-  // remote player) -- a real model is future work, not scope here.
-  const mesh = BABYLON.MeshBuilder.CreateBox("local-player-body", { width: PLAYER_BODY_WIDTH, height: PLAYER_BODY_HEIGHT, depth: PLAYER_BODY_DEPTH }, scene);
-  const material = new BABYLON.StandardMaterial("local-player-body-mat", scene);
-  material.diffuseColor = new BABYLON.Color3(0.3, 0.5, 0.9);
-  mesh.material = material;
+  // Same box dims/wireframe style as net.ts's remote-player avatars
+  // (just a different starting color, so you can tell your own body
+  // apart from a nearby remote player before a real character is
+  // picked) -- a real model is future work, not scope here.
+  const mesh = buildWireframeBox(scene, "local-player-body", PLAYER_BODY_WIDTH, PLAYER_BODY_HEIGHT, PLAYER_BODY_DEPTH, new BABYLON.Color3(0.3, 0.5, 0.9));
   mesh.isVisible = false; // starts in first person (camera.currentZoom starts at 0)
 
   // addComponent is inherited from ent-comp's ECS base class -- real at
@@ -226,7 +244,6 @@ export function installPlayerBodyMesh(noa: Engine): PlayerBodyMesh {
 
   return {
     mesh,
-    material,
     tokenAnchor,
     isThirdPerson: () => noa.camera.currentZoom > FIRST_PERSON_ZOOM_THRESHOLD,
   };
