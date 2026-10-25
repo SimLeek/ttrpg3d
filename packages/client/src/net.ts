@@ -23,6 +23,8 @@ import { mountCharacterContextMenu } from "./characterContextMenu.js";
 import { mountTurnTracker, type TurnTrackerController } from "./turnTracker.js";
 import { mountWaypointPanel } from "./waypointPanel.js";
 import { installWaypoints } from "./waypoints.js";
+import { mountMeasurementPanel } from "./measurementPanel.js";
+import { installMeasurementShapes, type MeasurementShapeLike } from "./measurementShapes.js";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, tokenScaleFor, type PlayerBodyMesh } from "./playerBodyMesh.js";
 import { CHARACTER_STORAGE_KEY } from "./api.js";
@@ -136,6 +138,10 @@ interface WorldStateLike {
   waypointDistanceMetricP?: number;
   waypointAutoOnWithTurnOrder?: boolean;
   waypointAutoOffWithoutTurnOrder?: boolean;
+  /** docs/BATTLE_SYSTEM.md's measurement shapes -- see measurementShapes.ts's own MeasurementShapeLike doc for the broadcast/privacy filtering model. */
+  measurementShapes?: MeasurementShapeLike[];
+  /** Same tier as waypointDistanceMetricP -- retroactively shared with the waypoint system's own distance labels too (section 4's own cross-reference in BATTLE_SYSTEM.md). */
+  ftPerVoxel?: number;
 }
 
 /** Colyseus's Schema array -> characterToken.ts's plain data shape. */
@@ -479,6 +485,30 @@ export async function connectAndStreamWorld(
     onSetDistanceMetric: (p) => room!.send("setWaypointDistanceMetric", { p }),
   });
 
+  // docs/BATTLE_SYSTEM.md's "Measurement shapes" -- its own standalone
+  // floating panel (NOT docked to the turn tracker, unlike the
+  // waypoint panel above -- real distinction: "this should have its
+  // own floating box"), mounted directly on <body>.
+  const measurementShapes = installMeasurementShapes(noa, room, playerController, accountId);
+  const measurementPanel = mountMeasurementPanel(document.body, {
+    activeKind: () => measurementShapes.activeKind(),
+    onSelectKind: (kind) => measurementShapes.selectKind(kind),
+    snapMode: () => measurementShapes.snapMode(),
+    onSetSnapMode: (mode) => measurementShapes.setSnapMode(mode),
+    broadcast: () => measurementShapes.broadcast(),
+    onSetBroadcast: (enabled) => measurementShapes.setBroadcast(enabled),
+    coneDegrees: () => measurementShapes.coneDegrees(),
+    onSetConeDegrees: (degrees) => measurementShapes.setConeDegrees(degrees),
+    isFrustum: () => measurementShapes.isFrustum(),
+    onSetIsFrustum: (enabled) => measurementShapes.setIsFrustum(enabled),
+    beamWidth: () => measurementShapes.beamWidth(),
+    onSetBeamWidth: (width) => measurementShapes.setBeamWidth(width),
+    onRemoveCurrent: () => measurementShapes.removeCurrentObject(),
+    isGM: () => isAdmin() && gmOverride.isActive(),
+    ftPerVoxel: () => (room!.state as WorldStateLike | undefined)?.ftPerVoxel ?? 5,
+    onSetFtPerVoxel: (value) => room!.send("setFtPerVoxel", { ftPerVoxel: value }),
+  });
+
   const statInputContainer = document.createElement("div");
   statInputContainer.style.cssText = "position:fixed;z-index:1001;";
   document.body.appendChild(statInputContainer);
@@ -791,6 +821,12 @@ export async function connectAndStreamWorld(
         return hadStatUi || hadContextMenu;
       },
     },
+    {
+      isPlacing: () => measurementShapes.isPlacing(),
+      onPlacePoint: () => measurementShapes.onPlacePoint(),
+      pickObjectAtCursor: () => measurementShapes.pickObjectAtCursor(),
+      openContextMenu: (shapeId, x, y) => measurementShapes.openContextMenu(shapeId, x, y),
+    },
   );
 
   room.onMessage("blockChanged", ({ x, y, z, voxelId }: EditBlockMessage) => {
@@ -824,6 +860,7 @@ export async function connectAndStreamWorld(
       state?.turnOrderRound ?? 1,
     );
     waypointPanel.update();
+    measurementPanel.update();
     const seen = new Set<string>();
     for (const [sessionId, p] of players) {
       seen.add(sessionId);
@@ -1162,6 +1199,8 @@ export async function connectAndStreamWorld(
       turnTrackerContainer.remove();
       waypointPanel.destroy();
       waypoints.destroy();
+      measurementPanel.destroy();
+      measurementShapes.destroy();
       for (const token of remoteTokens.values()) token.dispose();
       for (const material of remoteMaterials.values()) material.dispose();
       room.leave();
