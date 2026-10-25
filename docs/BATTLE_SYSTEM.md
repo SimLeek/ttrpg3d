@@ -341,10 +341,17 @@ turn tracker are not involved.
   `characterPlacement.ts` already has for dropping a character onto
   the world.
 - The most-recently-placed point is selected by default.
-- **WASD** moves the selected point along the ground: W/S move it
-  along the camera's forward/back direction (projected onto the
-  horizontal plane), snapped to the voxel grid; A/D strafe the same
-  way, camera-relative.
+- **WASD** moves the selected point exactly like it moves a
+  character instance, just a single voxel step at a time instead of
+  continuous -- real correction, 2026-10-24: "there shouldn't be a
+  left right handedness issue since the wasd should be controlling
+  the point similar to a character instance just snapped to voxel."
+  The SAME camera-heading-relative direction formula every real
+  movement provider in this codebase already uses (MoverResource.ts/
+  SwimResource.ts/NoclipFlyProvider.ts), not a separate "snap the
+  direction to one of 4 cardinal axes" scheme -- only the STEP SIZE
+  (one voxel per press, rounded) is what "snapped to voxel" means
+  here, not the direction itself.
 - **Space** moves the selected point up one voxel; **Shift** moves it
   down one voxel.
 - **Tab** selects the next point; **Shift+Tab** selects the previous
@@ -403,10 +410,12 @@ turn tracker are not involved.
       (wrong -- that framing assumes a fixed orientation; rotate the
       shape in roll/pitch/yaw and the geometric tip is no longer
       necessarily the topmost point at all). Since a cone/frustum is
-      approximated as a mesh (a tip or far-cap, plus points arranged
-      around a circle for the near-cap/base -- no true curved
-      geometry), "topmost vertex by the up-axis" is a single rule
-      that already handles every rotation correctly, tip-vs-cap
+      approximated as a mesh (a true point at the near end always,
+      plus points arranged around the far end's own base -- circular
+      for a cone, 4 corners for a frustum, see this section's own
+      cone/frustum bullet -- no true curved geometry), "topmost
+      vertex by the up-axis" is a single rule that already handles
+      every rotation correctly, tip-vs-cap
       distinction or not -- no special-casing needed.
   - Exact TEXT content per solid shape (radius? full dimensions? both?)
     still open -- see "Open questions" below.
@@ -425,9 +434,14 @@ turn tracker are not involved.
   only the RADIUS (its distance from the center), not an independent
   3D position. Tabbable between the two, same as cube.
 - **Cone**: a start point and an end point (its axis), plus a numeric
-  **degrees** setting (the cone's angle) and a toggle between an
-  actual pointed **cone** and a **frustum** (truncated cone with a
-  flat near-cap -- the same shape the old Godot game already has).
+  **degrees** setting (the cone's angle) and a toggle between **cone**
+  and **frustum**. Real correction, 2026-10-24 (the earlier "truncated
+  cone with a flat near-cap" framing was wrong): BOTH options are a
+  true point at the near end, always -- "it's a cone/frustum from a
+  point." The toggle only changes the FAR end's own cross-section
+  shape: **cone** = round, **frustum** = "just a rectangle/square end
+  instead of circular" (a square-based pyramid, not a truncated
+  cone).
 - **Beam**: a start point and an end point, plus a numeric **beam
   width** setting.
 - Each shape type's own settings (degrees/frustum toggle for cone,
@@ -766,13 +780,17 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     When the session then presses Shift+Tab
     Then P3 becomes selected again (wrapped from the first point back to the last)
 
-  Scenario: WASD moves the selected point along the camera-relative ground plane, snapped to the voxel grid
+  Scenario: WASD moves the selected point exactly like a character turns and moves, just one voxel step at a time
     Given a point is selected
     When the session presses W
-    Then the selected point moves one voxel step in the camera's
-      forward direction (projected onto the horizontal plane), snapped
-      to the voxel grid
+    Then the selected point moves one voxel step using the SAME
+      camera-heading-relative direction formula a real character's
+      own movement already uses (not a separate direction-snapping
+      scheme)
     And every other point is unaffected
+    When the session's camera heading changes and they press W again
+    Then the point moves in the NEW forward direction, same as turning
+      and walking forward with a real character would
 
   Scenario: Space/Shift move the selected point up/down one voxel
     Given a point is selected
@@ -784,7 +802,8 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
   Scenario: Cone has a degrees setting and a cone/frustum toggle
     Given a session selects "Cone" and has placed its start and end point
     Then the panel shows a numeric "degrees" field and a toggle between
-      "Cone" (pointed) and "Frustum" (flat near-cap)
+      "Cone" (round far end) and "Frustum" (square far end) -- both
+      options are a true point at the near end, always
 
   Scenario: Beam has a width setting
     Given a session selects "Beam" and has placed its start and end point

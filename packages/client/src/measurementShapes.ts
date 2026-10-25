@@ -17,7 +17,7 @@ import type { Room } from "@colyseus/sdk";
 import { minkowskiDistance, type Point3 } from "@ttrpg3d/shared";
 import type { PlayerController } from "./movement/PlayerController.js";
 import { createDistanceLabel, type DistanceLabel } from "./distanceLabel.js";
-import { tokenScaleFor, PLAYER_BODY_HEIGHT } from "./playerBodyMesh.js";
+import { tokenScaleFor } from "./playerBodyMesh.js";
 import { isCaptured } from "./inputCapture.js";
 import type { MeasurementShapeKind, SnapMode } from "./measurementPanel.js";
 
@@ -25,11 +25,6 @@ const SHAPE_COLOR = new BABYLON.Color3(0.3, 0.7, 1); // distinguishes a measurem
 const OBJECT_ALPHA = 0.45; // "rendered semi-transparent"
 const DEFAULT_CONE_DEGREES = 60;
 const DEFAULT_BEAM_WIDTH = 1;
-// Real scoping decision (not specified by the doc): a frustum's own
-// near-cap radius isn't user-configurable -- a small fixed fraction
-// of the far-cap radius is enough to make it visually read as
-// "truncated," without adding a second parameter nobody asked for.
-const FRUSTUM_NEAR_RADIUS_FRACTION = 0.2;
 
 /** chain has no fixed count (keeps growing until Enter finalizes it) -- every other shape finalizes itself the moment its last required point lands. */
 export function requiredPointCount(kind: MeasurementShapeKind): number | undefined {
@@ -50,17 +45,28 @@ export function snapPoint(point: Point3, mode: SnapMode): Point3 {
   return [x + 0.5, y + 0.5, z + 0.5];
 }
 
-/** W/S: the camera's own forward direction, projected onto the horizontal plane and snapped to the nearest of the 4 cardinal (voxel-grid-aligned) directions -- "ws matches direction of camera snapped to voxel coords." */
-export function snappedCameraForward(cameraDirection: Point3): [number, number, number] {
-  const [dx, , dz] = cameraDirection;
-  if (Math.abs(dx) > Math.abs(dz)) return [Math.sign(dx) || 1, 0, 0];
-  return [0, 0, Math.sign(dz) || 1];
-}
-
-/** A/D: perpendicular to the snapped forward direction, same horizontal plane. */
-export function snappedCameraRight(cameraDirection: Point3): [number, number, number] {
-  const [fx, , fz] = snappedCameraForward(cameraDirection);
-  return [fz, 0, -fx];
+/**
+ * WASD point movement -- real correction, 2026-10-24: "there shouldn't
+ * be a left right handedness issue since the wasd should be
+ * controlling the point similar to a character instance just snapped
+ * to voxel." NOT a separate direction-snapping scheme (the earlier
+ * cardinal-only version this replaces) -- the EXACT SAME camera-
+ * relative formula every real movement provider in this codebase
+ * already uses (confirmed directly in MoverResource.ts/
+ * SwimResource.ts/NoclipFlyProvider.ts, all three identical): rotate
+ * the input vector by the camera's own heading. `inputX`: left(-1)/
+ * right(+1). `inputY`: backward(-1)/forward(+1). Rounded to the
+ * nearest whole step per axis (not left continuous) so a single key
+ * press moves the point by exactly one voxel -- the "snapped to
+ * voxel" half, layered on TOP of the same real direction math rather
+ * than replacing it with a cardinal-only approximation.
+ */
+export function movementStep(inputX: number, inputY: number, headingRad: number): [number, number] {
+  const sin = Math.sin(headingRad);
+  const cos = Math.cos(headingRad);
+  const dirX = inputX * cos + inputY * sin;
+  const dirZ = -inputX * sin + inputY * cos;
+  return [Math.round(dirX), Math.round(dirZ)];
 }
 
 /**
@@ -234,16 +240,12 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     if (!activeKind || activePoints.length === 0) return;
 
     const point = activePoints[selectedIndex];
-    const dir = noa.camera.getDirection() as unknown as Point3;
 
-    if (event.code === "KeyW" || event.code === "KeyS") {
-      const [sx, , sz] = snappedCameraForward(dir);
-      const sign = event.code === "KeyW" ? 1 : -1;
-      activePoints[selectedIndex] = [point[0] + sx * sign, point[1], point[2] + sz * sign];
-    } else if (event.code === "KeyA" || event.code === "KeyD") {
-      const [sx, , sz] = snappedCameraRight(dir);
-      const sign = event.code === "KeyD" ? 1 : -1;
-      activePoints[selectedIndex] = [point[0] + sx * sign, point[1], point[2] + sz * sign];
+    if (event.code === "KeyW" || event.code === "KeyS" || event.code === "KeyA" || event.code === "KeyD") {
+      const inputX = (event.code === "KeyD" ? 1 : 0) - (event.code === "KeyA" ? 1 : 0);
+      const inputY = (event.code === "KeyW" ? 1 : 0) - (event.code === "KeyS" ? 1 : 0);
+      const [dx, dz] = movementStep(inputX, inputY, noa.camera.heading);
+      activePoints[selectedIndex] = snapPoint([point[0] + dx, point[1], point[2] + dz], snapModeValue);
     } else if (event.code === "Space") {
       activePoints[selectedIndex] = [point[0], point[1] + 1, point[2]];
     } else if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
@@ -330,16 +332,25 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       const [a, b] = points;
       const axisVec = new BABYLON.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
       const axisLength = axisVec.length() || 0.01;
+      const halfAxis = axisVec.scale(0.5); // the REAL half-length offset -- computed before any normalize() below, which mutates its receiver in place in Babylon
       const mid = new BABYLON.Vector3((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
-      const topDiameter = kind === "beam" ? beamWidth : (isFrustumFlag ? 2 * axisLength * Math.tan((coneDegrees * Math.PI) / 180 / 2) * FRUSTUM_NEAR_RADIUS_FRACTION : 0);
+      // Real correction, 2026-10-24: "it's a cone/frustum from a
+      // point and the frustum part would just be a rectangle/square
+      // end instead of circular" -- BOTH kinds are a true point at
+      // the near end (topDiameter is always 0, no separate near-cap
+      // radius at all); `isFrustum` only changes the FAR end's own
+      // cross-section shape -- round (a real cone) vs. a 4-sided
+      // square/pyramid (a "frustum" in this feature's own terms).
+      const topDiameter = kind === "beam" ? beamWidth : 0;
       const bottomDiameter = kind === "beam" ? beamWidth : 2 * axisLength * Math.tan((coneDegrees * Math.PI) / 180 / 2);
-      const mesh = BABYLON.MeshBuilder.CreateCylinder(`${idPrefix}-${kind}`, { height: axisLength, diameterTop: topDiameter, diameterBottom: bottomDiameter, tessellation: 16 }, scene);
+      const tessellation = kind === "beam" ? 16 : isFrustumFlag ? 4 : 24;
+      const mesh = BABYLON.MeshBuilder.CreateCylinder(`${idPrefix}-${kind}`, { height: axisLength, diameterTop: topDiameter, diameterBottom: bottomDiameter, tessellation }, scene);
       mesh.position = mid;
       // Aligns the cylinder's default local +Y axis with the real a->b
       // direction -- the standard "rotation between two vectors"
       // quaternion, since CreateCylinder always builds along local Y.
       const up = BABYLON.Vector3.Up();
-      const axisNormalized = axisVec.normalize();
+      const axisNormalized = axisVec.clone().normalize(); // clone first -- normalize() mutates in place, and axisVec's own un-normalized length is still needed below
       const dot = BABYLON.Vector3.Dot(up, axisNormalized);
       if (dot < 0.9999) {
         const rotAxis = dot < -0.9999 ? new BABYLON.Vector3(1, 0, 0) : BABYLON.Vector3.Cross(up, axisNormalized).normalize();
@@ -357,14 +368,12 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         // vertex along the vertical axis, regardless of rotation --
         // NOT "the tip" or "the near cap" (see shapeAabb's own doc
         // and this feature's doc for why that framing is wrong once
-        // the shape can be rotated). Since both caps are flat circles
-        // approximated by `tessellation` points, the topmost point of
-        // either cap already bounds the whole mesh's own top -- a
-        // cheap, correct-under-any-rotation stand-in for a full
-        // vertex scan.
-        const halfAxis = axisVec.scale(0.5);
+        // the shape can be rotated). The near end is always a literal
+        // point (topDiameter 0) now, so its own candidate is just
+        // that point's own Y; the far end is bounded by its own
+        // radius regardless of round-vs-square cross-section.
         const topCandidate1 = mid.add(halfAxis).y + bottomDiameter / 2;
-        const topCandidate2 = mid.subtract(halfAxis).y + topDiameter / 2;
+        const topCandidate2 = mid.subtract(halfAxis).y;
         const topY = Math.max(topCandidate1, topCandidate2);
         const aabb = shapeAabb("cone", points, coneDegrees);
         addLabelAt([mid.x, topY + 0.3, mid.z], ftPerVoxelLabel(axisLength, ftPV), billboardScaleFor(aabb));

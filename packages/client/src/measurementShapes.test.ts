@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { requiredPointCount, cycleIndex, snapPoint, snappedCameraForward, snappedCameraRight, shapeAabb } from "./measurementShapes.js";
+import { requiredPointCount, cycleIndex, snapPoint, movementStep, shapeAabb } from "./measurementShapes.js";
 
 describe("requiredPointCount", () => {
   it("chain has no fixed count -- keeps growing until Enter finalizes it", () => {
@@ -45,19 +45,24 @@ describe("snapPoint (center / corner / free)", () => {
   });
 });
 
-describe("snappedCameraForward/snappedCameraRight (WASD, camera-relative, snapped to the voxel grid)", () => {
-  it("snaps a mostly-+X-facing camera to the +X cardinal direction", () => {
-    expect(snappedCameraForward([0.9, -0.2, 0.1])).toEqual([1, 0, 0]);
+describe("movementStep (WASD point movement -- real correction, 2026-10-24: the SAME camera-heading formula real character movement already uses, not a separate cardinal-snapping scheme)", () => {
+  it("at heading 0, forward/backward/right/left step along +Z/-Z/+X/-X -- matching MoverResource.ts's own dirX/dirZ formula exactly", () => {
+    expect(movementStep(0, 1, 0)).toEqual([0, 1]); // forward (W)
+    expect(movementStep(0, -1, 0)).toEqual([0, -1]); // backward (S)
+    expect(movementStep(1, 0, 0)).toEqual([1, 0]); // right (D)
+    expect(movementStep(-1, 0, 0)).toEqual([-1, 0]); // left (A)
   });
 
-  it("snaps a mostly--Z-facing camera to the -Z cardinal direction", () => {
-    expect(snappedCameraForward([0.1, 0.3, -0.9])).toEqual([0, 0, -1]);
+  it("rotates with heading, same as a real character turning in place", () => {
+    const halfPi = Math.PI / 2;
+    expect(movementStep(0, 1, halfPi)).toEqual([1, 0]); // "forward" now points where "right" used to
+    expect(movementStep(1, 0, halfPi)).toEqual([0, -1]); // "right" now points where "backward" used to
   });
 
-  it("right is perpendicular to the snapped forward direction, same horizontal plane", () => {
-    const right = snappedCameraRight([1, 0, 0]);
-    expect(right[1]).toBe(0); // stays horizontal
-    expect(Math.abs(right[0]) + Math.abs(right[2])).toBe(1); // one axis only, same cardinal-snap discipline as forward
+  it("always rounds to a whole voxel step, never a fractional one", () => {
+    const [dx, dz] = movementStep(0, 1, Math.PI / 4); // a 45-degree heading -- fractional components before rounding
+    expect(Number.isInteger(dx)).toBe(true);
+    expect(Number.isInteger(dz)).toBe(true);
   });
 });
 
