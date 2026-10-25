@@ -749,7 +749,13 @@ export async function connectAndStreamWorld(
       // is an EXTRA, coarser pick target for the same token -- see
       // tokenPicking.ts's TrackedToken doc for the real "the player should
       // be easier [to pick than the thin billboard]" request this answers.
+      // Real correction, 2026-10-25: the wireframe box (buildWireframeBox)
+      // made that hitbox practically just its own thin lines -- "the
+      // character box can no longer be right clicked (practically)" --
+      // the circular token-FACE billboard is now ALSO an extra hitbox,
+      // the bigger/easier target in its place.
       const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
+      const faceMesh = remoteTokenFaces.get(sessionId)?.mesh;
       trackedTokens.push({
         sessionId,
         characterId: p.currentInstance.characterId,
@@ -764,7 +770,7 @@ export async function connectAndStreamWorld(
         isPiloted: true,
         owned: !!p.currentInstance.characterId && owned,
         planeMesh: token.mesh,
-        extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
+        extraHitboxMeshes: [bodyMesh, faceMesh].filter((m): m is BABYLON.Mesh => !!m),
       });
     }
     // MVP goal item 4 follow-up (multi-character presence, then world-
@@ -780,6 +786,7 @@ export async function connectAndStreamWorld(
       const otherToken = remoteTokens.get(other.instanceId);
       if (!otherToken) continue;
       const otherBodyMesh = remoteBodyMeshes.get(other.instanceId);
+      const otherFaceMesh = remoteTokenFaces.get(other.instanceId)?.mesh;
       trackedTokens.push({
         sessionId: room!.sessionId,
         characterId: other.characterId,
@@ -788,7 +795,7 @@ export async function connectAndStreamWorld(
         isPiloted: false,
         owned: other.placedByAccountId === accountId,
         planeMesh: otherToken.mesh,
-        extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
+        extraHitboxMeshes: [otherBodyMesh, otherFaceMesh].filter((m): m is BABYLON.Mesh => !!m),
       });
     }
   }

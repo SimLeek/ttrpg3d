@@ -20,10 +20,10 @@ function findControl<T extends GUI.Control>(root: GUI.Container, predicate: (c: 
 }
 
 describe("createCharacterTokenFace (docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the circular token billboard inside the wireframe box)", () => {
-  it("billboards on the Y axis and is never pickable (purely visual, same as distance labels elsewhere)", () => {
+  it("fully camera-facing (BILLBOARDMODE_ALL, not Y-only) and pickable -- real request: \"always visible, even from above\", and the new easier-to-click target now that the wireframe box is hard to right-click", () => {
     const face = createCharacterTokenFace(makeScene(), "test", 1, new BABYLON.Color3(1, 0, 0));
-    expect(face.mesh.billboardMode).toBe(BABYLON.Mesh.BILLBOARDMODE_Y);
-    expect(face.mesh.isPickable).toBe(false);
+    expect(face.mesh.billboardMode).toBe(BABYLON.Mesh.BILLBOARDMODE_ALL);
+    expect(face.mesh.isPickable).toBe(true);
   });
 
   it("shows the ASCII smiley fallback by default, with no image", () => {

@@ -54,8 +54,26 @@ export function createCharacterTokenFace(scene: BABYLON.Scene, name: string, dia
   // (distanceLabel.ts's `label.mesh.scaling.setAll(scale)` etc.).
   const plane = BABYLON.MeshBuilder.CreatePlane(`${name}-face`, { width: 1, height: 1 }, scene);
   plane.scaling.setAll(diameter);
-  plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y; // stays upright, same choice characterToken.ts's own name/bars billboard already makes
-  plane.isPickable = false; // purely visual, same as the distance labels/measurement billboards elsewhere in this codebase
+  // Real correction, 2026-10-25: "I'd like the internal character
+  // token billboard to just point always at the camera so it's
+  // always visible, even from above" -- the name/bars billboard
+  // (characterToken.ts) uses BILLBOARDMODE_Y (stays upright, rotates
+  // only around the vertical axis -- its surface normal is the
+  // camera direction PROJECTED onto the ground plane, not the real
+  // camera direction), which is wrong for a face meant to be visible
+  // from any angle, including looking straight down. BILLBOARDMODE_ALL
+  // is the SAME full camera-facing mode distanceLabel.ts's own
+  // billboards already use.
+  plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+  // Real request, 2026-10-25: the wireframe box (buildWireframeBox) is
+  // now hard to right-click/hover (practically just its thin lines) --
+  // this face billboard becomes the easier, bigger target in its
+  // place for the SAME token (net.ts adds this mesh to
+  // TrackedToken.extraHitboxMeshes, tokenPicking.ts's own "additional
+  // pick target" mechanism), so it needs to be pickable now, unlike
+  // the purely-decorative distance labels/measurement billboards
+  // elsewhere in this codebase.
+  plane.isPickable = true;
 
   const texture = GUI.AdvancedDynamicTexture.CreateForMesh(plane, TEXTURE_SIZE, TEXTURE_SIZE, false);
 
