@@ -298,6 +298,12 @@ for this section's own use. N remains confirmed free either way.
   - M/N and the panel's `W+`/`W-` buttons do nothing for EVERYONE,
     GM included, while `waypointsEnabled` is `false`.
 
+- **Distance labels read through the "ft per voxel" world setting**
+  (real correction, 2026-10-24) -- introduced in section 6's own
+  "Measurement shapes" settings below, defaults to 5, and applies HERE
+  too, not just to the new shapes: a label shows feet (voxels × ft-
+  per-voxel), not a bare voxel count.
+
 ### 5. Character-size-aware waypoint markers
 
 Marker/line scale (and the wireframe-box variant mentioned in the
@@ -355,15 +361,31 @@ turn tracker are not involved.
   "one chain" precedent waypoints already established (starting a new
   one replaces whatever was active before).
 - Once placed/finalized, a measurement object PERSISTS in the world
-  (it does not auto-clear), rendered semi-transparent. Right-clicking
-  it in the 3D world deletes it. The panel also has its own "remove my
-  current measurement object" button, so deleting one doesn't strictly
-  require aiming a right-click at it in the 3D view.
-- Reuses the SAME billboard/distance-label mechanism waypoints already
-  use (`characterToken.ts`'s billboard plane) for whichever number
-  best describes that shape (segment distance for the chain; exact
-  label content for the solid shapes -- radius, dimensions, etc. --
-  not yet specified per shape).
+  (it does not auto-clear), rendered semi-transparent. **Right-
+  clicking it in the 3D world opens a context menu** (real correction,
+  2026-10-24: not an immediate delete) -- scoped separately from the
+  existing character-token context menu, same "its own menu, not
+  reusing an unrelated one" precedent "Reset char"'s own tracker-row
+  context menu already set. For now its only entry is **Delete**. The
+  panel also has its own "remove my current measurement object"
+  button, so deleting one doesn't strictly require aiming a right-
+  click at it in the 3D view.
+- **Every shape gets its own measurement billboard** (real correction,
+  2026-10-24, resolving what was an open question above), reusing the
+  SAME billboard mechanism waypoints already use
+  (`characterToken.ts`'s billboard plane) -- positioned per shape:
+  - **Distance chain**: same as the existing waypoint system -- one
+    label per segment, positioned at that segment's own midpoint.
+  - **Cube**: one billboard above the cube, sized the same as a
+    character's own billboard.
+  - **Sphere**: one billboard above the sphere.
+  - **Beam**: one billboard above its MIDDLE, same positioning style
+    the waypoint system already uses for a segment's label.
+  - **Cone/frustum**: one billboard above whichever point is
+    topmost -- the actual tip for a pointed cone, or the (flat) near-
+    cap's own topmost point for a frustum.
+  - Exact TEXT content per solid shape (radius? full dimensions? both?)
+    still open -- see "Open questions" below.
 
 **Per-shape point count and meaning:**
 
@@ -393,10 +415,11 @@ turn tracker are not involved.
 - **ft per voxel**: a new per-world setting (lives in the world's own
   settings/detail page, same place the generator/its params already
   live), defaulting to **5** -- converts voxel-unit distances into a
-  feet display for every distance label this tool shows. Worth
-  confirming whether the EXISTING waypoint distance labels should also
-  read through this same setting (seems like the natural, consistent
-  answer, but never directly specified for that feature).
+  feet display for every distance label this tool shows. **Real
+  correction, 2026-10-24: this ALSO retroactively applies to the
+  existing waypoint system's own distance labels** (section 4 above) --
+  resolves what was an open question below; both features now read
+  through this one setting, not two independent ones.
 
 ## Explicitly OUT of scope for this pass
 
@@ -748,10 +771,17 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then it remains visible in the 3D world, rendered semi-transparent,
       and does not disappear on its own
 
-  Scenario: Right-clicking a measurement object deletes it
+  Scenario: Right-clicking a measurement object opens a context menu, not an immediate delete
     Given a finalized measurement object exists in the world
     When a session right-clicks it
-    Then it is deleted
+    Then a context menu opens, with "Delete" as its only entry
+    And the object is NOT deleted yet
+
+  Scenario: Choosing Delete from that context menu removes the object
+    Given a session right-clicked a measurement object and its context
+      menu is open
+    When they select "Delete"
+    Then that object is removed from the world
 
   Scenario: The panel's own "remove current" button deletes your active measurement object
     Given a session has an active/finalized measurement object
@@ -775,6 +805,29 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Given a world's "ft per voxel" setting is 5 (the default)
     And two points are 3 voxels apart
     Then their distance label reads 15 ft, not "3" (a bare voxel count)
+
+  Scenario: The "ft per voxel" setting also applies to the existing waypoint system
+    Given a world's "ft per voxel" setting is 5 (the default)
+    And two placed waypoints are 3 voxels apart
+    Then their segment's distance label ALSO reads 15 ft, same
+      conversion as a measurement-shape label
+
+  Scenario: Each shape type shows its own billboard, positioned per shape
+    Given a cube, a sphere, a beam, and a cone/frustum have each been
+      placed
+    Then the cube's billboard is above the cube, the same size as a
+      character's own billboard
+    And the sphere's billboard is above the sphere
+    And the beam's billboard is above its middle, same positioning
+      style the waypoint system already uses for a segment label
+    And the cone/frustum's billboard is above its topmost point (the
+      tip for a pointed cone, the flat near-cap's topmost point for a
+      frustum)
+
+  Scenario: A distance chain's billboards match the waypoint system's own per-segment labels
+    Given a distance chain has points P1, P2, and P3 placed in order
+    Then each consecutive segment (P1-P2, P2-P3) has its own billboard
+      at that segment's own midpoint, same as the waypoint system
 ```
 
 ## UI/interaction reference
@@ -836,16 +889,15 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
 6. **Measurement shapes' snap mode** (center/corner/free): whether this
    is one setting for the whole panel, one per shape type, or one per
    individual point, isn't specified.
-7. **Measurement shapes' labels for the solid shapes** (cube/sphere/
-   cone/beam): the distance CHAIN's label content is obvious (segment
-   distance, same as waypoints); what number(s) the other shapes show
-   on their own billboard (radius? dimensions? both?) isn't specified.
-8. **Whether the existing waypoint distance labels should also read
-   through the new "ft per voxel" world setting**: seems like the
-   natural, consistent answer (it's the same underlying "distance
-   display" concept), but the user scoped "ft per voxel" while
-   describing measurement shapes specifically, not waypoints -- worth
-   confirming before wiring it through both.
+7. **Measurement shapes' billboard POSITION is now specified for every
+   shape** (resolved, 2026-10-24 -- see section 6's own billboard
+   bullet). Still open: the exact TEXT content for the solid shapes'
+   billboards (radius? full dimensions? both?) -- the distance chain's
+   content is obvious (segment distance, same as waypoints).
+8. ~~**Whether the existing waypoint distance labels should also read
+   through the new "ft per voxel" world setting**~~ -- **resolved,
+   2026-10-24**: yes, confirmed by direct user call. One setting, both
+   features.
 9. **Measurement-shapes point placement/movement isn't specified as
    network-synced or not**, beyond the "Broadcast to others" checkbox
    controlling whether the FINALIZED object is shared -- whether the
