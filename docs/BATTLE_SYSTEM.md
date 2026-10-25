@@ -376,14 +376,28 @@ turn tracker are not involved.
   (`characterToken.ts`'s billboard plane) -- positioned per shape:
   - **Distance chain**: same as the existing waypoint system -- one
     label per segment, positioned at that segment's own midpoint.
-  - **Cube**: one billboard above the cube, sized the same as a
-    character's own billboard.
+  - **Cube**: one billboard above the cube, sized using the SAME
+    scale formula a character's own billboard already uses
+    (`tokenScaleFor(bodyHeight)` in net.ts, keyed off body dimensions)
+    -- real clarification, 2026-10-24: not a fixed/literal size: "same
+    size as a character's own billboard IF A CHARACTER WERE THAT EXACT
+    SIZE AND SHAPE," i.e. feed the cube's own dimensions through that
+    same formula, not a constant.
   - **Sphere**: one billboard above the sphere.
   - **Beam**: one billboard above its MIDDLE, same positioning style
     the waypoint system already uses for a segment's label.
-  - **Cone/frustum**: one billboard above whichever point is
-    topmost -- the actual tip for a pointed cone, or the (flat) near-
-    cap's own topmost point for a frustum.
+  - **Cone/frustum**: one billboard above the mesh's own TOPMOST
+    VERTEX along the vertical axis (global Y, or whichever axis is
+    "up" in this engine) -- real correction, 2026-10-24: NOT "the tip
+    for a pointed cone, the near-cap's topmost point for a frustum"
+    (wrong -- that framing assumes a fixed orientation; rotate the
+    shape in roll/pitch/yaw and the geometric tip is no longer
+    necessarily the topmost point at all). Since a cone/frustum is
+    approximated as a mesh (a tip or far-cap, plus points arranged
+    around a circle for the near-cap/base -- no true curved geometry),
+    "topmost vertex by the up-axis" is a single rule that already
+    handles every rotation correctly, tip-vs-cap distinction or not --
+    no special-casing needed.
   - Exact TEXT content per solid shape (radius? full dimensions? both?)
     still open -- see "Open questions" below.
 
@@ -812,17 +826,30 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then their segment's distance label ALSO reads 15 ft, same
       conversion as a measurement-shape label
 
-  Scenario: Each shape type shows its own billboard, positioned per shape
-    Given a cube, a sphere, a beam, and a cone/frustum have each been
-      placed
-    Then the cube's billboard is above the cube, the same size as a
-      character's own billboard
-    And the sphere's billboard is above the sphere
-    And the beam's billboard is above its middle, same positioning
-      style the waypoint system already uses for a segment label
-    And the cone/frustum's billboard is above its topmost point (the
-      tip for a pointed cone, the flat near-cap's topmost point for a
-      frustum)
+  Scenario: A cube's billboard sits above it, sized as if a character were that exact size and shape
+    Given a cube has been placed with specific width/height/depth
+    Then its billboard appears above the cube
+    And its size matches whatever a character's own billboard would be
+      IF that character's body dimensions equaled this cube's
+      width/height/depth (the same scale formula, not a fixed size)
+
+  Scenario: A sphere's billboard sits above it
+    Given a sphere has been placed
+    Then its billboard appears above the sphere
+
+  Scenario: A beam's billboard sits above its middle
+    Given a beam has been placed between a start and end point
+    Then its billboard appears above the segment's own midpoint, same
+      positioning style the waypoint system already uses for a
+      segment label
+
+  Scenario: A cone/frustum's billboard sits above its topmost vertex, regardless of rotation
+    Given a cone (or frustum) has been placed and then rotated in
+      roll/pitch/yaw to some arbitrary orientation
+    Then its billboard appears above whichever of its own vertices has
+      the highest value along the vertical (up) axis -- NOT
+      necessarily its geometric tip or cap, since rotation can put
+      either one anywhere
 
   Scenario: A distance chain's billboards match the waypoint system's own per-segment labels
     Given a distance chain has points P1, P2, and P3 placed in order
