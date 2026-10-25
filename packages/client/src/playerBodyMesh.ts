@@ -36,6 +36,18 @@ export const PLAYER_BODY_WIDTH = 0.6;
 export const PLAYER_BODY_HEIGHT = 1.8;
 export const PLAYER_BODY_DEPTH = 0.6;
 
+// Real request: "there should be a minimum size so that things still
+// print." Moved here (2026-10-24) from net.ts's own local scope so
+// docs/BATTLE_SYSTEM.md's measurement-shapes billboards (cube/sphere/
+// cone) can use the EXACT SAME function net.ts's own character-token
+// billboards already do -- "these should all be using the same
+// function to keep the code clean," fed each shape's own axis-aligned
+// bounding box instead of a real character's body height.
+export const MIN_TOKEN_SCALE = 0.5;
+export function tokenScaleFor(bodyHeight: number): number {
+  return Math.max(MIN_TOKEN_SCALE, bodyHeight / PLAYER_BODY_HEIGHT);
+}
+
 export interface PlayerBodyMesh {
   mesh: BABYLON.Mesh;
   material: BABYLON.StandardMaterial;

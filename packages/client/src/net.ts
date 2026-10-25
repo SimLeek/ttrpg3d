@@ -24,7 +24,7 @@ import { mountTurnTracker, type TurnTrackerController } from "./turnTracker.js";
 import { mountWaypointPanel } from "./waypointPanel.js";
 import { installWaypoints } from "./waypoints.js";
 import type { PlayerController } from "./movement/PlayerController.js";
-import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, type PlayerBodyMesh } from "./playerBodyMesh.js";
+import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, tokenScaleFor, type PlayerBodyMesh } from "./playerBodyMesh.js";
 import { CHARACTER_STORAGE_KEY } from "./api.js";
 
 /** Scoped per-world (an instanceId only ever makes sense within the world it was placed/piloted in) -- real correction, 2026-10-23: "disconnecting and reconnecting puts the player back to where they were exactly instead of respawning." Read back at connect time below (JoinOptions.instanceId), written whenever the locally-piloted instance's own id changes (the tick loop's local-player branch). */
@@ -609,10 +609,6 @@ export async function connectAndStreamWorld(
   // bottom edge dropped below the intended clearance and into the box
   // ("intersecting... at 2.8 or 3.8"). Multiplying by the SAME scale
   // factor actually applied to the mesh fixes this for every size.
-  const MIN_TOKEN_SCALE = 0.5; // real request: "there should be a minimum size so that things still print"
-  function tokenScaleFor(bodyHeight: number): number {
-    return Math.max(MIN_TOKEN_SCALE, bodyHeight / PLAYER_BODY_HEIGHT);
-  }
   function tokenYOffsetFor(bodyHeight: number): number {
     const scaledPlaneHeight = TOKEN_PLANE_HEIGHT * tokenScaleFor(bodyHeight);
     const heightAboveFeet = bodyHeight + TOKEN_CLEARANCE_ABOVE_HEAD + scaledPlaneHeight / 2;
