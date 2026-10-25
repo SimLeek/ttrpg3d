@@ -69,6 +69,29 @@ export interface CharacterSheetTemplate {
 }
 
 /**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a parsed document, handed
+ * to a mod's own `characterSheetImporter`, tab name -> that tab's own
+ * raw grid of cell values (row-major, 0-indexed, no formatting/
+ * formulas -- just whatever a cell's own last-computed value was).
+ * Deliberately NOT a header-row/record shape: a real-world sheet's
+ * tabs don't all agree on one layout (confirmed directly against the
+ * Lyrian Chronicles sheet this type was scoped against -- its "Core"
+ * tab is a scattered label/value grid with labels and values at
+ * arbitrary positions, while its "Abilities"/"Inventory" tabs ARE
+ * conventional header-row tables) -- interpreting a tab's own layout
+ * is squarely the importing MOD's own job, never core code's, same
+ * "core knows nothing about Lyrian specifics" split
+ * `characterSheetImporter` itself follows.
+ */
+export type ImportedWorkbook = Record<string, (string | number | boolean | null)[][]>;
+
+/** What a `characterSheetImporter` call produces -- `variableValues` overlays the mod's own `characterSheetTemplate` variable defaults (real values pulled from the imported document); `pages` are APPENDED after that template's own fixed pages (e.g. Lyrian's own "Core" page stays first, imported "Abilities"/"Inventory" pages come after) -- never a replacement for the template's own structure, since page content differs per character but the template's own shape doesn't. */
+export interface CharacterSheetImportResult {
+  variableValues: Record<string, number | string>;
+  pages: CharacterSheetPageDef[];
+}
+
+/**
  * Core, always-present variables that exist on EVERY character
  * regardless of template -- unlike ordinary template-defined
  * variables, these aren't optional/removable (real request,

@@ -10,8 +10,8 @@ import { WorldRoom, notifyCharacterSheetChanged } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
-import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
-import { findLibraryCalls } from "@ttrpg3d/shared";
+import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./mods/modLoader.js";
+import { findLibraryCalls, type ImportedWorkbook } from "@ttrpg3d/shared";
 import { join } from "node:path";
 
 store.ensureSeedData();
@@ -135,6 +135,47 @@ const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT
   // connection at all. Without this, a character's billboard bars sat
   // stale in-game until some UNRELATED room message happened to
   // trigger a refresh. See notifyCharacterSheetChanged's own doc.
+  notifyCharacterSheetChanged(characterId);
+  return store.getCharacter(characterId);
+});
+
+// docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the un-deferred "mod-based
+// sheet importers" item. `workbook` is already a parsed
+// `ImportedWorkbook` (tabName -> raw grid of cell values) by the time
+// it reaches here -- the CLIENT does the actual fetch-the-export-URL
+// + XLSX-parse work (see that doc's own open-question-1 resolution:
+// the server never fetches an arbitrary URL itself). Same ownership
+// gate as putCharacterSheet above (this IS a sheet write, just
+// sourced from an import instead of manual edits), plus a mod-
+// allowlist check `putCharacterSheet` doesn't need (picking a
+// template already goes through `getAccountCharacterSheetTemplates`,
+// itself scoped to `importedModIds` -- this is the same trust
+// boundary for the import path).
+const postCharacterImportSheet = createEndpoint("/characters/:id/import-sheet", { method: "POST", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (accountId !== character.ownerAccountId && !store.canAccountEditCharacter(accountId, characterId)) throw new APIError("UNAUTHORIZED", { message: "not this character's owner or an admin of a game it's linked to" });
+  const modId = typeof ctx.body?.modId === "string" ? ctx.body.modId : "";
+  if (!modId) throw new APIError("BAD_REQUEST", { message: "modId is required" });
+  const account = store.getAccount(accountId);
+  if (!account?.importedModIds.includes(modId)) throw new APIError("UNAUTHORIZED", { message: "this account hasn't imported that mod" });
+  const workbook = typeof ctx.body?.workbook === "object" && ctx.body.workbook !== null ? (ctx.body.workbook as ImportedWorkbook) : null;
+  if (!workbook) throw new APIError("BAD_REQUEST", { message: "workbook is required" });
+  const imported = await importCharacterSheet(join(process.cwd(), "mods"), modId, workbook);
+  if (!imported) throw new APIError("BAD_REQUEST", { message: "that mod has no character-sheet importer" });
+  const { template, result } = imported;
+  // Clone source + defaults, same spirit as characterSheetView.ts's
+  // own `structuredClone(entry.template)` for the manual "pick a
+  // template" flow -- an import is really the SAME clone, just with
+  // the import's own real values overlaid afterward instead of
+  // starting (and staying) at the template's own defaults.
+  const customSheet = structuredClone(template);
+  customSheet.pages = [...customSheet.pages, ...result.pages];
+  const defaults = Object.fromEntries(template.variables.map((v) => [v.id, v.default]));
+  const variableValues = { ...defaults, ...result.variableValues };
+  store.updateCharacterSheet(characterId, modId, customSheet, variableValues);
   notifyCharacterSheetChanged(characterId);
   return store.getCharacter(characterId);
 });
@@ -336,6 +377,7 @@ const routes = createRouter({
   getAccountCharacterSheetTemplates,
   getAccountCharacterSheetLibraries,
   putCharacterSheet,
+  postCharacterImportSheet,
   getCharacter,
   deleteCharacterEndpoint,
   postCharacterSheetPreview,

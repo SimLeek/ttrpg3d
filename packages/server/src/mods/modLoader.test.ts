@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown } from "./modLoader.js";
+import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./modLoader.js";
 
 // Isolated synthetic mods directory per test, same spirit as store.test.ts's
 // own mkdtempSync-per-test convention -- these tests shouldn't depend on
@@ -210,5 +210,53 @@ describe("listCharacterSheetLibraries / resolveCharacterSheetMarkdown (MVP goal 
 
     const resolved = await resolveCharacterSheetMarkdown(realModsDir, ["default"], "Mod: {{default.modifier(str)}}", { str: 16 });
     expect(resolved).toBe("Mod: 3");
+  });
+});
+
+describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-deferred mod-based sheet importers)", () => {
+  it("resolves undefined for an unknown mod id, and for a mod with no characterSheetImporter/characterSheetTemplate", async () => {
+    writeMod("template-only", { id: "template-only", name: "Template Only", version: "1.0.0", entry: "entry.ts" }, "export const characterSheetTemplate = { name: 'T', pages: [], variables: [] };");
+
+    await expect(importCharacterSheet(dir, "not-a-real-mod", {})).resolves.toBeUndefined();
+    await expect(importCharacterSheet(dir, "template-only", {})).resolves.toBeUndefined();
+  });
+
+  it("calls the mod's own characterSheetImporter against the given workbook, returning it alongside the mod's template", async () => {
+    writeMod(
+      "importer-mod",
+      { id: "importer-mod", name: "Importer Mod", version: "1.0.0", entry: "entry.ts" },
+      `export const characterSheetTemplate = { name: 'Importer', pages: [], variables: [{ id: 'hp', label: 'HP', type: 'number', default: 0 }] };
+       export const characterSheetImporter = (workbook) => ({ variableValues: { hp: workbook.Core[0][0] }, pages: [{ title: 'Imported', markdown: 'x', variableIds: [] }] });`,
+    );
+
+    const result = await importCharacterSheet(dir, "importer-mod", { Core: [[42]] });
+    expect(result?.template.name).toBe("Importer");
+    expect(result?.result.variableValues).toEqual({ hp: 42 });
+    expect(result?.result.pages).toEqual([{ title: "Imported", markdown: "x", variableIds: [] }]);
+  });
+
+  it("resolves the real, committed mods/lyrian-chronicles fixture -- HP/Mana/Agility found by scanning Core's own label/value grid, not fixed coordinates", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    // Deliberately NOT at the same coordinates the real example sheet
+    // happened to use (confirmed live: "Name" at A2/B2, "HP" at
+    // E2/F2 for one real character) -- proves the scan is genuinely
+    // coordinate-independent, not accidentally hardcoded.
+    const workbook = {
+      Core: [
+        ["Unrelated", "Junk", "Row"],
+        ["Agility", 6, "", "HP", 70],
+        [],
+        ["", "", "Mana", 11],
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    expect(result?.result.variableValues).toEqual({ hp: 70, hpMax: 70, mana: 11, manaMax: 11, agility: 6 });
+    expect(result?.result.pages).toEqual([]);
+  });
+
+  it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
+    expect(result?.result.variableValues).toEqual({ hp: 10, hpMax: 10, mana: 10, manaMax: 10, agility: 0 });
   });
 });

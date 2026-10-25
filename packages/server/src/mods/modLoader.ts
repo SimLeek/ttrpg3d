@@ -27,7 +27,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { CharacterSheetTemplate, CharacterSheetLibraryFunction } from "@ttrpg3d/shared";
+import type { CharacterSheetTemplate, CharacterSheetLibraryFunction, CharacterSheetImportResult, ImportedWorkbook } from "@ttrpg3d/shared";
 import { findLibraryCalls } from "@ttrpg3d/shared";
 
 export interface ModManifest {
@@ -79,6 +79,16 @@ export interface ModEntry {
    * safe to run against arbitrary, user-authored markdown.
    */
   characterSheetLibrary?: Record<string, CharacterSheetLibraryFunction>;
+  /**
+   * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the un-deferred "mod-
+   * based sheet importers" item. Plain, trusted mod code (same trust
+   * level `register()`/`characterSheetLibrary` already have) that
+   * maps a parsed external document (`ImportedWorkbook`) onto this
+   * mod's OWN `characterSheetTemplate` shape. Optional, same spirit
+   * as every other `ModEntry` export -- an ordinary template-only mod
+   * (like `default`) has no business exporting this.
+   */
+  characterSheetImporter?: (workbook: ImportedWorkbook) => CharacterSheetImportResult;
 }
 
 /** Scans `modsDir` for `<mod-id>/mod.json` manifests. Re-reads from disk every call, same "never cache, always read fresh" convention as store.ts's own loadX functions -- mod counts are small, caching isn't worth the staleness risk. Skips (does not throw on) a directory with no mod.json, or one whose manifest fails to parse -- a malformed mod shouldn't take down the whole list. */
@@ -170,6 +180,27 @@ export async function listCharacterSheetLibraries(modsDir: string, modIds: reado
     if (mod.characterSheetLibrary) results.push({ modId, manifest, library: mod.characterSheetLibrary });
   }
   return results;
+}
+
+/**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- resolves ONE mod's own
+ * `characterSheetTemplate` (the clone source for a freshly-imported
+ * character's sheet SHAPE) together with running its
+ * `characterSheetImporter` against `workbook` (the actual imported
+ * VALUES/pages). Returns undefined for an unknown mod id, a mod with
+ * no importer, or a mod with no template at all -- "stale id, not a
+ * crash," same spirit as every other mod lookup in this file. Not
+ * gated by an account's `importedModIds` here -- the caller (server.ts)
+ * already checks that, same split `resolveCharacterSheetMarkdown`'s
+ * own `allowedModIds` vs. this file's other per-mod lookups use.
+ */
+export async function importCharacterSheet(modsDir: string, modId: string, workbook: ImportedWorkbook): Promise<{ template: CharacterSheetTemplate; result: CharacterSheetImportResult } | undefined> {
+  const manifest = listAvailableMods(modsDir).find((m) => m.id === modId);
+  if (!manifest) return undefined;
+  const entryPath = join(modsDir, modId, manifest.entry);
+  const mod = (await import(pathToFileURL(entryPath).href)) as ModEntry;
+  if (!mod.characterSheetTemplate || !mod.characterSheetImporter) return undefined;
+  return { template: mod.characterSheetTemplate, result: mod.characterSheetImporter(workbook) };
 }
 
 /**
