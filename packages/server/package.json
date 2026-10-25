@@ -16,12 +16,14 @@
     "@dice-roller/rpg-dice-roller": "^5.5.1",
     "@ttrpg3d/shared": "workspace:*",
     "colyseus": "^0.18.5",
+    "express": "^5.2.1",
     "simplex-noise": "^4.0.3",
     "tsx": "^4.23.0"
   },
   "devDependencies": {
     "@colyseus/sdk": "^0.18.2",
     "@colyseus/testing": "^0.18.5",
+    "@types/express": "^5.0.0",
     "@types/node": "^26.0.0",
     "typescript": "^7.0.0",
     "vitest": "^5.0.0"

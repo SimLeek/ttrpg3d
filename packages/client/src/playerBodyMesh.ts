@@ -48,6 +48,53 @@ export function tokenScaleFor(bodyHeight: number): number {
   return Math.max(MIN_TOKEN_SCALE, bodyHeight / PLAYER_BODY_HEIGHT);
 }
 
+/**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 2 -- "rather than be a solid
+ * opaque box, be basically the glass box voxel we had... colored
+ * based on whatever color we chose," real correction: "if you can
+ * use wireframe and set line width for the character box instead of
+ * the glass texture idea, that would be even better." Plain
+ * `material.wireframe = true` can't give a real, settable line width
+ * (native WebGL line width is capped at 1px in effectively every
+ * browser) -- `CreateGreasedLine` (confirmed present in this repo's
+ * own installed @babylonjs/core) is the real mechanism, a thick-line
+ * mesh with a genuinely configurable width. Builds the box's 12 edges
+ * as one mesh, centered on local origin spanning -width/2..width/2
+ * etc. -- the SAME convention `CreateBox` already used here.
+ *
+ * Real finding, confirmed by direct measurement (see this file's own
+ * test): unlike a plain mesh, a GreasedLine mesh's bounding geometry
+ * does NOT follow `mesh.scaling` afterward -- so this can't reuse the
+ * EXISTING `mesh.scaling.set(...)`-based resize path every other body
+ * mesh already uses (resizeEntityBody below). A body-size (or color --
+ * GreasedLine's own color lives on a material plugin, not a plain
+ * `diffuseColor` property, and this project already has a confirmed,
+ * measured precedent for "don't fight a mesh's own material-mutation
+ * quirks, just rebuild it" from the LOCAL player's own body color
+ * swap in net.ts) change calls this function again at the new
+ * dimensions/color and disposes the old mesh, rather than mutating
+ * the existing one in place.
+ */
+export const WIREFRAME_LINE_WIDTH = 0.03;
+
+export function buildWireframeBox(scene: BABYLON.Scene, name: string, width: number, height: number, depth: number, color: BABYLON.Color3, lineWidth: number = WIREFRAME_LINE_WIDTH): BABYLON.Mesh {
+  const hw = width / 2;
+  const hh = height / 2;
+  const hd = depth / 2;
+  const corner = (sx: number, sy: number, sz: number): [number, number, number] => [sx * hw, sy * hh, sz * hd];
+  const edges: number[][] = [];
+  for (const sy of [-1, 1]) {
+    for (const sz of [-1, 1]) edges.push([...corner(-1, sy, sz), ...corner(1, sy, sz)]);
+  }
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) edges.push([...corner(sx, -1, sz), ...corner(sx, 1, sz)]);
+  }
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) edges.push([...corner(sx, sy, -1), ...corner(sx, sy, 1)]);
+  }
+  return BABYLON.CreateGreasedLine(name, { points: edges }, { width: lineWidth, color }, scene) as BABYLON.Mesh;
+}
+
 export interface PlayerBodyMesh {
   mesh: BABYLON.Mesh;
   material: BABYLON.StandardMaterial;

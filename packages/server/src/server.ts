@@ -13,6 +13,8 @@ import { createChatStorage } from "./chat/chatStorage.js";
 import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./mods/modLoader.js";
 import { findLibraryCalls, type ImportedWorkbook } from "@ttrpg3d/shared";
 import { join } from "node:path";
+import express from "express";
+import { saveUploadedImage, UploadRejected } from "./data/uploads.js";
 
 store.ensureSeedData();
 
@@ -107,6 +109,28 @@ const getAccountCharacterSheetLibraries = createEndpoint("/accounts/:id/characte
   if (!account) return [];
   const libraries = await listCharacterSheetLibraries(join(process.cwd(), "mods"), account.importedModIds);
   return libraries.map(({ modId, manifest, library }) => ({ modId, manifest, functionNames: Object.keys(library) }));
+});
+
+// docs/CHARACTER_SHEET_IMPORT.md, part 2 -- "a new upload endpoint,
+// writing to disk; the tokenImage variable holds a URL." Generic (not
+// token-image-specific) on purpose -- just "an account uploads an
+// image, gets a URL back" -- the caller decides what to DO with that
+// URL (set it as a character's reserved tokenImage variable, same as
+// any other sheet edit, via the existing putCharacterSheet above).
+// Ungated beyond "a real account" (no character/game involved at
+// all), same trust level postAccountCharacter already has.
+const postUpload = createEndpoint("/uploads", { method: "POST", scope: "http" }, async (ctx) => {
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (!store.getAccount(accountId)) throw new APIError("UNAUTHORIZED", { message: "unknown account" });
+  const mimeType = typeof ctx.body?.mimeType === "string" ? ctx.body.mimeType : "";
+  const dataBase64 = typeof ctx.body?.dataBase64 === "string" ? ctx.body.dataBase64 : "";
+  try {
+    const url = saveUploadedImage(join(process.cwd(), "data", "uploads"), mimeType, dataBase64);
+    return { url };
+  } catch (err) {
+    if (err instanceof UploadRejected) throw new APIError("BAD_REQUEST", { message: err.message });
+    throw err;
+  }
 });
 
 // Sets a character's template + variable values wholesale. Ownership-
@@ -376,6 +400,7 @@ const routes = createRouter({
   deleteAccountMod,
   getAccountCharacterSheetTemplates,
   getAccountCharacterSheetLibraries,
+  postUpload,
   putCharacterSheet,
   postCharacterImportSheet,
   getCharacter,
@@ -414,4 +439,13 @@ export const server = defineServer({
     game: defineRoom(GameRoom).filterBy(["gameId"]),
   },
   routes,
+  // Serves back whatever postUpload above just wrote to disk --
+  // `createEndpoint`'s own JSON-only response shape has no way to
+  // return raw file bytes, so this plain Express static mount (the
+  // one customization hook `ServerOptions.express` exposes, confirmed
+  // directly in @colyseus/core's own Server.d.ts) is the actual
+  // "serve a file back" half of that endpoint.
+  express: (app) => {
+    app.use("/uploads", express.static(join(process.cwd(), "data", "uploads")));
+  },
 });

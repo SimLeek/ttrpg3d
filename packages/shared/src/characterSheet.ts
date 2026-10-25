@@ -108,6 +108,25 @@ export const RESERVED_BODY_SIZE_VARIABLES: CharacterSheetVariableDef[] = [
 ];
 
 /**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 2 -- "import images for that
+ * token, onto the character sheet as a fixed non-removable variable
+ * similar to width height and depth." A separate array (not appended
+ * to RESERVED_BODY_SIZE_VARIABLES itself) since it isn't a body-size
+ * value and WorldRoom.ts's own body-size-specific lookups
+ * (DEFAULT_BODY_WIDTH/HEIGHT/DEPTH) have no business iterating it by
+ * accident -- `RESERVED_CHARACTER_VARIABLES` below is the "every
+ * reserved variable, for UI/listing purposes" union the two existing
+ * `RESERVED_BODY_SIZE_VARIABLES`-only callers (characterSheetView.ts's
+ * editor section, its own id-lookup fallback) should actually use.
+ * Empty string default -- "no image set" (resolved to the ASCII-
+ * smiley fallback at render time, not a broken/blank texture).
+ */
+export const RESERVED_TOKEN_IMAGE_VARIABLES: CharacterSheetVariableDef[] = [{ id: "tokenImage", label: "Token image", type: "text", default: "" }];
+
+/** Every reserved (fixed, non-removable) character-sheet variable, for callers that want "all of them" rather than specifically the body-size subset. */
+export const RESERVED_CHARACTER_VARIABLES: CharacterSheetVariableDef[] = [...RESERVED_BODY_SIZE_VARIABLES, ...RESERVED_TOKEN_IMAGE_VARIABLES];
+
+/**
  * MVP goal item 4 follow-up (drag-and-drop character placement) -- how
  * far (world units) a placed character can be from the one you're
  * currently controlling. Shared so the client's live hover-marker
