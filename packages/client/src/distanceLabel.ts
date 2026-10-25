@@ -16,9 +16,8 @@ import * as GUI from "@babylonjs/gui";
 // size, since waypoints.ts now sets two lines of text ("D: ...\nT:
 // ...").
 const TEXTURE_WIDTH = 170;
-const TEXTURE_HEIGHT = 90;
+const TEXTURE_HEIGHT_PER_LINE = 45; // the original 2-line size (90px) divided evenly -- real request, 2026-10-24: "Cube should have W, H, and D all on different lines," a 3rd caller needing more vertical room than the 2-line default
 export const DISTANCE_LABEL_PLANE_WIDTH = 0.7;
-export const DISTANCE_LABEL_PLANE_HEIGHT = (DISTANCE_LABEL_PLANE_WIDTH * TEXTURE_HEIGHT) / TEXTURE_WIDTH;
 
 export interface DistanceLabel {
   mesh: BABYLON.Mesh;
@@ -26,12 +25,15 @@ export interface DistanceLabel {
   dispose(): void;
 }
 
-export function createDistanceLabel(scene: BABYLON.Scene, initialText: string): DistanceLabel {
-  const plane = BABYLON.MeshBuilder.CreatePlane("distance-label", { width: DISTANCE_LABEL_PLANE_WIDTH, height: DISTANCE_LABEL_PLANE_HEIGHT }, scene);
+/** `lines` sizes the label's own texture/plane height -- defaults to 2 (every existing caller's own line count: "D:"/"T:", or a single line that just doesn't use the 2nd one). Pass 3+ for a caller showing more lines (e.g. cube's W:/H:/D:) so they don't get cut off, same reasoning the original 1-line -> 2-line bump already used. */
+export function createDistanceLabel(scene: BABYLON.Scene, initialText: string, lines = 2): DistanceLabel {
+  const textureHeight = TEXTURE_HEIGHT_PER_LINE * lines;
+  const planeHeight = (DISTANCE_LABEL_PLANE_WIDTH * textureHeight) / TEXTURE_WIDTH;
+  const plane = BABYLON.MeshBuilder.CreatePlane("distance-label", { width: DISTANCE_LABEL_PLANE_WIDTH, height: planeHeight }, scene);
   plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL; // always fully camera-facing, unlike character tokens (Y-only) -- a segment label can sit at any pitch, not just upright
   plane.isPickable = false; // purely informational -- never a pick/hover target
 
-  const texture = GUI.AdvancedDynamicTexture.CreateForMesh(plane, TEXTURE_WIDTH, TEXTURE_HEIGHT, false);
+  const texture = GUI.AdvancedDynamicTexture.CreateForMesh(plane, TEXTURE_WIDTH, textureHeight, false);
   const background = new GUI.Rectangle("distance-label-bg");
   background.width = 1;
   background.height = 1;

@@ -67,6 +67,8 @@ interface RemotePlayerLike {
 interface WorldStateLike {
   waypointsEnabled?: boolean;
   waypointDistanceMetricP?: number;
+  /** docs/BATTLE_SYSTEM.md's measurement shapes -- real correction, 2026-10-24: "ft per voxel" retroactively applies to the waypoint system's own distance labels too, not just the new shapes. */
+  ftPerVoxel?: number;
   players?: Map<string, RemotePlayerLike>;
   otherCharacters?: Iterable<OtherCharacterLike>;
 }
@@ -236,7 +238,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
     for (const label of visuals.labels) label.dispose();
   }
 
-  function buildVisualsFor(instanceId: string, waypoints: WaypointLike[], livePos: Point3 | undefined, bodyWidth: number, metricP: number, color: [number, number, number]): PlayerWaypointVisuals {
+  function buildVisualsFor(instanceId: string, waypoints: WaypointLike[], livePos: Point3 | undefined, bodyWidth: number, metricP: number, color: [number, number, number], ftPerVoxel: number): PlayerWaypointVisuals {
     const markerRadius = Math.max(MIN_MARKER_RADIUS, bodyWidth * 0.25);
     const lineRadius = Math.max(MIN_LINE_RADIUS, bodyWidth * 0.06);
     const material = materialFor(instanceId, color);
@@ -287,7 +289,7 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       // Two lines, not comma-separated on one -- real correction: "the
       // billboard for the distance/total... getting cut off at normal
       // distances."
-      const label = createDistanceLabel(scene, `D: ${segmentDistances[i].toFixed(1)}\nT: ${totalDistance.toFixed(1)}`);
+      const label = createDistanceLabel(scene, `D: ${(segmentDistances[i] * ftPerVoxel).toFixed(1)}ft\nT: ${(totalDistance * ftPerVoxel).toFixed(1)}ft`);
       const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2] as Point3;
       label.mesh.position = new BABYLON.Vector3(...mid);
       applyShowThroughTerrainToMesh(label.mesh, showThroughTerrain);
@@ -320,19 +322,21 @@ export function installWaypoints(noa: Engine, room: Room, playerController: Play
       const bodyWidth = instance.bodyWidth ?? 0.6;
       const metricP = s.waypointDistanceMetricP ?? 2;
       const color: [number, number, number] = [instance.waypointColorR ?? DEFAULT_MARKER_COLOR[0], instance.waypointColorG ?? DEFAULT_MARKER_COLOR[1], instance.waypointColorB ?? DEFAULT_MARKER_COLOR[2]];
+      const ftPerVoxel = s.ftPerVoxel ?? 5;
       // Cheap skip, same spirit as turnTracker.ts's own update() diff --
       // only rebuild this instance's meshes when something relevant
       // actually changed (its own waypoints, its live position, body
-      // size, the shared metric, its own marker color, or the LOCAL
-      // viewer's own show-through-terrain preference -- the one case
-      // where a toggle isn't ABOUT this particular instance's data,
-      // but still needs every instance's visuals rebuilt with fresh
-      // materials to take effect).
-      const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP, color, showThroughTerrain]);
+      // size, the shared metric, its own marker color, the ft-per-
+      // voxel display setting, or the LOCAL viewer's own show-through-
+      // terrain preference -- the one case where a toggle isn't ABOUT
+      // this particular instance's data, but still needs every
+      // instance's visuals rebuilt with fresh materials to take
+      // effect).
+      const key = JSON.stringify([waypoints, livePos, bodyWidth, metricP, color, showThroughTerrain, ftPerVoxel]);
       const existing = visualsByInstance.get(instanceId);
       if (existing?.lastKey === key) continue;
       if (existing) disposeVisuals(existing);
-      const fresh = buildVisualsFor(instanceId, waypoints, livePos, bodyWidth, metricP, color);
+      const fresh = buildVisualsFor(instanceId, waypoints, livePos, bodyWidth, metricP, color, ftPerVoxel);
       fresh.lastKey = key;
       visualsByInstance.set(instanceId, fresh);
     }

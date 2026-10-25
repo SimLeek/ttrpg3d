@@ -332,24 +332,71 @@ turn tracker are not involved.
 
 **Shared interaction model, every shape type:**
 
+- **Measure mode** -- real correction, 2026-10-24: "Measure should be
+  the distance button in the mode panel. It should put you in measure
+  mode, and you control and tab through the points then, not the
+  character, and the view/camera remain in place while the wasd space
+  shift are pressed and while the mouse moves." The mode-panel's own
+  "Distance" button (`modePanel.ts`, previously stubbed) is the real
+  entry point -- a THIRD exclusive mode alongside Default/Select.
+  While active: character movement is frozen entirely (WASD/Space/
+  Shift are repurposed for point-editing below, not movement), and
+  the camera does not rotate from mouse movement (same free-cursor
+  state Select mode already has) -- aiming to place a NEW point still
+  works via the free cursor's own click/ghost-preview, same as always,
+  just with the 3D view itself held fixed rather than mouse-look-
+  rotatable. Picking a shape-type button in the measurement panel
+  also auto-enters Measure mode as a convenience; clicking Default or
+  Select exits it again (not a second click on Distance itself).
+  Real bug found live, 2026-10-24: clicking to place a point was
+  ALSO re-acquiring pointer-lock/camera control on every click, even
+  though this project's own mode routing correctly stayed in Measure
+  mode -- root cause was noa-engine's own built-in `stickyPointerLock`
+  default (a raw click listener on the canvas, completely separate
+  from and invisible to this feature's own click handling), not
+  anything in this feature itself. Disabled globally
+  (`stickyPointerLock: false` on the Engine). The only way back into
+  camera control from Measure mode is now the panel's own "Look
+  around" button (or pressing **Enter** -- see below); Escape exits
+  that look-around back to placing/editing points, same as it always
+  has for the browser's own native pointer-lock.
 - Clicking a shape-type button in the panel starts placing that
   shape. The first click (on terrain OR a character instance, same
   target choice waypoints/`characterPlacement.ts` already support)
-  places the first point.
+  places the first point -- real correction, 2026-10-24: this is
+  ALWAYS a real click, never auto-seeded from the player's current
+  position ("when I select a shape it should reset the points" -- the
+  first implementation wrongly seeded point 1 from the player's live
+  position the moment a shape type was picked, which is why every
+  shape looked like it "started from the character" whether or not
+  that was ever clicked).
 - Moving the mouse afterward shows a live PREVIEW of where the NEXT
   point would land if clicked now -- the same ghost-preview mechanism
   `characterPlacement.ts` already has for dropping a character onto
   the world.
 - The most-recently-placed point is selected by default.
-- **WASD** moves the selected point along the ground: W/S move it
-  along the camera's forward/back direction (projected onto the
-  horizontal plane), snapped to the voxel grid; A/D strafe the same
-  way, camera-relative.
+- **WASD** moves the selected point exactly like it moves a
+  character instance, just a single voxel step at a time instead of
+  continuous -- real correction, 2026-10-24: "there shouldn't be a
+  left right handedness issue since the wasd should be controlling
+  the point similar to a character instance just snapped to voxel."
+  The SAME camera-heading-relative direction formula every real
+  movement provider in this codebase already uses (MoverResource.ts/
+  SwimResource.ts/NoclipFlyProvider.ts), not a separate "snap the
+  direction to one of 4 cardinal axes" scheme -- only the STEP SIZE
+  (one voxel per press, rounded) is what "snapped to voxel" means
+  here, not the direction itself.
 - **Space** moves the selected point up one voxel; **Shift** moves it
   down one voxel.
 - **Tab** selects the next point; **Shift+Tab** selects the previous
   one -- wraps at either end (last point -> first, first point ->
   last).
+- **Enter** re-acquires camera control (same as the panel's own "Look
+  around" button) -- real correction, 2026-10-24: there is no longer
+  a separate "finalize" action for Enter to trigger (see below), and
+  the user explicitly asked to keep Enter wired to camera control
+  regardless: "enter currently gives cam control btw, I like it so
+  I'd prefer to keep that, since it's a nice enter/esc combo."
 - **Snap mode**: center / corner / free -- whether a placed/moved
   point snaps to a voxel's center, a voxel's corner, or doesn't snap
   at all. Exact scope (global panel setting vs. per-point) not yet
@@ -360,8 +407,21 @@ turn tracker are not involved.
 - Each session has ONE current measurement object at a time -- same
   "one chain" precedent waypoints already established (starting a new
   one replaces whatever was active before).
-- Once placed/finalized, a measurement object PERSISTS in the world
-  (it does not auto-clear), rendered semi-transparent. **Right-
+- **No separate "finalize" step** -- real correction, 2026-10-24:
+  "there shouldn't really be a finalize, once a player makes a
+  measurement that should be the current one and it should persist."
+  The object is sent to the server (replacing this session's own
+  previous one) the moment it's first meaningful -- a fixed-point-
+  count shape's drag releasing, or a distance chain gaining its 2nd
+  point -- and again on every later Tab/WASD/Space/Shift edit, so
+  Tab-ing between points and nudging them afterward is editing the
+  SAME already-persisted, already-visible-to-others (if broadcast)
+  object the whole time, not a local-only draft. Picking a different
+  shape type abandons further edits to the old one (whatever was last
+  sent stays persisted until a new shape's own first meaningful point
+  replaces it).
+- Once placed, a measurement object PERSISTS in the world (it does
+  not auto-clear), rendered semi-transparent. **Right-
   clicking it in the 3D world opens a context menu** (real correction,
   2026-10-24: not an immediate delete) -- scoped separately from the
   existing character-token context menu, same "its own menu, not
@@ -374,6 +434,14 @@ turn tracker are not involved.
   2026-10-24, resolving what was an open question above), reusing the
   SAME billboard mechanism waypoints already use
   (`characterToken.ts`'s billboard plane).
+  - **"Billboards show through terrain" checkbox** (real request,
+    2026-10-24: "there should also be an option so the billboards
+    draw over everything similar to the waypoint system, just add a
+    checkbox for it") -- a per-player, client-side-only toggle in the
+    measurement panel, same depth-function + renderingGroupId trick
+    the waypoint system's own show-through-terrain toggle already
+    uses, applied here only to the billboards themselves (not the
+    shape geometry).
   - **Sizing -- ONE shared function for every shape, except the
     distance chain and beam** (real correction, 2026-10-24: "these
     should all be using the same function to keep the code clean"):
@@ -382,20 +450,59 @@ turn tracker are not involved.
     bounding box; for a cone/frustum, the bounding box of its own
     mesh), then size the billboard exactly as if a CHARACTER had that
     bounding box as its own body dimensions -- the same scale formula
-    a character's billboard already uses (`tokenScaleFor(bodyHeight)`
-    in net.ts), fed this AABB instead of a real character's body size.
-    One function, called with a different box per shape, not four
-    separate sizing rules. The distance chain and beam are excepted --
-    their billboards stay the existing fixed/default size (a thin
+    a character's billboard already uses, fed this AABB's own LARGEST
+    axis (real correction, 2026-10-24: "should probably select the max
+    largest axis, since I just made a wide short box and it had a tiny
+    billboard" -- not just the AABB's height; applies to the
+    character's own billboard sizing in net.ts too now, not only
+    measurement shapes: `max(bodyWidth, bodyHeight, bodyDepth)`
+    instead of `bodyHeight` alone). One function, called with a
+    different box per shape, not four separate sizing rules. The
+    distance chain and beam are excepted -- their billboards stay the
+    existing fixed/default size (a thin
     line's own AABB wouldn't produce a meaningful character-equivalent
     box), same as the waypoint system's segment labels already are.
   - **Positioning -- per shape**:
     - **Distance chain**: same as the existing waypoint system -- one
-      label per segment, positioned at that segment's own midpoint.
-    - **Cube**: above the cube.
+      label per segment, positioned at that segment's own midpoint,
+      and now (real request, 2026-10-24: "Chain should have the same
+      D and T that the waypoint system has") the EXACT same two-line
+      content too: "D: {this segment}ft" / "T: {whole chain's total
+      length}ft" -- the same total on every segment's own label, not
+      a running cumulative-so-far figure.
+    - **Cube**: above the cube. Real request, 2026-10-24: "Cube should
+      have W, H, and D all on different lines on top of each other" --
+      replaces the single corner-to-corner diagonal distance with the
+      cube's own three real axis extents, one per line (needed a 3rd
+      line's worth of vertical room on the billboard -- see
+      `distanceLabel.ts`'s new `lines` parameter, which sizes the
+      underlying texture/plane to fit however many lines a caller
+      needs instead of a one-size-fits-all 2-line default).
     - **Sphere**: above the sphere.
-    - **Beam**: above its MIDDLE, same positioning style the waypoint
-      system already uses for a segment's label.
+    - **Beam**: above the mesh's own topmost vertex, same rule as
+      cone/frustum below. Real bug found live, 2026-10-24: "I don't
+      see any billboards at all on cones or beams" persisted even
+      after an earlier (wrong) theory about the billboard sitting
+      inside the beam's own solid geometry was fixed -- the ACTUAL
+      root cause, confirmed by reading noa-engine's own source
+      (`rendering.js`'s `addMeshToScene`, which converts a mesh's
+      `.position` from global to noa's local/origin-shifted frame by
+      mutating that SAME Vector3 object in place): this file's own
+      cone/beam code set the shape mesh's `.position` directly to the
+      shared `mid` Vector3 (no clone), so that in-place mutation
+      silently corrupted `mid` itself, which the billboard's own
+      position was computed from immediately afterward -- a double
+      shift once combined with the billboard's own, separate
+      `addMeshToScene` call. Only shows up once a session has moved
+      far enough from spawn to trigger noa's own origin rebase (at
+      [0,0,0] the corruption is a no-op), matching why it read as
+      intermittent/environment-dependent rather than a flat "always
+      broken." Same bug CLASS this feature already hit twice before
+      this session (noa's reused pick-result object, Babylon's own
+      in-place `normalize()`) -- fixed by cloning before handing a
+      vector to anything that might mutate it, with a dedicated
+      regression test that reproduces noa's real `addMeshToScene`
+      mutation behavior (a plain no-op stub wouldn't have caught it).
     - **Cone/frustum**: above the mesh's own TOPMOST VERTEX along the
       vertical axis (global Y, or whichever axis is "up" in this
       engine) -- real correction, 2026-10-24: NOT "the tip for a
@@ -403,13 +510,16 @@ turn tracker are not involved.
       (wrong -- that framing assumes a fixed orientation; rotate the
       shape in roll/pitch/yaw and the geometric tip is no longer
       necessarily the topmost point at all). Since a cone/frustum is
-      approximated as a mesh (a tip or far-cap, plus points arranged
-      around a circle for the near-cap/base -- no true curved
-      geometry), "topmost vertex by the up-axis" is a single rule
-      that already handles every rotation correctly, tip-vs-cap
+      approximated as a mesh (a true point at the near end always,
+      plus points arranged around the far end's own base -- circular
+      for a cone, 4 corners for a frustum, see this section's own
+      cone/frustum bullet -- no true curved geometry), "topmost
+      vertex by the up-axis" is a single rule that already handles
+      every rotation correctly, tip-vs-cap
       distinction or not -- no special-casing needed.
-  - Exact TEXT content per solid shape (radius? full dimensions? both?)
-    still open -- see "Open questions" below.
+  - Exact TEXT content, resolved 2026-10-24 for chain and cube (see
+    their own bullets above); sphere's "r=" radius and cone/beam's
+    plain axis-length text are unchanged and still considered settled.
 
 **Per-shape point count and meaning:**
 
@@ -425,11 +535,50 @@ turn tracker are not involved.
   only the RADIUS (its distance from the center), not an independent
   3D position. Tabbable between the two, same as cube.
 - **Cone**: a start point and an end point (its axis), plus a numeric
-  **degrees** setting (the cone's angle) and a toggle between an
-  actual pointed **cone** and a **frustum** (truncated cone with a
-  flat near-cap -- the same shape the old Godot game already has).
+  **degrees** setting (the cone's angle) and a toggle between **cone**
+  and **frustum**. Real correction, 2026-10-24 (the earlier "truncated
+  cone with a flat near-cap" framing was wrong): BOTH options are a
+  true point at the near end, always -- "it's a cone/frustum from a
+  point." The toggle only changes the FAR end's own cross-section
+  shape: **cone** = round, **frustum** = "just a rectangle/square end
+  instead of circular" (a square-based pyramid, not a truncated
+  cone). **Point order is fixed and confirmed**: "it should still be
+  first point start and second part wide flat part" -- the FIRST
+  point placed is always the narrow/point end, the SECOND is always
+  the wide flat end, regardless of which one happens to be nearer the
+  player when placing. Real bug found live, 2026-10-24: a frustum's
+  square far end was visibly twisting/rotating in an unstable way as
+  its axis direction changed ("the end square rotates unexpectedly").
+  A first attempted fix (picking a more stable reference vector for
+  the alignment quaternion) didn't actually solve it -- the user's own
+  follow-up named the real requirement precisely: "the top and bottom
+  lines of the frustum end square lay fully, so both points, on a
+  plane that has its normal as the up vector (so, the ground plane),
+  and that should always be the case." The frustum is now a dedicated
+  custom mesh (`frustumFarCorners`, with its own unit test covering a
+  full spherical-coordinates sweep of axis directions, per the user's
+  own suggested testing approach), not a rotated/tessellated cylinder:
+  its square's own basis is built directly from `cross(world-up,
+  axis)`, which is mathematically guaranteed to have a zero vertical
+  component for ANY axis direction -- so the square's top edge and
+  bottom edge are each provably level, not just "usually stable." The
+  one unavoidable exception is the axis pointing exactly straight up/
+  down, where the far end degenerates to a single flat (still level)
+  plane, since "yaw" around a vertical axis has no defined meaning.
+  **Degrees is clamped to the open interval (0, 180)** (real request,
+  2026-10-24: "should be <180 and >0 and go to 179 or 1 if set to
+  those or above/below but 179.99 and 0.001 is fine") -- entering 0 or
+  below snaps to 1, entering 180 or above snaps to 179, but anything
+  already strictly inside the interval (including right at its edge,
+  e.g. 179.99 or 0.001) passes through completely unchanged.
 - **Beam**: a start point and an end point, plus a numeric **beam
-  width** setting.
+  width** setting -- shown and edited in FEET in the panel (real
+  request, 2026-10-24: "the beam width is currently set by num voxels
+  and should really be set by feet... since everything in the world
+  measurement shows feet"), converted to/from the underlying voxel
+  value via the GM's own ft-per-voxel setting -- the geometry/network
+  layer still works in voxels throughout, this is purely how the
+  panel displays and accepts the number.
 - Each shape type's own settings (degrees/frustum toggle for cone,
   width for beam) show in the panel while that shape type is active --
   "each of these at least some UI."
@@ -728,9 +877,43 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then it appears as its own independent floating window
     And it is fully usable with no turn order and no `waypointsEnabled` state involved
 
+  Scenario: Clicking Distance in the mode panel enters Measure mode, freezing movement and camera look
+    Given a session is in Default mode, free to move and look around
+    When they click "Distance" in the mode panel
+    Then character movement stops responding to WASD/Space/Shift
+    And mouse movement no longer rotates the camera
+    And the panel's own shape-type buttons are now the way to start placing something
+
+  Scenario: Selecting a shape type also enters Measure mode as a convenience
+    Given a session is in Default mode, not yet in Measure mode
+    When they select a shape type directly from the measurement panel
+    Then Measure mode becomes active, same as clicking "Distance" first would have
+
+  Scenario: Clicking Default or Select exits Measure mode
+    Given a session is in Measure mode
+    When they click "Default" (or "Select") in the mode panel
+    Then character movement and camera look both work normally again
+    And local point-editing state (which point is selected, the ghost
+      preview) is cleared
+    And whatever was already persisted to the server before that click
+      stays in the world, unaffected
+
+  Scenario: Selecting a shape type never auto-seeds a point from the player's position
+    Given a session has just selected a shape type, with no click in the 3D world yet
+    Then no point exists yet at all -- not even one at the player's own current position
+    When they click somewhere in the 3D world
+    Then THAT click places the first point, wherever it was aimed
+
+  Scenario: Selecting a DIFFERENT shape type resets the points, discarding whatever was in progress
+    Given a session has placed one point of a "Cube" and not yet finished it
+    When they select "Sphere" instead
+    Then the cube's in-progress point is discarded
+    And the sphere starts completely fresh, with no points carried over
+
   Scenario: Starting a distance chain and placing its first point
     Given the measurement-shapes panel is open
-    When a session selects "Distance chain" and clicks on terrain
+    And the session is in Measure mode
+    When they select "Distance chain" and click on terrain
     Then a first point is placed there, and it becomes the selected point
 
   Scenario: A live preview follows the mouse before the next point is placed
@@ -766,13 +949,17 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     When the session then presses Shift+Tab
     Then P3 becomes selected again (wrapped from the first point back to the last)
 
-  Scenario: WASD moves the selected point along the camera-relative ground plane, snapped to the voxel grid
+  Scenario: WASD moves the selected point exactly like a character turns and moves, just one voxel step at a time
     Given a point is selected
     When the session presses W
-    Then the selected point moves one voxel step in the camera's
-      forward direction (projected onto the horizontal plane), snapped
-      to the voxel grid
+    Then the selected point moves one voxel step using the SAME
+      camera-heading-relative direction formula a real character's
+      own movement already uses (not a separate direction-snapping
+      scheme)
     And every other point is unaffected
+    When the session's camera heading changes and they press W again
+    Then the point moves in the NEW forward direction, same as turning
+      and walking forward with a real character would
 
   Scenario: Space/Shift move the selected point up/down one voxel
     Given a point is selected
@@ -784,19 +971,76 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
   Scenario: Cone has a degrees setting and a cone/frustum toggle
     Given a session selects "Cone" and has placed its start and end point
     Then the panel shows a numeric "degrees" field and a toggle between
-      "Cone" (pointed) and "Frustum" (flat near-cap)
+      "Cone" (round far end) and "Frustum" (square far end) -- both
+      options are a true point at the near end, always
 
-  Scenario: Beam has a width setting
+  Scenario: Cone degrees clamps to the open interval (0, 180)
+    Given the cone degrees field currently holds a valid value
+    When the session enters "180" or anything above it
+    Then the field is clamped to 179
+    When the session enters "0" or anything below it
+    Then the field is clamped to 1
+    When the session enters "179.99" or "0.001"
+    Then that exact value is kept, unclamped
+
+  Scenario: A cone's first point is always the narrow end, regardless of which point is nearer the player
+    Given a session places a cone's FIRST point far away, then its
+      SECOND point right next to themselves
+    Then the far point (placed first) is the narrow/point end
+    And the near point (placed second) is the wide flat end
+    And this holds the same way even if the points are placed in the
+      opposite physical arrangement -- point ORDER decides which end
+      is which, not proximity to the player
+
+  Scenario: Beam has a width setting, shown and edited in feet
     Given a session selects "Beam" and has placed its start and end point
-    Then the panel shows a numeric "beam width" field
+    Then the panel shows a numeric "beam width" field, displaying the
+      beam's current width converted to feet via the GM's own ft-per-
+      voxel setting, not the underlying voxel value directly
+    When the session types a new width in feet
+    Then that value is converted back to voxels before being applied
+      to the actual shape
 
-  Scenario: A finalized measurement object persists in the world and is visually transparent
-    Given a shape has been fully placed (all its required points set)
-    Then it remains visible in the 3D world, rendered semi-transparent,
-      and does not disappear on its own
+  Scenario: Chain's billboard matches the waypoint system's own D:/T: format
+    Given a distance chain has at least one segment
+    Then each segment's own billboard reads "D: {that segment's own
+      length}ft" on one line and "T: {the whole chain's total length}
+      ft" on the next -- the same total on every segment's label
+
+  Scenario: Cube's billboard shows width, height, and depth on separate lines
+    Given a cube has been placed
+    Then its billboard shows three lines: "W: {width}ft", "H: {height}
+      ft", and "D: {depth}ft" -- not a single corner-to-corner diagonal
+      distance
+
+  Scenario: A measurement object persists in the world as soon as it's meaningful, with no separate finalize step
+    Given a session is placing a "Cube" and has dragged out its second corner
+    When they release the mouse
+    Then the cube is immediately sent to the server and persists in the
+      world, rendered semi-transparent, with no further action needed
+    Given a session is placing a "Distance chain"
+    When they click a second point
+    Then that chain (now with a real segment) is immediately sent to
+      the server too
+
+  Scenario: Tab and WASD/Space/Shift edit the already-persisted object, not a local draft
+    Given a cube has already been persisted (its drag was released)
+    When the session presses Tab and then W to move the selected point
+    Then that edit is sent to the server immediately, updating the SAME
+      object every other session (if broadcast) already sees -- not a
+      new object, and not a local-only change that needs a separate
+      step to take effect
+
+  Scenario: Enter gives camera control, the same as the panel's own "Look around" button
+    Given a session is in Measure mode, mid-edit on a point
+    When they press Enter
+    Then the mouse re-acquires camera control, exactly as clicking
+      "Look around" would
+    And nothing about the measurement object itself changes -- Enter
+      has no finalize behavior of its own
 
   Scenario: Right-clicking a measurement object opens a context menu, not an immediate delete
-    Given a finalized measurement object exists in the world
+    Given a measurement object exists in the world
     When a session right-clicks it
     Then a context menu opens, with "Delete" as its only entry
     And the object is NOT deleted yet
@@ -808,7 +1052,7 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then that object is removed from the world
 
   Scenario: The panel's own "remove current" button deletes your active measurement object
-    Given a session has an active/finalized measurement object
+    Given a session has an active/persisted measurement object
     When they click the panel's "remove my current measurement object" button
     Then that object is deleted, without needing to right-click it in the 3D view
 
@@ -818,12 +1062,31 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     Then the previous one is removed -- each session has only ONE
       current measurement object at a time
 
+  Scenario: Clicking again after a fixed-point-count shape is already complete starts a brand new one of the same kind
+    Given a session placed a "Cube" and released its drag -- it is
+      already persisted
+    When they click somewhere else in the 3D world, with no click on
+      any shape-type button in between
+    Then a brand new cube starts placing from that click, replacing
+      the previous one once IT finishes -- same as if they had
+      re-clicked "Cube" in the panel first, just without that extra
+      step
+
   Scenario: The broadcast checkbox controls whether others see your measurement object
     Given a session is placing a measurement object with "Broadcast to
       others" UNCHECKED
     Then no other connected session sees that object
     When that session checks "Broadcast to others"
     Then every connected session sees it
+
+  Scenario: The "billboards show through terrain" checkbox makes only the distance labels render on top of everything
+    Given a measurement object's billboard is currently hidden behind
+      terrain from the session's own point of view
+    When they check "Billboards show through terrain" in the panel
+    Then that billboard renders on top of the terrain (and any other
+      mesh) from then on
+    And the shape's own geometry (the cube/sphere/cone/etc. mesh
+      itself) is unaffected -- only its billboard
 
   Scenario: Distance labels read through the world's "ft per voxel" setting
     Given a world's "ft per voxel" setting is 5 (the default)
@@ -942,18 +1205,22 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
 6. **Measurement shapes' snap mode** (center/corner/free): whether this
    is one setting for the whole panel, one per shape type, or one per
    individual point, isn't specified.
-7. **Measurement shapes' billboard POSITION is now specified for every
-   shape** (resolved, 2026-10-24 -- see section 6's own billboard
-   bullet). Still open: the exact TEXT content for the solid shapes'
-   billboards (radius? full dimensions? both?) -- the distance chain's
-   content is obvious (segment distance, same as waypoints).
+7. ~~**Measurement shapes' billboard POSITION is now specified for
+   every shape**~~ (resolved, 2026-10-24 -- see section 6's own
+   billboard bullet). ~~Still open: the exact TEXT content for the
+   solid shapes' billboards~~ -- **also resolved, 2026-10-24**: chain
+   matches the waypoint system's own "D:"/"T:" exactly, cube shows its
+   own W:/H:/D:, sphere keeps its radius, cone/beam keep their plain
+   axis length.
 8. ~~**Whether the existing waypoint distance labels should also read
    through the new "ft per voxel" world setting**~~ -- **resolved,
    2026-10-24**: yes, confirmed by direct user call. One setting, both
    features.
-9. **Measurement-shapes point placement/movement isn't specified as
-   network-synced or not**, beyond the "Broadcast to others" checkbox
-   controlling whether the FINALIZED object is shared -- whether the
-   live drag/placement-in-progress is itself visible to others (if
-   broadcast is checked) or only becomes visible once finalized isn't
-   specified.
+9. ~~**Measurement-shapes point placement/movement isn't specified as
+   network-synced or not**~~ -- **resolved, 2026-10-24**: there is no
+   "finalized" milestone left to gate this on (see section 6's own
+   "no separate finalize step" bullet) -- a shape (if broadcast) is
+   visible to others from the moment it's first meaningful (a drag
+   release, a chain's 2nd point), and every later Tab/WASD/Space/Shift
+   edit updates what they see too, live. The mid-drag preview itself
+   (before release) stays purely local/client-side, same as before.

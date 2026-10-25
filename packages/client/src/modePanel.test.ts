@@ -15,6 +15,8 @@ function makeOptions(initialLocked: boolean, overrides: Partial<ModePanelOptions
     isPointerLocked: () => initialLocked,
     setPointerLock: vi.fn(),
     onToggleTurnTracker: vi.fn(),
+    isMeasureModeActive: () => false,
+    onSelectMeasureMode: vi.fn(),
     onPointerLockChange: (cb) => {
       listeners.push(cb);
       return () => {
@@ -64,12 +66,27 @@ describe("mountModePanel", () => {
     expect(options.setPointerLock).toHaveBeenCalledWith(false);
   });
 
-  it("the Distance button is rendered disabled -- the waypoint/distance system isn't built yet", () => {
+  it("clicking Distance calls onSelectMeasureMode -- real request: \"It should put you in measure mode\"", () => {
     const options = makeOptions(true);
     mount(options);
-    const distance = container.querySelector<HTMLButtonElement>("#mode-distance")!;
-    expect(distance.disabled).toBe(true);
+    container.querySelector<HTMLButtonElement>("#mode-distance")!.click();
+    expect(options.onSelectMeasureMode).toHaveBeenCalledOnce();
   });
+
+  it("highlights Distance (and NEITHER Default nor Select) while measure mode is active", () => {
+    mount(makeOptions(true, { isMeasureModeActive: () => true }));
+    expect(container.querySelector("#mode-distance")!.classList.contains("active")).toBe(true);
+    expect(container.querySelector("#mode-default")!.classList.contains("active")).toBe(false);
+    expect(container.querySelector("#mode-select")!.classList.contains("active")).toBe(false);
+  });
+
+  // Real request: "clicking Default or Select also exits measure
+  // mode" -- that side effect lives in game.ts's own setPointerLock
+  // implementation (which also calls setMeasureModeActive(false)),
+  // not in modePanel.ts itself (stays noa/connection-free, same
+  // reasoning as always) -- nothing further to test at this layer
+  // beyond the existing "clicking Default/Select calls setPointerLock"
+  // coverage above.
 
   it("clicking Turns calls onToggleTurnTracker (docs/BATTLE_SYSTEM.md phase 1)", () => {
     const options = makeOptions(true);

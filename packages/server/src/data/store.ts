@@ -143,6 +143,22 @@ export interface WorldRecord {
   waypointsEnabled?: boolean;
   /** Same tier as waypointsEnabled. Undefined/missing defaults to `2` (ordinary Euclidean) -- see WorldState.ts's own doc on why this is per-WORLD, not per-game. */
   waypointDistanceMetricP?: number;
+  /** docs/BATTLE_SYSTEM.md's measurement shapes -- real request: "we should have a 'ft per voxel' setting in the page details that defaults to 5." Retroactively applies to the waypoint system's own distance labels too (section 4's own cross-reference), not just measurement shapes. Same tier/persistence as waypointDistanceMetricP. Undefined/missing defaults to 5. */
+  ftPerVoxel?: number;
+  /** docs/BATTLE_SYSTEM.md's measurement shapes -- same "survives a room being recreated" persistence as placedCharacters/turnOrder above. Write-through on every place/delete (WorldRoom.ts's own `persistMeasurementShapes`). Undefined/missing is a real state (nothing placed yet), not an error. */
+  measurementShapes?: MeasurementShapeRecord[];
+}
+
+/** The persisted half of WorldState.ts's `MeasurementShapeState` -- a 1:1 mirror (nothing here is derived/re-resolvable from elsewhere, same tier as TurnOrderEntryRecord). */
+export interface MeasurementShapeRecord {
+  shapeId: string;
+  kind: "chain" | "cube" | "sphere" | "cone" | "beam";
+  ownerAccountId: string;
+  points: { x: number; y: number; z: number }[];
+  broadcast: boolean;
+  coneDegrees: number;
+  isFrustum: boolean;
+  beamWidth: number;
 }
 
 /**
@@ -565,6 +581,24 @@ export function createStore(baseDir: string) {
       const world = worlds.find((w) => w.id === worldId);
       if (!world) return;
       world.waypointDistanceMetricP = p;
+      saveWorlds(worlds);
+    },
+
+    /** Same tier as setWaypointDistanceMetricForWorld -- docs/BATTLE_SYSTEM.md's measurement shapes' "ft per voxel" setting, retroactively shared with the waypoint system's own distance labels. */
+    setFtPerVoxelForWorld(worldId: string, ftPerVoxel: number): void {
+      const worlds = loadWorlds();
+      const world = worlds.find((w) => w.id === worldId);
+      if (!world) return;
+      world.ftPerVoxel = ftPerVoxel;
+      saveWorlds(worlds);
+    },
+
+    /** No-op if the world id is unknown, same "stale id, not a crash" spirit as setWorldRespawnAnchor. Whole-list overwrite, same write-through-on-every-change shape as setPlacedCharactersForWorld/setTurnOrderForWorld -- WorldRoom.ts's own `persistMeasurementShapes` calls this after every place/delete. */
+    setMeasurementShapesForWorld(worldId: string, shapes: MeasurementShapeRecord[]): void {
+      const worlds = loadWorlds();
+      const world = worlds.find((w) => w.id === worldId);
+      if (!world) return;
+      world.measurementShapes = shapes;
       saveWorlds(worlds);
     },
 

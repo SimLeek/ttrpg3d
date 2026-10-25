@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { installVoxelEditor, type TokenInteractionHooks } from "./voxelEditor.js";
+import { installVoxelEditor, type TokenInteractionHooks, type MeasurementPlacementHooks } from "./voxelEditor.js";
 import type { Engine } from "noa-engine";
 import type { Item } from "@ttrpg3d/shared";
 
@@ -47,6 +47,16 @@ function fakeTokenInteraction(overrides: Partial<TokenInteractionHooks> = {}) {
     closeFloatingUi: vi.fn(() => false),
     ...overrides,
   } as TokenInteractionHooks & { openStatEditor: ReturnType<typeof vi.fn>; openContextMenu: ReturnType<typeof vi.fn>; closeFloatingUi: ReturnType<typeof vi.fn> };
+}
+
+function fakeMeasurementPlacement(overrides: Partial<MeasurementPlacementHooks> = {}) {
+  return {
+    isMeasureModeActive: () => false,
+    onPlacePoint: vi.fn(),
+    pickObjectAtCursor: () => undefined,
+    openContextMenu: vi.fn(),
+    ...overrides,
+  } as MeasurementPlacementHooks & { onPlacePoint: ReturnType<typeof vi.fn>; openContextMenu: ReturnType<typeof vi.fn> };
 }
 
 const PLACE_BLOCK_ITEM: Item = { kind: "place-block", voxelId: 5, name: "Test Block", color: [1, 1, 1] };
@@ -146,5 +156,51 @@ describe("installVoxelEditor's Default/Select mode gating (MVP goal items 1-2 fo
     expect(() => fire()).not.toThrow();
     expect(setBlock).not.toHaveBeenCalled();
     expect(setPointerLock).toHaveBeenCalledWith(true);
+  });
+});
+
+describe("installVoxelEditor's measurementPlacement hook (docs/BATTLE_SYSTEM.md's measurement shapes)", () => {
+  it("fire places a measurement point instead of breaking a block, while a shape is actively being placed, even in Default (pointer-locked) mode", () => {
+    const { noa, setBlock, fire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
+    const measurementPlacement = fakeMeasurementPlacement({ isMeasureModeActive: () => true });
+    installVoxelEditor(noa, () => null, vi.fn(), undefined, undefined, measurementPlacement);
+
+    fire();
+
+    expect(measurementPlacement.onPlacePoint).toHaveBeenCalledOnce();
+    expect(setBlock).not.toHaveBeenCalled();
+  });
+
+  it("fire falls through to normal block-editing once nothing is being placed", () => {
+    const { noa, setBlock, fire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
+    const measurementPlacement = fakeMeasurementPlacement({ isMeasureModeActive: () => false });
+    installVoxelEditor(noa, () => null, vi.fn(), undefined, undefined, measurementPlacement);
+
+    fire();
+
+    expect(measurementPlacement.onPlacePoint).not.toHaveBeenCalled();
+    expect(setBlock).toHaveBeenCalledWith(0, 1, 2, 3);
+  });
+
+  it("alt-fire opens a measurement object's own context menu instead of normal alt-fire behavior, checked regardless of placement state or mode", () => {
+    const { noa, setBlock, altFire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
+    const measurementPlacement = fakeMeasurementPlacement({ pickObjectAtCursor: () => "shape-1" });
+    installVoxelEditor(noa, () => PLACE_BLOCK_ITEM, vi.fn(), undefined, undefined, measurementPlacement);
+
+    altFire();
+
+    expect(measurementPlacement.openContextMenu).toHaveBeenCalledWith("shape-1", expect.any(Number), expect.any(Number));
+    expect(setBlock).not.toHaveBeenCalled(); // normal alt-fire (block placement) never ran
+  });
+
+  it("alt-fire falls through to normal behavior when nothing is under the cursor", () => {
+    const { noa, setBlock, altFire } = fakeNoa(true, { position: [1, 2, 3], adjacent: [1, 3, 3] });
+    const measurementPlacement = fakeMeasurementPlacement({ pickObjectAtCursor: () => undefined });
+    installVoxelEditor(noa, () => PLACE_BLOCK_ITEM, vi.fn(), undefined, undefined, measurementPlacement);
+
+    altFire();
+
+    expect(measurementPlacement.openContextMenu).not.toHaveBeenCalled();
+    expect(setBlock).toHaveBeenCalledWith(5, 1, 3, 3);
   });
 });
