@@ -494,8 +494,8 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     const labels: DistanceLabel[] = [];
     const ftPV = ftPerVoxel();
 
-    function addLabelAt(pos: Point3, text: string, scale = 1): void {
-      const label = createDistanceLabel(scene, text);
+    function addLabelAt(pos: Point3, text: string, scale = 1, lines = 2): void {
+      const label = createDistanceLabel(scene, text, lines);
       label.mesh.position = new BABYLON.Vector3(...pos);
       label.mesh.scaling.setAll(scale);
       noa.rendering.addMeshToScene(label.mesh, false);
@@ -513,6 +513,14 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     });
 
     if (kind === "chain") {
+      // Real request, 2026-10-24: "Chain should have the same D and T
+      // that the waypoint system has" -- same two-line "D: {this
+      // segment}\nT: {whole chain}" format waypoints.ts's own segment
+      // labels already use, "T" being the SAME total for every
+      // segment's label along the chain (the whole path's length),
+      // not a running cumulative-so-far total.
+      const segmentDistances = points.slice(0, -1).map((p, i) => minkowskiDistance(p, points[i + 1], 2));
+      const totalDistance = segmentDistances.reduce((sum, d) => sum + d, 0);
       for (let i = 0; i < points.length - 1; i++) {
         const a = points[i];
         const b = points[i + 1];
@@ -522,7 +530,7 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         noa.rendering.addMeshToScene(tube, false);
         meshes.push(tube);
         const mid: Point3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2];
-        addLabelAt(mid, ftPerVoxelLabel(minkowskiDistance(a, b, 2), ftPV));
+        addLabelAt(mid, `D: ${(segmentDistances[i] * ftPV).toFixed(1)}ft\nT: ${(totalDistance * ftPV).toFixed(1)}ft`);
       }
     } else if (kind === "cube" && points.length === 2) {
       const [a, b] = points;
@@ -534,7 +542,13 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       noa.rendering.addMeshToScene(box, false);
       meshes.push(box);
       const aabb = shapeAabb("cube", points);
-      addLabelAt([mid[0], mid[1] + aabb.height / 2 + 0.3, mid[2]], ftPerVoxelLabel(minkowskiDistance(a, b, 2), ftPV), billboardScaleFor(aabb));
+      // Real request, 2026-10-24: "Cube should have W, H, and D all on
+      // different lines on top of each other" -- replaces the single
+      // corner-to-corner diagonal distance with the cube's own three
+      // real axis extents, one per line (needs a 3rd line's worth of
+      // vertical room -- see distanceLabel.ts's own `lines` param).
+      const cubeText = `W: ${(aabb.width * ftPV).toFixed(1)}ft\nH: ${(aabb.height * ftPV).toFixed(1)}ft\nD: ${(aabb.depth * ftPV).toFixed(1)}ft`;
+      addLabelAt([mid[0], mid[1] + aabb.height / 2 + 0.3, mid[2]], cubeText, billboardScaleFor(aabb), 3);
     } else if (kind === "sphere" && points.length === 2) {
       const [center, edge] = points;
       const radius = minkowskiDistance(center, edge, 2);

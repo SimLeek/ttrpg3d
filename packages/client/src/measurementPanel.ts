@@ -185,19 +185,35 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
     const kind = options.activeKind();
     if (kind === "cone") {
       shapeSettings.innerHTML = `
-        <label>Degrees: <input type="number" id="measurement-cone-degrees" min="1" max="179" value="${options.coneDegrees()}" /></label>
+        <label>Degrees: <input type="number" id="measurement-cone-degrees" min="0.001" max="179.99" step="0.001" value="${options.coneDegrees()}" /></label>
         <label class="measurement-panel-checkbox-row"><input type="checkbox" id="measurement-cone-frustum" ${options.isFrustum() ? "checked" : ""} /> Frustum (flat cap)</label>
       `;
       shapeSettings.querySelector<HTMLInputElement>("#measurement-cone-degrees")!.addEventListener("change", (e) => {
         const value = Number((e.target as HTMLInputElement).value);
-        if (Number.isFinite(value) && value > 0) options.onSetConeDegrees(value);
+        if (!Number.isFinite(value)) return;
+        // Real request, 2026-10-24: "Cone degrees should be <180 and
+        // >0 and go to 179 or 1 if set to those or above/below but
+        // 179.99 and 0.001 is fine" -- a true cone angle (0, 180) is a
+        // strict OPEN interval (0 or 180 degenerate into a flat
+        // plane/line), but anything already strictly inside it --
+        // even right at the edge -- passes through unchanged.
+        options.onSetConeDegrees(value <= 0 ? 1 : value >= 180 ? 179 : value);
       });
       shapeSettings.querySelector<HTMLInputElement>("#measurement-cone-frustum")!.addEventListener("change", (e) => options.onSetIsFrustum((e.target as HTMLInputElement).checked));
     } else if (kind === "beam") {
-      shapeSettings.innerHTML = `<label>Width: <input type="number" id="measurement-beam-width" min="0.1" step="0.5" value="${options.beamWidth()}" /></label>`;
+      // Real request, 2026-10-24: "The beam width is currently set by
+      // num voxels and should really be set by feet and translated
+      // into voxels since everything in the world measurement shows
+      // feet" -- the underlying beamWidth()/onSetBeamWidth() contract
+      // stays in voxels (measurementShapes.ts's own geometry still
+      // works in world/voxel units, unchanged), this is purely a
+      // display-layer conversion, same unit the GM's own ft-per-voxel
+      // setting already establishes everywhere else in this panel.
+      const ftPerVoxelNow = options.ftPerVoxel();
+      shapeSettings.innerHTML = `<label>Width: <input type="number" id="measurement-beam-width" min="0.1" step="0.5" value="${(options.beamWidth() * ftPerVoxelNow).toFixed(2)}" /> ft</label>`;
       shapeSettings.querySelector<HTMLInputElement>("#measurement-beam-width")!.addEventListener("change", (e) => {
-        const value = Number((e.target as HTMLInputElement).value);
-        if (Number.isFinite(value) && value > 0) options.onSetBeamWidth(value);
+        const feet = Number((e.target as HTMLInputElement).value);
+        if (Number.isFinite(feet) && feet > 0) options.onSetBeamWidth(feet / options.ftPerVoxel());
       });
     } else {
       shapeSettings.innerHTML = "";
@@ -251,6 +267,7 @@ export function mountMeasurementPanel(parent: HTMLElement, options: MeasurementP
         lastIsGM = isGMNow;
         lastFtPerVoxel = ftPerVoxelNow;
         renderGmControls();
+        if (options.activeKind() === "beam") renderShapeSettings(); // beam's own width is displayed in feet, converted via ftPerVoxel -- keep it in sync if that ratio changes live
       }
     },
     setVisible(nextVisible: boolean): void {

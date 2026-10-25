@@ -81,12 +81,52 @@ describe("mountMeasurementPanel", () => {
     expect(options.onSetIsFrustum).toHaveBeenCalledWith(true);
   });
 
-  it("shows beam-specific settings (width) only while beam is active, and calls onSetBeamWidth", () => {
-    const { options } = mount({ activeKind: () => "beam" });
+  it("cone degrees clamps to 1/179 once set AT OR BEYOND 0/180, but passes 0.001/179.99 through unchanged -- real request: \"should be <180 and >0 and go to 179 or 1 if set to those or above/below but 179.99 and 0.001 is fine\"", () => {
+    const { options } = mount({ activeKind: () => "cone" });
+    const degreesInput = parent.querySelector<HTMLInputElement>("#measurement-cone-degrees")!;
+
+    degreesInput.value = "180";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(179);
+
+    degreesInput.value = "250";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(179);
+
+    degreesInput.value = "0";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(1);
+
+    degreesInput.value = "-5";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(1);
+
+    degreesInput.value = "179.99";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(179.99);
+
+    degreesInput.value = "0.001";
+    degreesInput.dispatchEvent(new Event("change"));
+    expect(options.onSetConeDegrees).toHaveBeenLastCalledWith(0.001);
+  });
+
+  it("beam width is DISPLAYED and EDITED in feet, converted to/from voxels via ftPerVoxel -- real request: \"the beam width is currently set by num voxels and should really be set by feet\"", () => {
+    const { options } = mount({ activeKind: () => "beam", beamWidth: () => 1, ftPerVoxel: () => 5 });
     const widthInput = parent.querySelector<HTMLInputElement>("#measurement-beam-width")!;
-    widthInput.value = "3";
+    expect(widthInput.value).toBe("5.00"); // 1 voxel * 5 ft/voxel
+
+    widthInput.value = "10";
     widthInput.dispatchEvent(new Event("change"));
-    expect(options.onSetBeamWidth).toHaveBeenCalledWith(3);
+    expect(options.onSetBeamWidth).toHaveBeenCalledWith(2); // 10ft / 5 ft-per-voxel = 2 voxels
+  });
+
+  it("beam width's displayed feet value stays in sync if ftPerVoxel changes live", () => {
+    let ftPerVoxel = 5;
+    const { panel } = mount({ activeKind: () => "beam", beamWidth: () => 1, ftPerVoxel: () => ftPerVoxel });
+    ftPerVoxel = 10;
+    panel.update();
+    const widthInput = parent.querySelector<HTMLInputElement>("#measurement-beam-width")!;
+    expect(widthInput.value).toBe("10.00");
   });
 
   it("the snap-mode select reflects the current value and calls onSetSnapMode when changed", () => {

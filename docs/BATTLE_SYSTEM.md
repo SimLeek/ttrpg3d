@@ -464,8 +464,20 @@ turn tracker are not involved.
     box), same as the waypoint system's segment labels already are.
   - **Positioning -- per shape**:
     - **Distance chain**: same as the existing waypoint system -- one
-      label per segment, positioned at that segment's own midpoint.
-    - **Cube**: above the cube.
+      label per segment, positioned at that segment's own midpoint,
+      and now (real request, 2026-10-24: "Chain should have the same
+      D and T that the waypoint system has") the EXACT same two-line
+      content too: "D: {this segment}ft" / "T: {whole chain's total
+      length}ft" -- the same total on every segment's own label, not
+      a running cumulative-so-far figure.
+    - **Cube**: above the cube. Real request, 2026-10-24: "Cube should
+      have W, H, and D all on different lines on top of each other" --
+      replaces the single corner-to-corner diagonal distance with the
+      cube's own three real axis extents, one per line (needed a 3rd
+      line's worth of vertical room on the billboard -- see
+      `distanceLabel.ts`'s new `lines` parameter, which sizes the
+      underlying texture/plane to fit however many lines a caller
+      needs instead of a one-size-fits-all 2-line default).
     - **Sphere**: above the sphere.
     - **Beam**: above the mesh's own topmost vertex, same rule as
       cone/frustum below. Real bug found live, 2026-10-24: "I don't
@@ -505,8 +517,9 @@ turn tracker are not involved.
       vertex by the up-axis" is a single rule that already handles
       every rotation correctly, tip-vs-cap
       distinction or not -- no special-casing needed.
-  - Exact TEXT content per solid shape (radius? full dimensions? both?)
-    still open -- see "Open questions" below.
+  - Exact TEXT content, resolved 2026-10-24 for chain and cube (see
+    their own bullets above); sphere's "r=" radius and cone/beam's
+    plain axis-length text are unchanged and still considered settled.
 
 **Per-shape point count and meaning:**
 
@@ -552,8 +565,20 @@ turn tracker are not involved.
   one unavoidable exception is the axis pointing exactly straight up/
   down, where the far end degenerates to a single flat (still level)
   plane, since "yaw" around a vertical axis has no defined meaning.
+  **Degrees is clamped to the open interval (0, 180)** (real request,
+  2026-10-24: "should be <180 and >0 and go to 179 or 1 if set to
+  those or above/below but 179.99 and 0.001 is fine") -- entering 0 or
+  below snaps to 1, entering 180 or above snaps to 179, but anything
+  already strictly inside the interval (including right at its edge,
+  e.g. 179.99 or 0.001) passes through completely unchanged.
 - **Beam**: a start point and an end point, plus a numeric **beam
-  width** setting.
+  width** setting -- shown and edited in FEET in the panel (real
+  request, 2026-10-24: "the beam width is currently set by num voxels
+  and should really be set by feet... since everything in the world
+  measurement shows feet"), converted to/from the underlying voxel
+  value via the GM's own ft-per-voxel setting -- the geometry/network
+  layer still works in voxels throughout, this is purely how the
+  panel displays and accepts the number.
 - Each shape type's own settings (degrees/frustum toggle for cone,
   width for beam) show in the panel while that shape type is active --
   "each of these at least some UI."
@@ -949,6 +974,15 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
       "Cone" (round far end) and "Frustum" (square far end) -- both
       options are a true point at the near end, always
 
+  Scenario: Cone degrees clamps to the open interval (0, 180)
+    Given the cone degrees field currently holds a valid value
+    When the session enters "180" or anything above it
+    Then the field is clamped to 179
+    When the session enters "0" or anything below it
+    Then the field is clamped to 1
+    When the session enters "179.99" or "0.001"
+    Then that exact value is kept, unclamped
+
   Scenario: A cone's first point is always the narrow end, regardless of which point is nearer the player
     Given a session places a cone's FIRST point far away, then its
       SECOND point right next to themselves
@@ -958,9 +992,26 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
       opposite physical arrangement -- point ORDER decides which end
       is which, not proximity to the player
 
-  Scenario: Beam has a width setting
+  Scenario: Beam has a width setting, shown and edited in feet
     Given a session selects "Beam" and has placed its start and end point
-    Then the panel shows a numeric "beam width" field
+    Then the panel shows a numeric "beam width" field, displaying the
+      beam's current width converted to feet via the GM's own ft-per-
+      voxel setting, not the underlying voxel value directly
+    When the session types a new width in feet
+    Then that value is converted back to voxels before being applied
+      to the actual shape
+
+  Scenario: Chain's billboard matches the waypoint system's own D:/T: format
+    Given a distance chain has at least one segment
+    Then each segment's own billboard reads "D: {that segment's own
+      length}ft" on one line and "T: {the whole chain's total length}
+      ft" on the next -- the same total on every segment's label
+
+  Scenario: Cube's billboard shows width, height, and depth on separate lines
+    Given a cube has been placed
+    Then its billboard shows three lines: "W: {width}ft", "H: {height}
+      ft", and "D: {depth}ft" -- not a single corner-to-corner diagonal
+      distance
 
   Scenario: A measurement object persists in the world as soon as it's meaningful, with no separate finalize step
     Given a session is placing a "Cube" and has dragged out its second corner
@@ -1154,11 +1205,13 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
 6. **Measurement shapes' snap mode** (center/corner/free): whether this
    is one setting for the whole panel, one per shape type, or one per
    individual point, isn't specified.
-7. **Measurement shapes' billboard POSITION is now specified for every
-   shape** (resolved, 2026-10-24 -- see section 6's own billboard
-   bullet). Still open: the exact TEXT content for the solid shapes'
-   billboards (radius? full dimensions? both?) -- the distance chain's
-   content is obvious (segment distance, same as waypoints).
+7. ~~**Measurement shapes' billboard POSITION is now specified for
+   every shape**~~ (resolved, 2026-10-24 -- see section 6's own
+   billboard bullet). ~~Still open: the exact TEXT content for the
+   solid shapes' billboards~~ -- **also resolved, 2026-10-24**: chain
+   matches the waypoint system's own "D:"/"T:" exactly, cube shows its
+   own W:/H:/D:, sphere keeps its radius, cone/beam keep their plain
+   axis length.
 8. ~~**Whether the existing waypoint distance labels should also read
    through the new "ft per voxel" world setting**~~ -- **resolved,
    2026-10-24**: yes, confirmed by direct user call. One setting, both
