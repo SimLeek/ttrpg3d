@@ -86,6 +86,56 @@ export function movementStep(inputX: number, inputY: number, headingRad: number)
   return [Math.round(dirX), Math.round(dirZ)];
 }
 
+function cross3(u: Point3, v: Point3): Point3 {
+  return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+}
+
+function normalize3(v: Point3): Point3 {
+  const len = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+/**
+ * Real correction, 2026-10-24: "the end square rotates unexpectedly
+ * ... it'd be best to just make that frustum axis aligned instead ...
+ * a good way to deal with this would be for you to add a test that
+ * receives the vertices of the frustum ... and tell that the top and
+ * bottom lines of the frustum end square lay fully, so both points,
+ * on a plane that has its normal as the up vector (so, the ground
+ * plane), and that should always be the case." Replaces the earlier
+ * attempt (aligning a generic rotated cylinder's own local frame to
+ * the axis via a minimal-rotation quaternion, whose ROLL around the
+ * axis is whatever a reference-vector cross product happens to
+ * produce, with no guarantee it stays level) with a basis built
+ * directly from world "up": `right = cross(worldUp, axis)` has a
+ * ZERO Y-component for ANY axis direction -- a plain consequence of
+ * crossing anything with a purely-vertical vector, not an
+ * approximation -- so the two corners offset by `+right`/`-right` at
+ * a FIXED `up2` sign share the exact same Y, and likewise for the
+ * other sign: the square's own "top" edge and "bottom" edge are each
+ * GUARANTEED to lie in a plane whose normal is the up vector, for
+ * every axis direction, with the sole exception of the axis pointing
+ * exactly straight up/down (where "yaw" around a vertical axis has
+ * no defined meaning at all) -- handled explicitly below rather than
+ * left to an unstable cross product. Returns the far (wide) end's
+ * four corners as [topRight, topLeft, bottomLeft, bottomRight].
+ */
+export function frustumFarCorners(a: Point3, b: Point3, width: number): [Point3, Point3, Point3, Point3] {
+  const axis: Point3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const axisNorm = normalize3(axis);
+  let right = cross3([0, 1, 0], axisNorm);
+  if (Math.hypot(right[0], right[1], right[2]) < 1e-6) right = [1, 0, 0]; // axis is exactly vertical -- yaw is undefined, any horizontal vector works
+  right = normalize3(right);
+  const up2 = normalize3(cross3(axisNorm, right));
+  const half = width / 2;
+  const corner = (rightSign: number, up2Sign: number): Point3 => [
+    b[0] + right[0] * half * rightSign + up2[0] * half * up2Sign,
+    b[1] + right[1] * half * rightSign + up2[1] * half * up2Sign,
+    b[2] + right[2] * half * rightSign + up2[2] * half * up2Sign,
+  ];
+  return [corner(1, 1), corner(-1, 1), corner(-1, -1), corner(1, -1)];
+}
+
 /**
  * Billboard sizing's own shared AABB -- real request: "these should
  * all be using the same function to keep the code clean," fed each
@@ -526,70 +576,89 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       // point start[s narrow], second part[is the] wide flat part."
       const topDiameter = kind === "beam" ? beamWidth : 2 * axisLength * Math.tan((coneDegrees * Math.PI) / 180 / 2);
       const bottomDiameter = kind === "beam" ? beamWidth : 0;
-      const tessellation = kind === "beam" ? 16 : isFrustumFlag ? 4 : 24;
-      const mesh = BABYLON.MeshBuilder.CreateCylinder(`${idPrefix}-${kind}`, { height: axisLength, diameterTop: topDiameter, diameterBottom: bottomDiameter, tessellation }, scene);
-      mesh.position = mid;
-      // Aligns the cylinder's default local +Y axis with the real a->b
-      // direction -- the standard "rotation between two vectors"
-      // quaternion, since CreateCylinder always builds along local Y.
-      //
-      // Real bug found live: "the end square rotates unexpectedly" --
-      // for the frustum's square cross-section (tessellation 4), the
-      // minimal rotation's own roll AROUND the axis is whatever a
-      // cross-product with the reference vector happens to produce,
-      // which is numerically unstable (and visibly snaps/twists) as
-      // axisNormalized sweeps near-parallel to whichever reference
-      // vector feeds that cross product -- Cross(reference, axis) goes
-      // to near-zero length right there, so .normalize() on it
-      // amplifies tiny input changes into big output swings. Using
-      // world "up" as that reference means the singularity sits
-      // exactly where a cone/frustum is most likely to point during
-      // normal play (straight up/down), which is exactly what the
-      // user was hitting while dragging. Picking whichever of two
-      // near-orthogonal references (`up` vs `forward`) is LEAST
-      // parallel to the real axis keeps the cross product's magnitude
-      // away from zero for any axis direction actually reachable by
-      // dragging a point around near-horizontally, which is normal
-      // play -- it doesn't eliminate the one unavoidable singularity
-      // (the hairy ball theorem says no single continuous reference
-      // can), it just moves it somewhere a player is very unlikely to
-      // drag through.
-      const reference = Math.abs(BABYLON.Vector3.Dot(axisVec, BABYLON.Vector3.Up())) / axisLength > 0.9 ? BABYLON.Vector3.Forward() : BABYLON.Vector3.Up();
-      const axisNormalized = axisVec.clone().normalize(); // clone first -- normalize() mutates in place, and axisVec's own un-normalized length is still needed below
-      const dot = BABYLON.Vector3.Dot(reference, axisNormalized);
-      if (dot < 0.9999) {
-        const rotAxis = dot < -0.9999 ? BABYLON.Vector3.Cross(BABYLON.Vector3.Right(), axisNormalized).normalize() : BABYLON.Vector3.Cross(reference, axisNormalized).normalize();
-        const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
-        mesh.rotationQuaternion = BABYLON.Quaternion.RotationAxis(rotAxis, angle);
+
+      let mesh: BABYLON.Mesh;
+      let topY: number;
+      if (kind === "cone" && isFrustumFlag) {
+        // Real correction, 2026-10-24: a real mesh built directly from
+        // `frustumFarCorners` (see its own doc) instead of a rotated,
+        // tessellated CreateCylinder -- that approach could only ever
+        // promise "a square cross-section," never WHICH way it faces,
+        // since a generic "align local Y to the axis" quaternion's own
+        // roll around that axis isn't tied to world "up" at all. This
+        // mesh's far-face vertices are already in real WORLD
+        // coordinates, so no position/rotation transform is needed --
+        // the mesh's own local origin stays at the default identity.
+        const [tr, tl, bl, br] = frustumFarCorners(a, b, topDiameter);
+        const positions = [...a, ...tr, ...tl, ...bl, ...br];
+        const indices = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1, 1, 2, 3, 1, 3, 4]; // 4 side faces (apex=0 to each far edge) + 2 cap faces (the far square itself)
+        const normals: number[] = [];
+        BABYLON.VertexData.ComputeNormals(positions, indices, normals);
+        const vertexData = new BABYLON.VertexData();
+        vertexData.positions = positions;
+        vertexData.indices = indices;
+        vertexData.normals = normals;
+        mesh = new BABYLON.Mesh(`${idPrefix}-${kind}`, scene);
+        vertexData.applyToMesh(mesh);
+        topY = Math.max(a[1], tr[1], tl[1], bl[1], br[1]);
+      } else {
+        const tessellation = kind === "beam" ? 16 : 24;
+        mesh = BABYLON.MeshBuilder.CreateCylinder(`${idPrefix}-${kind}`, { height: axisLength, diameterTop: topDiameter, diameterBottom: bottomDiameter, tessellation }, scene);
+        // Real bug found live, 2026-10-24, confirmed directly against
+        // noa-engine's own source (rendering.js's addMeshToScene):
+        // `mesh.position = mid` (no clone!) made `mesh.position` and
+        // this function's own `mid` variable the EXACT SAME Vector3
+        // OBJECT. noa's addMeshToScene then does `mesh.position.
+        // fromArray(globalToLocal(...))` -- an IN-PLACE mutation of
+        // whatever Vector3 object `mesh.position` happens to be, to
+        // convert it from the global coordinate this file set it to
+        // into noa's local (origin-shifted) frame. Since `mid` was
+        // THAT SAME object, this silently corrupted `mid` itself from
+        // a real-world position into a local-shifted one, for every
+        // later use of `mid` in this branch (both the label's own
+        // position below AND, before this fix moved it earlier, the
+        // topY calculation) -- a double-shift once combined with
+        // addLabelAt's own separate addMeshToScene call for the label
+        // mesh. Exactly why "I don't see any billboards at all on
+        // cones or beams" -- and why it only shows up once a session
+        // has moved far enough to trigger noa's own origin rebase
+        // (`worldOriginOffset` starts at [0,0,0], where this bug
+        // silently cancels itself out). Same bug CLASS this file
+        // already hit twice before (noa's reused `_pickResult`,
+        // Babylon's own in-place `normalize()`) -- clone before
+        // handing a vector to anything that might mutate it.
+        mesh.position = mid.clone();
+        // Aligns the cylinder's default local +Y axis with the real
+        // a->b direction -- the standard "rotation between two
+        // vectors" quaternion, since CreateCylinder always builds
+        // along local Y. Roll around that axis is left unconstrained
+        // here (world "up" as the reference vector, same as always) --
+        // harmless for a ROUND cross-section, unlike the square
+        // frustum case above, which needs its own dedicated geometry
+        // instead of relying on this rotation at all.
+        const up = BABYLON.Vector3.Up();
+        const axisNormalized = axisVec.clone().normalize(); // clone first -- normalize() mutates in place, and axisVec's own un-normalized length is still needed below
+        const dot = BABYLON.Vector3.Dot(up, axisNormalized);
+        if (dot < 0.9999) {
+          const rotAxis = dot < -0.9999 ? new BABYLON.Vector3(1, 0, 0) : BABYLON.Vector3.Cross(up, axisNormalized).normalize();
+          const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+          mesh.rotationQuaternion = BABYLON.Quaternion.RotationAxis(rotAxis, angle);
+        }
+        // Billboard goes above the mesh's own TOPMOST vertex along the
+        // vertical axis, regardless of rotation -- NOT "the tip"/"the
+        // near cap" (see shapeAabb's own doc for why that framing is
+        // wrong once the shape can be rotated). `mid.add(halfAxis)` is
+        // the 'b' (far/wide) end; `mid.subtract(halfAxis)` is the 'a'
+        // (near) end.
+        const topCandidate1 = mid.add(halfAxis).y + topDiameter / 2;
+        const topCandidate2 = mid.subtract(halfAxis).y + bottomDiameter / 2;
+        topY = Math.max(topCandidate1, topCandidate2);
       }
       mesh.material = mat;
       mesh.isPickable = pickable;
       noa.rendering.addMeshToScene(mesh, false);
       meshes.push(mesh);
-      // Billboard goes above the mesh's own TOPMOST vertex along the
-      // vertical axis, regardless of rotation -- NOT "the tip"/"the
-      // near cap" (see shapeAabb's own doc and this feature's doc for
-      // why that framing is wrong once the shape can be rotated).
-      // `mid.add(halfAxis)` is the 'b' (far/wide) end -- which the
-      // diameter swap above puts `topDiameter` at; `mid.subtract(
-      // halfAxis)` is the 'a' (near) end, with `bottomDiameter`.
-      //
-      // Real bug found live: "I don't see the billboards over the
-      // cone and beam for some reason" -- beam's own label used to sit
-      // at a fixed `mid.y + 0.3`, which for anything but a thin/near-
-      // vertical beam lands INSIDE the beam's own solid cylinder (its
-      // radius is beamWidth/2 on every side of `mid`, and 0.3 is well
-      // under that for any beamWidth >= 0.6) -- buried inside the
-      // alpha-blended geometry rather than genuinely invisible, so it
-      // never looked "there." Beam now shares the exact same above-
-      // the-mesh placement cone/frustum already used correctly (its
-      // top/bottom diameters are equal, so this reduces to "above
-      // whichever end sits higher"); it keeps its own fixed/default
-      // label SIZE though (not the shared AABB-scale function -- see
-      // this feature's own doc on why beam is excepted from that).
-      const topCandidate1 = mid.add(halfAxis).y + topDiameter / 2;
-      const topCandidate2 = mid.subtract(halfAxis).y + bottomDiameter / 2;
-      const topY = Math.max(topCandidate1, topCandidate2);
+
       if (kind === "beam") {
         addLabelAt([mid.x, topY + 0.3, mid.z], ftPerVoxelLabel(axisLength, ftPV));
       } else {
@@ -715,15 +784,21 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
     onPlacePoint(): void {
       if (!activeKind || isDraggingSecondPoint) return; // already mid-drag -- this mousedown is the SAME press, not a new one (see installVoxelEditor's own "fire" doc: one emission per press)
       const required = requiredPointCount(activeKind);
-      // Real correction, 2026-10-24: "when they're placed, I want to
-      // control the start and end points with tabbing, wasd space
-      // shift" -- a fixed-point-count shape no longer auto-finalizes
-      // the instant its last point lands (or, now, the instant its
-      // drag releases); once it has its required point count, further
-      // clicks are a no-op (not a 3rd point, not a re-finalize) --
-      // Tab/WASD adjust EITHER point from here, and Enter (below,
-      // shared with the chain's own finalize) actually persists it.
-      if (required !== undefined && activePoints.length >= required) return;
+      if (required !== undefined && activePoints.length >= required) {
+        // Real request, 2026-10-24: "once I click the screen again, it
+        // should start making another cube... I have to select another
+        // shape button instead of just making more by clicking the
+        // screen, which can be cube again, but it would be nice to
+        // just click and drag to have it work." A completed (already-
+        // persisted) fixed-point-count shape no longer makes further
+        // clicks a no-op -- the NEXT click starts a brand new one of
+        // the SAME kind, same "reset the points" the shape-type button
+        // itself already does (selectKind's own doc), just triggered
+        // by a click instead of re-picking the button. The previous
+        // object stays persisted on the server exactly as it was.
+        activePoints = [];
+        selectedIndex = 0;
+      }
       const hit = raycastTerrain(currentPickScreenPoint());
       if (!hit) return;
       const point = snapPoint(hit, snapModeValue);

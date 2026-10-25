@@ -468,12 +468,29 @@ turn tracker are not involved.
     - **Cube**: above the cube.
     - **Sphere**: above the sphere.
     - **Beam**: above the mesh's own topmost vertex, same rule as
-      cone/frustum below -- real bug found live, 2026-10-24: a beam's
-      billboard previously sat at a fixed height above its own
-      MIDPOINT, which for any beam of normal width lands inside the
-      beam's own solid, alpha-blended cylinder rather than genuinely
-      off-screen ("I don't see the billboards over the cone and beam
-      for some reason" -- it was there, just buried in the geometry).
+      cone/frustum below. Real bug found live, 2026-10-24: "I don't
+      see any billboards at all on cones or beams" persisted even
+      after an earlier (wrong) theory about the billboard sitting
+      inside the beam's own solid geometry was fixed -- the ACTUAL
+      root cause, confirmed by reading noa-engine's own source
+      (`rendering.js`'s `addMeshToScene`, which converts a mesh's
+      `.position` from global to noa's local/origin-shifted frame by
+      mutating that SAME Vector3 object in place): this file's own
+      cone/beam code set the shape mesh's `.position` directly to the
+      shared `mid` Vector3 (no clone), so that in-place mutation
+      silently corrupted `mid` itself, which the billboard's own
+      position was computed from immediately afterward -- a double
+      shift once combined with the billboard's own, separate
+      `addMeshToScene` call. Only shows up once a session has moved
+      far enough from spawn to trigger noa's own origin rebase (at
+      [0,0,0] the corruption is a no-op), matching why it read as
+      intermittent/environment-dependent rather than a flat "always
+      broken." Same bug CLASS this feature already hit twice before
+      this session (noa's reused pick-result object, Babylon's own
+      in-place `normalize()`) -- fixed by cloning before handing a
+      vector to anything that might mutate it, with a dedicated
+      regression test that reproduces noa's real `addMeshToScene`
+      mutation behavior (a plain no-op stub wouldn't have caught it).
     - **Cone/frustum**: above the mesh's own TOPMOST VERTEX along the
       vertical axis (global Y, or whichever axis is "up" in this
       engine) -- real correction, 2026-10-24: NOT "the tip for a
@@ -518,17 +535,23 @@ turn tracker are not involved.
   the wide flat end, regardless of which one happens to be nearer the
   player when placing. Real bug found live, 2026-10-24: a frustum's
   square far end was visibly twisting/rotating in an unstable way as
-  its axis direction changed ("the end square rotates unexpectedly")
-  -- root cause was the quaternion aligning the mesh's own local +Y to
-  the real axis direction using world "up" as its reference vector,
-  which makes the rotation's roll around the axis numerically
-  unstable exactly when the axis points near-vertically (the most
-  common direction to drag a cone/frustum during normal play). Fixed
-  by switching the reference vector to whichever of world up/forward
-  is LEAST parallel to the current axis -- doesn't eliminate the one
-  unavoidable singularity any single continuous reference vector must
-  have, just moves it somewhere a player is very unlikely to drag
-  through.
+  its axis direction changed ("the end square rotates unexpectedly").
+  A first attempted fix (picking a more stable reference vector for
+  the alignment quaternion) didn't actually solve it -- the user's own
+  follow-up named the real requirement precisely: "the top and bottom
+  lines of the frustum end square lay fully, so both points, on a
+  plane that has its normal as the up vector (so, the ground plane),
+  and that should always be the case." The frustum is now a dedicated
+  custom mesh (`frustumFarCorners`, with its own unit test covering a
+  full spherical-coordinates sweep of axis directions, per the user's
+  own suggested testing approach), not a rotated/tessellated cylinder:
+  its square's own basis is built directly from `cross(world-up,
+  axis)`, which is mathematically guaranteed to have a zero vertical
+  component for ANY axis direction -- so the square's top edge and
+  bottom edge are each provably level, not just "usually stable." The
+  one unavoidable exception is the axis pointing exactly straight up/
+  down, where the far end degenerates to a single flat (still level)
+  plane, since "yaw" around a vertical axis has no defined meaning.
 - **Beam**: a start point and an end point, plus a numeric **beam
   width** setting.
 - Each shape type's own settings (degrees/frustum toggle for cone,
@@ -987,6 +1010,16 @@ Feature: Measurement shapes (its own panel, independent of the turn tracker)
     When that session starts placing a new one
     Then the previous one is removed -- each session has only ONE
       current measurement object at a time
+
+  Scenario: Clicking again after a fixed-point-count shape is already complete starts a brand new one of the same kind
+    Given a session placed a "Cube" and released its drag -- it is
+      already persisted
+    When they click somewhere else in the 3D world, with no click on
+      any shape-type button in between
+    Then a brand new cube starts placing from that click, replacing
+      the previous one once IT finishes -- same as if they had
+      re-clicked "Cube" in the panel first, just without that extra
+      step
 
   Scenario: The broadcast checkbox controls whether others see your measurement object
     Given a session is placing a measurement object with "Broadcast to
