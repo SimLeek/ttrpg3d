@@ -124,18 +124,26 @@ nearest same-row text label) -- real findings, not estimates:
 
 ### Open question this raises
 
-**Decided, 2026-10-25: live formula port.** HP/Evasion/Dodge/Guard/
-Block/Initiative/Save Bonus/RP and the main+sub stats get ported as
-real `characterSheetLibrary` functions mirroring the sheet's own
-formulas (base/point-buy-chosen stats stay plain variables; derived
-ones become `{{lyrian-chronicles.hp(toughness, hpBonus)}}`-style
-calls) -- so raising Toughness later actually moves HP, same as the
-real spreadsheet. This is a real reimplementation of a meaningful
-slice of Lyrian Chronicles' own character-creation math (point-buy
-arrays, racial/class bonus tables sourced from the hidden lookup tabs,
-equipment-table `SUMIF`s), not a quick add -- see "Proposed build
-order" below for how this gets sequenced into shippable pieces rather
-than one all-or-nothing pass.
+**Decided, 2026-10-25: live formula port -- but as a general INLINE
+EXPRESSION, not a per-stat mod function.** Real correction: a derived
+stat's formula is imported VERBATIM as its own markdown text, with
+each input replaced by a variable reference, e.g. `HP: {{20 + (10 *
+{toughness}) + {hpBonus}}}` -- NOT a bespoke
+`{{lyrian-chronicles.hp(toughness, hpBonus)}}` call into a hand-
+written JS function. This means the Lyrian mod itself never needs to
+write a single line of derivation logic for HP/Evasion/Dodge/Guard/
+Block/Initiative/Save Bonus/RP/the main+sub stats -- it only ever
+needs to generate the formula TEXT (reading it straight off the real
+sheet's own formula string) with each operand swapped for a `{var}`
+reference. Raising Toughness later still actually moves HP, same as
+the real spreadsheet, but there's no growing library of named
+functions to hand-maintain -- one generic mechanism handles every
+formula uniformly. See "A new general mechanism" under Architecture
+below for what core actually needs to build to make `{{<expression
+with {var} refs>}}` evaluate and display its result; this is also what
+makes the point-buy-array/racial-bonus/equipment-`SUMIF` lookups in
+"Proposed build order" below purely a matter of generating the RIGHT
+expression text, not writing new evaluation code for each one.
 
 ### Proposed build order (too large for one pass)
 
@@ -146,24 +154,29 @@ than one all-or-nothing pass.
    to end with just the character's name/a couple of flat Core numbers,
    no formulas yet. This is what makes every later step testable
    against a REAL import, not a mocked one.
-2. **Main + sub stats** (Focus/Power/Agility/Toughness, Fitness/
+2. **The `{{<expression with {var} refs>}}` evaluator** (see "A new
+   general mechanism" above) -- a prerequisite for steps 3/4 below,
+   since those generate markdown that leans on it existing already.
+3. **Main + sub stats** (Focus/Power/Agility/Toughness, Fitness/
    Cunning/Reason/Awareness/Presence) -- the point-buy-array lookup
    plus racial/class bonus columns, since every other formula in Core
    depends on these being right first.
-3. **Top stat block** (HP/Mana/Evasion/Dodge/Guard/Block/Initiative/
-   Save Bonus/Potency/RP) -- depends on step 2, plus the equipment
+4. **Top stat block** (HP/Mana/Evasion/Dodge/Guard/Block/Initiative/
+   Save Bonus/Potency/RP) -- depends on step 3, plus the equipment
    table's own `SUMIF`s (which need the weapon/armor rows imported
    too, even though Inventory itself is a separate page).
-4. **Page 2 (Abilities+Breakthrough+Custom Abilities) and Page 3
+5. **Page 2 (Abilities+Breakthrough+Custom Abilities) and Page 3
    (Inventory)** -- straightforward row-to-markdown generation, no
-   formula work, can happen in parallel with 2/3 once step 1 lands.
-5. **`[[dice notation]]` variable interpolation + roll buttons** --
-   the general mechanism (useful for every sheet, not just this mod),
-   landing once there's a real Initiative value to roll against.
+   formula work, can happen in parallel with 3/4 once step 1 lands.
+6. **`[[dice notation]]` variable interpolation + roll buttons, plus
+   the roll-button -> turn-tracker integration** -- the dice-roll
+   mechanism itself is general (useful for every sheet, not just this
+   mod); the tracker integration is specific to Initiative. Lands once
+   there's a real Initiative value to roll against (step 4).
 
 Skills (the 20-row list, each with its own governing-stat + bonus
 formula) and the class/tier `IMPORTRANGE` lookups are real but
-smaller, best slotted in after step 3 rather than blocking it.
+smaller, best slotted in after step 4 rather than blocking it.
 
 ### Gherkin
 
@@ -182,15 +195,30 @@ Feature: Importing a Lyrian Chronicles character sheet
     Given an imported sheet's Core tab has Toughness = 5
     Then the imported character's own "Toughness" variable is set to 5
 
-  Scenario: A derived Core stat is a live formula, not a frozen snapshot
+  Scenario: A derived Core stat is a live inline expression, not a frozen snapshot or a bespoke function
     Given an imported character's Toughness is 5 and HP Bonus is 0
-    Then their HP variable shows 20 + (10 * 5) + 0 = 70, computed via a
-      real `{{lyrian-chronicles.hp(...)}}` library call -- matching the
-      sheet's own real formula for HP
+    Then their Core page's own markdown contains the literal text
+      "{{20 + (10 * {toughness}) + {hpBonus}}}" -- the sheet's real HP
+      formula, with each operand swapped for a variable reference, NOT
+      a call into a hand-written "hp()" function
+    And it displays as 70 (20 + (10*5) + 0)
     When that character's Toughness later changes to 6 (e.g. a level-up)
-    Then HP recomputes to 20 + (10 * 6) + 0 = 80 WITHOUT a re-import --
+    Then it redisplays as 80 (20 + (10*6) + 0) WITHOUT a re-import --
       the same live behavior the real spreadsheet has, not a value
       frozen at import time
+
+  Scenario: Rolling Initiative from a character sheet also adds that character to an open turn tracker
+    Given a session is controlling a character with Initiative = 7
+    And the turn tracker is currently open
+    When they click the Initiative roll button on that character's sheet
+    Then the roll posts to chat exactly like an ordinary dice roll
+    And that character is added to (or updated in) the open turn
+      tracker with the rolled result, without a separate manual
+      "Add" step
+    Given the turn tracker is NOT open
+    When they click that same roll button
+    Then the roll still posts to chat, but no tracker entry is created
+      (nothing to add it to)
 
   Scenario: Abilities, Breakthrough, and Custom Abilities merge into one page
     Given an imported sheet has rows in its Abilities, Breakthrough, and
@@ -236,6 +264,35 @@ native parsers per format."* Concretely:
   models.
 - This is genuinely new ground (no importer hook exists yet), not an
   existing extension point being reused.
+
+**A new general mechanism** (real correction, 2026-10-25 -- see "Open
+question this raises" above): a THIRD inline-reference kind alongside
+the existing `{variableId}` (plain value) and `{{modId.fn(args)}}`
+(named mod function call) -- `{{<arithmetic expression>}}`, where the
+expression is plain math (`+ - * / ()`  and numeric literals) with zero
+or more nested `{variableId}` refs, each substituted with that
+variable's current value before the whole thing is evaluated and the
+RESULT displayed. Distinguishable from an existing mod-function call
+by shape alone (a call always matches `modId.functionName(...)`; a raw
+expression never does), so both can keep using `{{...}}` with no
+collision. This is NOT Lyrian-specific -- it's a general sheet
+capability any template/import can use, and it's what lets the Lyrian
+mod import a derived stat's REAL formula text verbatim instead of
+needing a hand-written function per stat (see above). Likely reuses
+this project's existing `@dice-roller/rpg-dice-roller` dependency for
+the actual evaluation (already a proven, in-repo arithmetic/dice
+expression parser) rather than writing a new one, with the result
+displayed inline (`box`) by default -- unlike a mod-function call,
+showing your own HP isn't "a roll/action" by default, so defaulting
+to `button` (auto-posting to chat) would be the wrong UX here.
+
+**Initiative-roll -> turn-tracker integration** (real addition,
+2026-10-25): clicking an Initiative roll button, while the turn
+tracker is open, also adds/updates that character's row in the
+tracker with the rolled result -- a new link between the character-
+sheet roll-button mechanism and `docs/BATTLE_SYSTEM.md`'s existing
+turn-tracker phase-1 UI (its own GM-editable roll-number field), not
+something either system does today.
 
 ### Open questions -- need your call before any of this gets built
 
