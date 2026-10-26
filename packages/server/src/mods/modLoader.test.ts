@@ -260,19 +260,23 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
-    // hp/mana are no longer read off the sheet's own "HP"/"Mana"
-    // labels directly -- both are computed from the SAME real
-    // formulas the Core page's own `{{expression}}`s show live: HP =
-    // 20 + (10 * Toughness) + HP Bonus; Mana = ROUNDDOWN(6 + Power +
-    // Mana Adjustments, 0). This fixture's own "Mana" cell is now
-    // unused (power/manaAdjustments both fall back to 0, so Mana =
-    // trunc(6+0+0) = 6). Every OTHER stat this fixture's own workbook
-    // doesn't define falls back to its own default.
+    // hp/mp are no longer read off the sheet's own "HP"/"Mana" labels
+    // directly -- both are computed from the SAME real formulas the
+    // Core page's own `{{expression}}`s show live: HP = 20 + (10 *
+    // Toughness) + HP Bonus; MP = ROUNDDOWN(6 + Power + Mana
+    // Adjustments, 0); RP = IF(oldArmorCalc, 2+(Agility-equipment),
+    // 2+Agility)-RP Adjustment. This fixture's own "Mana" cell is now
+    // unused (power/manaAdjustments both fall back to 0, so MP =
+    // trunc(6+0+0) = 6). hp/mp/rp carry no separate "Max" key at all
+    // anymore -- each one's own max is a LIVE `maxExpression` on the
+    // template itself (real request, 2026-10-26), resolved fresh
+    // every render, not seeded at import time. Every OTHER stat this
+    // fixture's own workbook doesn't define falls back to its own
+    // default.
     expect(result?.result.variableValues).toEqual({
       hp: 70,
-      hpMax: 70,
-      mana: 6,
-      manaMax: 6,
+      mp: 6,
+      rp: 8, // (0 ? ... : (2 + 6)) - 0
       agility: 6,
       toughness: 5,
       focus: 0,
@@ -303,16 +307,15 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
   it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
-    // toughness/hpBonus/power/manaAdjustments all fall back to 0, so
-    // hp (20 + 10*0 + 0 = 20) and mana (trunc(6+0+0) = 6) are both
-    // purely the formula's own result -- neither has an independent
-    // default of its own anymore, since both are derived now, not
-    // read directly.
+    // toughness/hpBonus/power/manaAdjustments/agility all fall back to
+    // 0, so hp (20 + 10*0 + 0 = 20), mp (trunc(6+0+0) = 6), and rp
+    // (2 + 0 - 0 = 2) are all purely the formula's own result -- none
+    // has an independent default of its own anymore, since all three
+    // are derived now, not read directly.
     expect(result?.result.variableValues).toEqual({
       hp: 20,
-      hpMax: 20,
-      mana: 6,
-      manaMax: 6,
+      mp: 6,
+      rp: 2,
       agility: 0,
       toughness: 0,
       focus: 0,
@@ -339,7 +342,7 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     });
   });
 
-  it("real request, 2026-10-25 -- Mana/Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP's own inputs are read from the sheet's real, quirkier layouts (a bonus cell one or two rows BELOW its own label, an equipment-value cell TWO columns right, and a weapon/armor table's own equipped-rows SUMIF), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
+  it("real request, 2026-10-25/26 -- MP/Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP's own inputs are read from the sheet's real, quirkier layouts (a bonus cell one or two rows BELOW its own label, an equipment-value cell TWO columns right, and a weapon/armor table's own equipped-rows SUMIF), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const workbook = {
       Core: [
@@ -382,7 +385,8 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(values.initiativeEquipmentPenalty).toBe(1);
     expect(values.rpAdjustment).toBe(1);
     expect(values.oldArmorCalc).toBe(1);
-    expect(values.mana).toBe(15); // seeded at import time from the SAME formula: trunc(6+5+4)
+    expect(values.mp).toBe(15); // seeded at import time from the SAME formula: trunc(6+5+4)
+    expect(values.rp).toBe(5); // (1 ? (2+(6-2)) : (2+6)) - 1
 
     // Same numbers the Core page's own {{expression}} formulas would
     // show live, given these exact variableValues.

@@ -39,9 +39,10 @@
 // Pure DOM, no noa dependency -- same "noa-free, unit-testable"
 // convention chatPanel.ts/hotbar.ts already follow.
 
-import { xOfYMaxKey, type CharacterSheetVariableDef } from "@ttrpg3d/shared";
+import { xOfYMaxKey, resolveVariableValue, type CharacterSheetVariableDef } from "@ttrpg3d/shared";
 
 export type VariableValueMap = Readonly<Record<string, number | string>>;
+export type VariableDefList = readonly CharacterSheetVariableDef[];
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -53,9 +54,9 @@ function asNumber(value: number | string | undefined, fallback: number): number 
   return fallback;
 }
 
-function xOfYMax(def: CharacterSheetVariableDef, values: VariableValueMap): number {
+function xOfYMax(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): number {
   const fallback = typeof def.default === "number" ? def.default : 0;
-  return asNumber(values[xOfYMaxKey(def.id)] ?? def.max, fallback);
+  return resolveVariableValue(def.id, "y", defs, values) ?? fallback;
 }
 
 function buildXOfYCurrentInputHtml(def: CharacterSheetVariableDef, values: VariableValueMap): string {
@@ -63,13 +64,26 @@ function buildXOfYCurrentInputHtml(def: CharacterSheetVariableDef, values: Varia
   return `<input type="number" class="sheet-widget-xofy-current" data-var-key="${escapeAttr(def.id)}" value="${current}" />`;
 }
 
-function buildXOfYMaxInputHtml(def: CharacterSheetVariableDef, values: VariableValueMap): string {
-  return `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${xOfYMax(def, values)}" />`;
+/**
+ * Real request, 2026-10-26: "Any xOfY variable should have Y be the
+ * max of that... hp.y should just auto-set to the actual max hp."
+ * When the variable's own def declares a live `maxExpression`, the
+ * max box shows that COMPUTED value but is `disabled` and carries no
+ * `data-var-key` at all -- editing it would be immediately overwritten
+ * on the next render anyway (the live formula always wins), so it
+ * isn't wired as an editable control in the first place, rather than
+ * silently discarding an edit a session might think actually stuck.
+ */
+function buildXOfYMaxInputHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): string {
+  const value = xOfYMax(def, values, defs);
+  return def.maxExpression !== undefined
+    ? `<input type="number" class="sheet-widget-xofy-max" value="${value}" disabled title="Computed live from this sheet's own formula -- not directly editable" />`
+    : `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${value}" />`;
 }
 
-/** The FULL widget markup for `def`'s value in `values` -- for `xOfY`, BOTH boxes together (current and max). This is the Core & Variables tab's own per-variable value widget (round 5 -- round 4 mistakenly used this for INLINE refs too; see buildVariableComponentHtml below for the inline, one-box-at-a-time version). One `data-var-key` per interactive control. */
-export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: VariableValueMap): string {
-  if (def.type === "xOfY") return `${buildXOfYCurrentInputHtml(def, values)} / ${buildXOfYMaxInputHtml(def, values)}`;
+/** The FULL widget markup for `def`'s value in `values` -- for `xOfY`, BOTH boxes together (current and max). This is the Core & Variables tab's own per-variable value widget (round 5 -- round 4 mistakenly used this for INLINE refs too; see buildVariableComponentHtml below for the inline, one-box-at-a-time version). One `data-var-key` per interactive control (unless the max box is a live `maxExpression` -- see buildXOfYMaxInputHtml). `defs` defaults to just `[def]` -- only needed at all when `def.maxExpression` itself references ANOTHER variable. */
+export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList = [def]): string {
+  if (def.type === "xOfY") return `${buildXOfYCurrentInputHtml(def, values)} / ${buildXOfYMaxInputHtml(def, values, defs)}`;
 
   const value = values[def.id] ?? def.default;
 
@@ -93,19 +107,19 @@ export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: 
  * (there's only one value regardless) -- identical to
  * `buildVariableWidgetHtml`.
  */
-export function buildVariableComponentHtml(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y" = "x"): string {
-  if (def.type === "xOfY") return component === "y" ? buildXOfYMaxInputHtml(def, values) : buildXOfYCurrentInputHtml(def, values);
-  return buildVariableWidgetHtml(def, values);
+export function buildVariableComponentHtml(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y" = "x", defs: VariableDefList = [def]): string {
+  if (def.type === "xOfY") return component === "y" ? buildXOfYMaxInputHtml(def, values, defs) : buildXOfYCurrentInputHtml(def, values);
+  return buildVariableWidgetHtml(def, values, defs);
 }
 
-function resolveComponentValue(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y"): number | string {
+function resolveComponentValue(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y", defs: VariableDefList): number | string {
   if (def.type !== "xOfY") return values[def.id] ?? def.default;
-  return component === "y" ? xOfYMax(def, values) : asNumber(values[def.id] ?? def.default, typeof def.default === "number" ? def.default : 0);
+  return component === "y" ? xOfYMax(def, values, defs) : asNumber(values[def.id] ?? def.default, typeof def.default === "number" ? def.default : 0);
 }
 
 /** A variable rendered as a clickable chip instead of an editable box (`{variableId:button}`) -- posts the chosen component's current value to the test chat on click, same `.chat-chip` mechanism library-call buttons use. Same one-value-at-a-time `component` selection as buildVariableComponentHtml -- a chip is a single announcement, not a combined display. */
-export function buildVariableChipHtml(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y" = "x"): string {
-  const value = resolveComponentValue(def, values, component);
+export function buildVariableChipHtml(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y" = "x", defs: VariableDefList = [def]): string {
+  const value = resolveComponentValue(def, values, component, defs);
   const label = def.type === "xOfY" ? `${def.label} (${component === "y" ? "max" : "current"})` : def.label;
   return `<button type="button" class="chat-chip" data-chip-label="${escapeAttr(label)}" data-chip-value="${escapeAttr(String(value))}">${escapeAttr(String(value))}</button>`;
 }
@@ -129,8 +143,8 @@ export function wireVariableWidgets(root: ParentNode, onChange: (key: string, ne
   });
 }
 
-/** Convenience wrapper for mounting ONE widget directly (the Core & Variables tab's reserved body-size rows) -- builds + wires in one call, no markdown/page involved. */
-export function renderVariableWidget(container: HTMLElement, def: CharacterSheetVariableDef, values: VariableValueMap, onChange: (key: string, next: number | string) => void): void {
-  container.innerHTML = buildVariableWidgetHtml(def, values);
+/** Convenience wrapper for mounting ONE widget directly (the Core & Variables tab's reserved body-size rows AND its own per-variable list) -- builds + wires in one call, no markdown/page involved. */
+export function renderVariableWidget(container: HTMLElement, def: CharacterSheetVariableDef, values: VariableValueMap, onChange: (key: string, next: number | string) => void, defs: VariableDefList = [def]): void {
+  container.innerHTML = buildVariableWidgetHtml(def, values, defs);
   wireVariableWidgets(container, onChange);
 }

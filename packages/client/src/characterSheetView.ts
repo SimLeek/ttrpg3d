@@ -96,10 +96,16 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     const label = document.createElement("label");
     label.textContent = def.label;
     const widgetHost = document.createElement("span");
-    renderVariableWidget(widgetHost, def, character.variableValues, (key, next) => {
-      character.variableValues = { ...character.variableValues, [key]: next };
-      saveSheet();
-    });
+    renderVariableWidget(
+      widgetHost,
+      def,
+      character.variableValues,
+      (key, next) => {
+        character.variableValues = { ...character.variableValues, [key]: next };
+        saveSheet();
+      },
+      allVariableDefs(),
+    );
     row.append(label, widgetHost);
     parent.append(row);
   }
@@ -138,6 +144,11 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     return character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_CHARACTER_VARIABLES.find((v) => v.id === variableId);
   }
 
+  /** Every variable def this character's sheet knows about -- passed to resolveVariableValue/evaluateCharacterSheetExpression so a `.y` ref or `{{expression}}` against a variable with a live `maxExpression` resolves it, not just a flat stored lookup. */
+  function allVariableDefs(): CharacterSheetVariableDef[] {
+    return [...character.customSheet!.variables, ...RESERVED_CHARACTER_VARIABLES];
+  }
+
   /**
    * Real bug, found live: a character that just "started from
    * template" (renderStartPrompt's start-blank/start-template
@@ -157,9 +168,12 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
    */
   function effectiveVariableValues(): Record<string, number | string> {
     const result: Record<string, number | string> = { ...character.variableValues };
-    for (const def of [...character.customSheet!.variables, ...RESERVED_CHARACTER_VARIABLES]) {
+    for (const def of allVariableDefs()) {
       if (result[def.id] === undefined) result[def.id] = def.default;
-      if (def.type === "xOfY") {
+      // A live `maxExpression` (real request, 2026-10-26) always wins
+      // over any stored max key -- resolveVariableValue never reads
+      // this fallback in that case, so there's nothing to seed here.
+      if (def.type === "xOfY" && def.maxExpression === undefined) {
         const maxKey = xOfYMaxKey(def.id);
         if (result[maxKey] === undefined) result[maxKey] = typeof def.max === "number" ? def.max : def.default;
       }
@@ -228,10 +242,11 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // compute a real roll (diceRoll.ts's own "the server is the only
     // place a roll is ever computed" rule).
     const effectiveValues = effectiveVariableValues();
+    const defs = allVariableDefs();
     const expressionSegments = findExpressionSegments(page.markdown).map((s) => ({
       ...s,
       kind: "expression" as const,
-      ...evaluateCharacterSheetExpression(s.expression, effectiveValues, s.display === "button"),
+      ...evaluateCharacterSheetExpression(s.expression, effectiveValues, s.display === "button", defs),
     }));
 
     // Variable refs (`{variableId}`) resolve entirely client-side --
@@ -299,8 +314,8 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
           substituted += !def
             ? `[unknown variable: ${escapeHtml(segment.variableId)}]`
             : segment.display === "button"
-              ? buildVariableChipHtml(def, character.variableValues, segment.component)
-              : buildVariableComponentHtml(def, character.variableValues, segment.component);
+              ? buildVariableChipHtml(def, character.variableValues, segment.component, defs)
+              : buildVariableComponentHtml(def, character.variableValues, segment.component, defs);
         }
         cursor = segment.end;
       }
@@ -412,10 +427,16 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       // renderVariableRow already uses for the reserved body-size rows.
       listEl.querySelectorAll<HTMLSpanElement>(".var-value-host").forEach((host) => {
         const variable = sheet.variables[Number(host.dataset.index)];
-        renderVariableWidget(host, variable, character.variableValues, (key, next) => {
-          character.variableValues = { ...character.variableValues, [key]: next };
-          saveSheet();
-        });
+        renderVariableWidget(
+          host,
+          variable,
+          character.variableValues,
+          (key, next) => {
+            character.variableValues = { ...character.variableValues, [key]: next };
+            saveSheet();
+          },
+          allVariableDefs(),
+        );
       });
     }
     renderList();

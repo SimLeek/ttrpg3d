@@ -16,43 +16,61 @@
 // 2026-10-25: Google's own XLSX export DOES carry every formula
 // cell's real formula string (confirmed directly, on two separately
 // exported copies of the real sheet -- B9 reads
-// `=IFS(B45 = A9, A45, ...)+F45`, not just its cached number) --
-// an earlier pass here wrongly treated the cached VALUE this
-// project's `xlsx` library happens to read by default as "nothing
-// left to re-derive" and left several derived stats as flat reads of
-// that frozen number. Fixed: every stat that's genuinely a FORMULA on
-// the real sheet (Mana/Evasion/Dodge/Guard/Block/Initiative/Save
-// Bonus/Potency/RP) is hand-transcribed here as a live
-// `{{expression}}`, same treatment HP already had, each one's real
-// formula text read directly off the sheet (not guessed) and ported
-// with each cell reference swapped for the matching `{variableId}`.
-// Only the genuine LEAF inputs stay flat: the Main/Sub stats
-// (Focus/Power/Agility/Toughness/Fitness/Cunning/Reason/Awareness/
-// Presence -- each already a one-time point-buy-array + racial/class-
-// bonus choice baked into ITS OWN cached value, not something this
-// mod re-derives), the small named adjustment cells (HP Bonus,
-// Evasion/Dodge Bonus, Mana/Initiative/RP Adjustment, Bonus Save
-// Value, the "old armor calc" checkbox), and Speed (confirmed: a
-// plain typed-in number on the real sheet, not a formula at all).
+// `=IFS(B45 = A9, A45, ...)+F45`, not just its cached number). Every
+// stat that's genuinely a FORMULA on the real sheet (HP/Mana("MP")/
+// Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP) is
+// hand-transcribed here as a live `{{expression}}`/`maxExpression`,
+// each one's real formula text read directly off the sheet (not
+// guessed) and ported with each cell reference swapped for the
+// matching `{variableId}`. Only the genuine LEAF inputs stay flat:
+// the Main/Sub stats (Focus/Power/Agility/Toughness/Fitness/Cunning/
+// Reason/Awareness/Presence -- each already a one-time point-buy-
+// array + racial/class-bonus choice baked into ITS OWN cached value,
+// not something this mod re-derives), the small named adjustment
+// cells (HP Bonus, Evasion/Dodge Bonus, Mana/Initiative/RP
+// Adjustment, Bonus Save Value, the "old armor calc" checkbox), and
+// Speed (confirmed: a plain typed-in number on the real sheet, not a
+// formula at all).
 //
-// Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP are
-// never their OWN stored variable at all -- only their own leaf
-// inputs are (same shape HP's own `{toughness}`/`{hpBonus}` already
-// have). Each one's own EQUIPMENT contribution (the real sheet's own
-// `SUMIF` over its weapon/armor table's "Armor Equipped?" column) is
-// computed ONCE at import time into its own flat leaf variable, same
-// limitation this file's own HP/Mana note below covers: there is no
-// live "toggle this gear on/off" mechanism in this project's variable
+// Real request, 2026-10-26: "rename mana to MP, and add RP as a third
+// bar... make HP green and first/top-most, make MP blue and second,
+// make RP red and last/bottom-most... Any xOfY variable should have Y
+// be the max of that... hp.y should just auto-set to the actual max
+// hp." HP/MP/RP are now `xOfY` with a `maxExpression` (shared/
+// characterSheet.ts's new `resolveVariableValue` -- a real, graph-
+// cycle-checked live resolver, not a value frozen at import time) --
+// `{hp.y}` alone now shows the live max, so the old separate "Max HP
+// (live formula): {{...}}" display lines are gone; the ONLY thing the
+// importer still seeds is each one's own CURRENT value (full/max at
+// creation, same "character BUILD sheet, not a live combat tracker"
+// reasoning as before -- RP has no separate "current RP spent"
+// anywhere on the real sheet either, so it imports full too, trackable
+// in-session from there same as HP/MP already are).
+//
+// Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency are never
+// their OWN stored variable at all -- only their own leaf inputs are
+// (same shape HP's own `{toughness}`/`{hpBonus}` always had). Each
+// one's own EQUIPMENT contribution (the real sheet's own `SUMIF` over
+// its weapon/armor table's "Armor Equipped?" column) is computed ONCE
+// at import time into its own flat leaf variable: there is no live
+// "toggle this gear on/off" mechanism in this project's variable
 // system yet, so that one piece alone stays frozen until the next
 // import -- a real, separate follow-up, not pretended away.
 
-import { xOfYMaxKey, type CharacterSheetTemplate, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
+import { type CharacterSheetTemplate, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
 
 export const characterSheetTemplate: CharacterSheetTemplate = {
   name: "Lyrian Chronicles",
   variables: [
-    { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 },
-    { id: "mana", label: "Mana", type: "xOfY", default: 10, max: 10 },
+    { id: "hp", label: "HP", type: "xOfY", default: 10, maxExpression: "20 + (10 * {toughness}) + {hpBonus}" },
+    { id: "mp", label: "MP", type: "xOfY", default: 10, maxExpression: "trunc(6 + {power} + {manaAdjustments})" },
+    {
+      id: "rp",
+      label: "RP",
+      type: "xOfY",
+      default: 2,
+      maxExpression: "({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}",
+    },
     { id: "agility", label: "Agility", type: "number", default: 0 },
     { id: "toughness", label: "Toughness", type: "number", default: 0 },
     { id: "focus", label: "Focus", type: "number", default: 0 },
@@ -77,18 +95,23 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "rpAdjustment", label: "RP Adjustment", type: "number", default: 0 },
     { id: "oldArmorCalc", label: "Old Armor Calc", type: "number", default: 0 },
   ],
+  // Order is top-to-bottom on the 3D token's own billboard (characterToken.ts's
+  // `barSlots[i]` <-> `bars[i]`) -- real request: "make HP green and
+  // first/top-most, make MP blue and second, make RP red and
+  // last/bottom-most."
   bars: [
-    { variableId: "hp", color: [0.753, 0.224, 0.169] },
-    { variableId: "mana", color: [0.161, 0.502, 0.733] },
+    { variableId: "hp", color: [0.2, 0.7, 0.2] },
+    { variableId: "mp", color: [0.161, 0.502, 0.733] },
+    { variableId: "rp", color: [0.753, 0.224, 0.169] },
   ],
   pages: [
     {
       title: "Core",
-      // Every `{{...}}` below is the real sheet's own formula
-      // (confirmed directly, not guessed), each cell reference
-      // swapped for its matching `{variableId}`:
+      // Every `{{...}}`/`maxExpression` below is the real sheet's own
+      // formula (confirmed directly, not guessed), each cell
+      // reference swapped for its matching `{variableId}`:
       //   HP     = 20+(10*Toughness)+HP Bonus
-      //   Mana   = ROUNDDOWN(6+Power+Mana Adjustments, 0)
+      //   MP     = ROUNDDOWN(6+Power+Mana Adjustments, 0)
       //   Evasion= 7+Agility+Evasion Bonus+equipment
       //   Dodge  = 20+Agility+Dodge Bonus+equipment
       //   Guard  = ROUNDDOWN(Toughness+equipment, 0)
@@ -101,39 +124,52 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
       // always-non-negative inputs; its `cond ? a : b` ternary matches
       // IF(), with the checkbox stored as 0/1 since this project's
       // variable system has no boolean type.)
+      //
+      // Real request, 2026-10-26: "see if you can organize the pages a
+      // bit more neatly with tables, since the xlsx file had those by
+      // just being an xlsx file" -- GFM pipe tables (marked's own
+      // default table support, confirmed directly: renders fine with
+      // raw inline HTML inside a cell, and DOMPurify's default
+      // allowlist already keeps table/thead/tbody/tr/td/th intact, no
+      // sanitizer config changes needed), one table per real section
+      // of the sheet's own Core tab.
       markdown: [
         "# Core",
         "",
-        "HP: {hp} / {hp.y}",
-        "Max HP (live formula): {{20 + (10 * {toughness}) + {hpBonus}}}",
+        "## Vitals",
         "",
-        "Mana: {mana} / {mana.y}",
-        "Max Mana (live formula): {{trunc(6 + {power} + {manaAdjustments})}}",
+        "| | Current | Max |",
+        "| --- | --- | --- |",
+        "| HP | {hp} | {hp.y} |",
+        "| MP | {mp} | {mp.y} |",
+        "| RP | {rp} | {rp.y} |",
         "",
-        "Evasion: {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}}",
-        "Dodge: {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}}",
-        "Guard: {{trunc({toughness} + {equipmentGuardValue})}}",
-        "Block: {{({toughness} * 2) + {equipmentBlockValue}}}",
-        "Initiative: {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}}",
-        "Save Bonus: {{{toughness} + {bonusSaveValue}}}",
-        "Potency: {{11 + {focus}}}",
-        "Speed: {speed}",
-        "RP: {{({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}}}",
+        "## Combat",
         "",
-        "Agility: {agility}",
-        "Toughness: {toughness}",
-        "Focus: {focus}",
-        "Power: {power}",
+        "| Evasion | Dodge | Guard | Block |",
+        "| --- | --- | --- | --- |",
+        "| {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{trunc({toughness} + {equipmentGuardValue})}} | {{({toughness} * 2) + {equipmentBlockValue}}} |",
         "",
-        "Fitness: {fitness}",
-        "Cunning: {cunning}",
-        "Reason: {reason}",
-        "Awareness: {awareness}",
-        "Presence: {presence}",
+        "| Initiative | Save Bonus | Potency | Speed |",
+        "| --- | --- | --- | --- |",
+        "| {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{{toughness} + {bonusSaveValue}}} | {{11 + {focus}}} | {speed} |",
+        "",
+        "## Main Stats",
+        "",
+        "| Agility | Toughness | Focus | Power |",
+        "| --- | --- | --- | --- |",
+        "| {agility} | {toughness} | {focus} | {power} |",
+        "",
+        "## Sub Stats",
+        "",
+        "| Fitness | Cunning | Reason | Awareness | Presence |",
+        "| --- | --- | --- | --- | --- |",
+        "| {fitness} | {cunning} | {reason} | {awareness} | {presence} |",
       ].join("\n"),
       variableIds: [
         "hp",
-        "mana",
+        "mp",
+        "rp",
         "agility",
         "toughness",
         "focus",
@@ -292,23 +328,22 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const rpAdjustment = asNumber(findLabelValueAt(core, "RP Adjustment (Negative)", 1, 0), 0);
   const oldArmorCalc = findLabelValueAt(core, "Check Box if Old Armor Calc", 1, 0) === true ? 1 : 0;
 
-  // Same formulas the Core page's own `{{expression}}`s show live --
-  // these ONE-TIME snapshots just seed the stored hp/hpMax and mana/
-  // manaMax the 3D token's own health/mana bars read (see this file's
-  // own header comment for why a bar can't read a live formula
-  // directly yet).
+  // HP/MP/RP's own MAX is live now (the template's own maxExpression,
+  // resolved fresh every render -- see this file's own header
+  // comment), so only the CURRENT value needs seeding here, computed
+  // from the exact same formula ONE TIME at import (full/max at
+  // creation -- the sheet is a character BUILD sheet, not a live
+  // combat tracker, so there's no separate "current damage taken" of
+  // its own to import for any of the three).
   const hp = 20 + 10 * toughness + hpBonus;
-  const mana = Math.trunc(6 + power + manaAdjustments);
+  const mp = Math.trunc(6 + power + manaAdjustments);
+  const rp = (oldArmorCalc ? 2 + (agility - evasionEquipmentBonus) : 2 + agility) - rpAdjustment;
 
   return {
-    // HP/Mana import as full/current-equals-max (the sheet is a
-    // character BUILD sheet, not a live combat tracker -- it has no
-    // separate "current damage taken" of its own to import).
     variableValues: {
       hp,
-      [xOfYMaxKey("hp")]: hp,
-      mana,
-      [xOfYMaxKey("mana")]: mana,
+      mp,
+      rp,
       agility,
       toughness,
       focus,

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import * as XLSX from "xlsx";
 import { mountCharactersPage } from "./characters.js";
 import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry, CharacterSheetLibraryCatalogEntry, CharacterSheetPreviewResult } from "./api.js";
 
@@ -15,7 +16,7 @@ let libraries: CharacterSheetLibraryCatalogEntry[];
 let previewResponse: CharacterSheetPreviewResult;
 
 function jsonResponse(body: unknown): Response {
-  return { json: () => Promise.resolve(body) } as Response;
+  return { ok: true, json: () => Promise.resolve(body) } as Response;
 }
 
 function mockFetch(url: string, init?: { method?: string; body?: string }): Promise<Response> {
@@ -164,6 +165,60 @@ describe("mountCharactersPage", () => {
     container.querySelector<HTMLButtonElement>("#create-character-btn")!.click();
     await flush();
     expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1); // unchanged
+  });
+
+  it("real request, 2026-10-26 -- 'Import from URL' on the TOP-LEVEL characters page only shows for an importer-capable template, and creates + imports a brand-new character in one click", async () => {
+    templates = [{ modId: "lyrian-chronicles", manifest: { id: "lyrian-chronicles", name: "Lyrian Chronicles", version: "0.1.0", entry: "entry.ts" }, template: { name: "Lyrian Chronicles", pages: [], variables: [] }, hasImporter: true }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Name", "Alba", "HP", 70]]), "Core");
+    const xlsxBuffer = XLSX.write(workbook, { type: "array" }) as ArrayBuffer;
+    const importRequests: { url: string; body: string }[] = [];
+    const importedCharacter: CharacterRecord = {
+      id: "char-imported",
+      ownerAccountId: "account-1",
+      name: "Alba",
+      token: { color: [0.1, 0.2, 0.3] },
+      statusEffects: [],
+      createdAt: 0,
+      templateId: "lyrian-chronicles",
+      customSheet: { name: "Lyrian Chronicles", pages: [{ title: "Core", markdown: "HP: {hp}", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "number", default: 70 }], bars: [] },
+      variableValues: { hp: 70 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string; body?: string }) => {
+        if (url === "https://example.com/sheet.xlsx") return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(xlsxBuffer) } as Response);
+        if (url.includes("/import-sheet") && init?.method === "POST") {
+          importRequests.push({ url, body: init.body! });
+          return Promise.resolve(jsonResponse(importedCharacter));
+        }
+        return mockFetch(url, init);
+      }),
+    );
+
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const importListEl = container.querySelector<HTMLDivElement>("#import-new-character-list")!;
+    const importRows = importListEl.querySelectorAll(".import-row");
+    expect(importRows).toHaveLength(1);
+    expect(importRows[0].getAttribute("data-mod-id")).toBe("lyrian-chronicles");
+
+    importListEl.querySelector<HTMLInputElement>(".import-new-character-name")!.value = "Alba";
+    importListEl.querySelector<HTMLInputElement>(".import-url-input")!.value = "https://example.com/sheet.xlsx";
+    importListEl.querySelector<HTMLButtonElement>(".import-from-url-btn")!.click();
+    await flush();
+    await flush(); // create -> fetch+parse -> import-sheet is a few microtask hops deep
+
+    expect(importRequests).toHaveLength(1);
+    const body = JSON.parse(importRequests[0].body) as { accountId: string; modId: string };
+    expect(body.accountId).toBe("account-1");
+    expect(body.modId).toBe("lyrian-chronicles");
+
+    const names = Array.from(container.querySelectorAll<HTMLButtonElement>("#char-list .select-char-btn")).map((b) => b.textContent);
+    expect(names).toEqual(["Aria", "Alba"]);
+    expect(container.querySelector<HTMLButtonElement>(".select-char-btn.selected")!.textContent).toBe("Alba"); // the newly imported character is selected
+    expect(container.querySelector(".sheet-tab")?.textContent).toBe("Core & Variables"); // landed on the real imported sheet, not a start-prompt
   });
 
   it("importing a mod flips only that button in place, without rebuilding the whole list", async () => {

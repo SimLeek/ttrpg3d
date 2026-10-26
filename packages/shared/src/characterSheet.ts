@@ -27,9 +27,24 @@ export interface CharacterSheetVariableDef {
   id: string;
   label: string;
   type: CharacterSheetVariableType;
-  /** Only meaningful for "xOfY" (the "y" side's own bounds, if any). */
+  /** Only meaningful for "xOfY" (the "y" side's own bounds, if any). Ignored when `maxExpression` is set -- that always wins. */
   min?: number;
   max?: number;
+  /**
+   * Real request, 2026-10-26: "Any xOfY variable should have Y be the
+   * max of that... hp.y should just auto-set to the actual max hp...
+   * that {{}} stuff should also work in the core&variables section."
+   * Only meaningful for "xOfY" -- when set, `{variableId.y}` (and
+   * `resolveCharacterBars`'s own bar-max, and this variable's own
+   * "max" box in the Core & Variables editor) ALWAYS evaluates this
+   * expression live instead of reading a flat stored number (same
+   * `{variableId}`/`{variableId.y}`-ref syntax and `expr-eval`
+   * evaluation `{{expression}}` segments already use -- see
+   * `resolveVariableValue` below, which actually does the cycle-aware
+   * recursive resolution a max formula referencing ANOTHER variable's
+   * own (possibly also live) max needs).
+   */
+  maxExpression?: string;
   default: number | string;
 }
 
@@ -187,8 +202,12 @@ export function resolveCharacterBars(sheet: Pick<CharacterSheetTemplate, "variab
     const def = sheet.variables.find((v) => v.id === bar.variableId);
     if (!def || def.type !== "xOfY") continue;
     const defaultFallback = typeof def.default === "number" ? def.default : 0;
-    const value = asNumber(variableValues[def.id] ?? def.default, defaultFallback);
-    const max = asNumber(variableValues[xOfYMaxKey(def.id)] ?? def.max, defaultFallback);
+    // "y" (max) goes through resolveVariableValue so a bar whose own
+    // max is a live `maxExpression` (real request, 2026-10-26) shows
+    // the actual computed max, not a stale/never-written stored
+    // number.
+    const value = resolveVariableValue(def.id, "x", sheet.variables, variableValues) ?? defaultFallback;
+    const max = resolveVariableValue(def.id, "y", sheet.variables, variableValues) ?? defaultFallback;
     bars.push({ variableId: def.id, label: def.label, value, max, color: bar.color });
   }
   return bars;
@@ -420,31 +439,91 @@ export function findExpressionSegments(text: string): ExpressionSegment[] {
   return segments;
 }
 
+function asFiniteNumber(value: number | string | undefined): number | undefined {
+  const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(num) ? num : undefined;
+}
+
+/**
+ * Resolves ONE variable's own current ("x") or max ("y") value --
+ * real request, 2026-10-26: "Any xOfY variable should have Y be the
+ * max of that... hp.y should just auto-set to the actual max hp."
+ * "x" is always a flat, stored number (or the variable's own declared
+ * `default` when unset) -- a character's CURRENT value is always
+ * something a session actually sets/edits, never computed. "y" is
+ * ALSO just a flat stored number (`xOfYMaxKey`) UNLESS the variable's
+ * own def declares a `maxExpression` -- then it's resolved by
+ * evaluating THAT expression, recursively resolving any
+ * `{ref}`/`{ref.y}` IT contains through this SAME function (so a max
+ * formula can itself depend on another variable's own, possibly also
+ * live, max).
+ *
+ * `visiting` is the real cycle guard the user explicitly asked for
+ * ("graph theory visit check... when calculating"): each variable+
+ * component pair currently being resolved is added to this set before
+ * recursing and removed after, so a genuine cycle (A's max depends on
+ * B's max depends on A's max) hits an already-visiting key and
+ * returns undefined instead of recursing forever -- a real DFS-cycle
+ * check, not a depth limit standing in for one.
+ */
+export function resolveVariableValue(
+  variableId: string,
+  component: "x" | "y",
+  defs: readonly CharacterSheetVariableDef[],
+  variableValues: Readonly<Record<string, number | string>>,
+  visiting: Set<string> = new Set(),
+): number | undefined {
+  const def = defs.find((d) => d.id === variableId);
+  if (component === "y" && def?.maxExpression !== undefined) {
+    const key = `${variableId}.y`;
+    if (visiting.has(key)) return undefined; // cyclic dependency
+    visiting.add(key);
+    const substituted = substituteVariableRefs(def.maxExpression, variableValues, defs, visiting);
+    visiting.delete(key);
+    if (substituted === undefined) return undefined;
+    try {
+      return asFiniteNumber(arithmeticParser.evaluate(substituted) as number | string);
+    } catch {
+      return undefined;
+    }
+  }
+  const key = component === "y" ? xOfYMaxKey(variableId) : variableId;
+  return asFiniteNumber(variableValues[key] ?? (component === "y" ? def?.max : def?.default));
+}
+
 /**
  * Substitutes every `{variableId}`/`{variableId.x}`/`{variableId.y}`
  * reference found WITHIN `text` (findVariableRefs, reused directly --
  * same single-brace syntax, same rules) with its current numeric
- * value, read straight from `variableValues` (no variable-definition/
- * default context available here, unlike the client's own widget
- * rendering -- a reference to a variable that doesn't exist, or holds
- * a non-numeric value, fails the WHOLE substitution rather than
- * silently defaulting to 0). Returns undefined on any unresolvable
- * reference. Shared by BOTH the `{{expression}}` evaluator below AND
- * the `[[dice notation]]` chat-roll system (packages/server/src/chat/
- * diceRoll.ts) -- real request: "the rolling system should also be
- * able to handle variables... maybe for both systems" -- same rule,
- * same syntax, one implementation.
+ * value, resolved via `resolveVariableValue` above (so a `.y` ref
+ * against a variable with a live `maxExpression` recurses correctly,
+ * not just a flat lookup). `defs` is optional -- callers with no
+ * variable-definition context at all (e.g. a chat `[[dice]]` roll,
+ * which only ever has `variableValues`) simply never hit the live-max
+ * branch, same as before this feature existed. A reference to a
+ * variable that doesn't exist, or holds a non-numeric value, fails
+ * the WHOLE substitution rather than silently defaulting to 0.
+ * Returns undefined on any unresolvable reference. Shared by BOTH the
+ * `{{expression}}` evaluator below AND the `[[dice notation]]` chat-
+ * roll system (packages/server/src/chat/diceRoll.ts) -- real request:
+ * "the rolling system should also be able to handle variables...
+ * maybe for both systems" -- same rule, same syntax, one
+ * implementation.
  */
-export function substituteVariableRefs(text: string, variableValues: Readonly<Record<string, number | string>>): string | undefined {
+export function substituteVariableRefs(
+  text: string,
+  variableValues: Readonly<Record<string, number | string>>,
+  defs: readonly CharacterSheetVariableDef[] = [],
+  visiting: Set<string> = new Set(),
+): string | undefined {
   const refs = findVariableRefs(text);
   if (refs.length === 0) return text;
   let result = "";
   let cursor = 0;
   for (const ref of refs) {
-    const key = ref.component === "y" ? xOfYMaxKey(ref.variableId) : ref.variableId;
-    const raw = variableValues[key];
-    const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
-    if (!Number.isFinite(value)) return undefined;
+    const component = ref.component === "y" ? "y" : "x";
+    const value = resolveVariableValue(ref.variableId, component, defs, variableValues, visiting);
+    if (value === undefined) return undefined;
     result += text.slice(cursor, ref.start) + String(value);
     cursor = ref.end;
   }
@@ -503,8 +582,8 @@ const arithmeticParser = new Parser();
  * this function itself has no access to (and must never gain access
  * to) real randomness.
  */
-export function evaluateCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean): ExpressionEvalResult {
-  const substituted = substituteVariableRefs(expression, variableValues);
+export function evaluateCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean, defs: readonly CharacterSheetVariableDef[] = []): ExpressionEvalResult {
+  const substituted = substituteVariableRefs(expression, variableValues, defs);
   if (substituted === undefined) return { error: "unknown or non-numeric variable" };
   if (DICE_NOTATION_PATTERN.test(substituted)) {
     if (!allowDice) return { error: "dice rolling not allowed in fixed displays" };

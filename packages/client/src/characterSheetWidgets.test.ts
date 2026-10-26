@@ -108,6 +108,28 @@ describe("buildVariableComponentHtml (round 5 -- {variableId.x}/{variableId.y}, 
     dispatchChange(container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!, "20");
     expect(changed).toEqual([xOfYMaxKey("hp"), 20]);
   });
+
+  it("real request, 2026-10-26 -- an xOfY with a live maxExpression shows the COMPUTED max, as a disabled box with no data-var-key (editing it would be silently overwritten on the next render anyway)", () => {
+    const toughness: CharacterSheetVariableDef = { id: "toughness", label: "Toughness", type: "number", default: 0 };
+    const hpBonus: CharacterSheetVariableDef = { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 };
+    const hp: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10, maxExpression: "20 + (10 * {toughness}) + {hpBonus}" };
+    const defs = [toughness, hpBonus, hp];
+    const values = { toughness: 5, hpBonus: 0 };
+
+    const html = buildVariableComponentHtml(hp, values, "y", defs);
+    container.innerHTML = html;
+    const input = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!;
+    expect(input.value).toBe("70");
+    expect(input.disabled).toBe(true);
+    expect(input.dataset.varKey).toBeUndefined();
+
+    // Not wired as editable at all -- wireVariableWidgets only ever
+    // looks at [data-var-key], which this box deliberately lacks.
+    let changed: unknown;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+    dispatchChange(input, "999");
+    expect(changed).toBeUndefined();
+  });
 });
 
 describe("buildVariableChipHtml (round 4/5 -- {variableId:button}, one value at a time)", () => {
