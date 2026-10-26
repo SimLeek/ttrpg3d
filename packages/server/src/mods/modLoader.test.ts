@@ -22,7 +22,13 @@ function emptyLyrianSkillFields(): Record<string, number | string> {
   const result: Record<string, number | string> = {};
   for (const name of LYRIAN_SKILLS) {
     const id = lyrianSkillId(name);
+    // Real request, 2026-10-26 (skills rework): the governing-stat
+    // column is never found in these fixtures (no skill rows at all),
+    // so Bonus falls back to its OLD frozen-number behavior (0) --
+    // still a flat variableValues entry, just with a new SkillPoints
+    // sibling imported alongside it now.
     result[`${id}Bonus`] = 0;
+    result[`${id}SkillPoints`] = 0;
     result[`${id}Expertise`] = "";
   }
   return result;
@@ -439,44 +445,75 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(evaluateCharacterSheetExpression("({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}", values, false)).toEqual({ value: 5 });
   });
 
-  it("real request, 2026-10-26 (third pass) -- 'the skill checks, from athletics at the top to intimidation at the bottom' import each skill's own Bonus and Expertise, found by the skill's own name, two and four columns right respectively", async () => {
+  it("real request, 2026-10-26 (third pass -- skills rework) -- each skill's own governing substat (column F), Skill Points (column H), and Expertise (column I) are read by the skill's own name, one/three/four columns right respectively; Bonus becomes a LIVE valueExpression override (governing substat + skill points), not a frozen import snapshot", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const workbook = {
       Core: [
-        ["Athletics", "Fitness", 2, 0, "Fit"],
-        ["Intimidation", "Presence", 1, 0, "Soc"],
+        ["Fitness", 4],
+        ["Presence", 2],
+        ["Athletics", "Fitness", 2, 3, "Fit"],
+        ["Intimidation", "Presence", 1, 1, "Soc"],
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
     const values = result?.result.variableValues ?? {};
-    expect(values.athleticsBonus).toBe(2);
+    // The OLD "Total Bonus" column (G, offset 2) is no longer read at
+    // all for a RECOGNIZED governing stat -- Bonus is computed live
+    // from the substat + skill points instead, so it's never a flat
+    // variableValues entry here.
+    expect(values.athleticsBonus).toBeUndefined();
+    expect(values.athleticsSkillPoints).toBe(3);
     expect(values.athleticsExpertise).toBe("Fit");
-    expect(values.intimidationBonus).toBe(1);
+    expect(values.intimidationBonus).toBeUndefined();
+    expect(values.intimidationSkillPoints).toBe(1);
     expect(values.intimidationExpertise).toBe("Soc");
     // Every OTHER skill this fixture's own workbook doesn't define
-    // falls back to its own default (0 / "").
+    // has no governing-stat row to read at all, so it falls back to
+    // the OLD frozen-number behavior for Bonus (0), same as before
+    // this feature existed.
     expect(values.ridingBonus).toBe(0);
+    expect(values.ridingSkillPoints).toBe(0);
     expect(values.ridingExpertise).toBe("");
+
+    const overrides = result?.result.variables ?? [];
+    expect(overrides.find((v) => v.id === "athleticsBonus")?.valueExpression).toBe("{fitness} + {athleticsSkillPoints}");
+    expect(overrides.find((v) => v.id === "intimidationBonus")?.valueExpression).toBe("{presence} + {intimidationSkillPoints}");
+    // Riding's own Bonus got no override at all (no governing-stat row
+    // found for it), so it stays the ordinary, non-live template def.
+    expect(overrides.find((v) => v.id === "ridingBonus")).toBeUndefined();
   });
 
-  it("real request, 2026-10-26 (third pass) -- crafting skills are a DYNAMIC page (unlike the fixed Skills list), one row per non-blank 'Crafting Skill' name, its own Total Bonus baked straight into the roll as a plain number", async () => {
+  it("real request, 2026-10-26 (third pass -- skills rework) -- crafting skills get the SAME 'Skill | Bonus | Skill Points | Expertise' shape as the fixed Skills list, via new per-character variable definitions (result.variables); Bonus is a LIVE formula (frozen base Total Bonus + live Skill Points); Expertise reads from column P (offset +3) despite that column's own header text misleadingly reading 'Equipment Bonus' (confirmed directly by the user)", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const workbook = {
       Core: [
-        ["Crafting Skill", "Total Bonus"],
-        ["Alchemy", 5],
+        ["Crafting Skill", "Total Bonus", "", "Equipment Bonus"],
+        ["Alchemy", 5, "", "Potions"],
         [null, 0], // blank name -- "only add those if the crafting skill is not blank"
-        ["Cooking", 3],
+        ["Cooking", 3, "", ""],
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
     expect(result?.result.pages).toEqual([
       {
         title: "Crafting",
-        markdown: ["# Crafting", "", "| Skill | Roll |", "| --- | --- |", "| Alchemy | {{1d20 + 5:button}} |", "| Cooking | {{1d20 + 3:button}} |"].join("\n"),
-        variableIds: [],
+        markdown: [
+          "# Crafting",
+          "",
+          "| Skill | Bonus | Skill Points | Expertise |",
+          "| --- | --- | --- | --- |",
+          "| {{Alchemy; roll: 1d20 + {craftingAlchemyBonus} | expertise: {craftingAlchemyExpertise}}} | {craftingAlchemyBonus} | {craftingAlchemySkillPoints} | {craftingAlchemyExpertise} |",
+          "| {{Cooking; roll: 1d20 + {craftingCookingBonus} | expertise: {craftingCookingExpertise}}} | {craftingCookingBonus} | {craftingCookingSkillPoints} | {craftingCookingExpertise} |",
+        ].join("\n"),
+        variableIds: ["craftingAlchemyBonus", "craftingAlchemySkillPoints", "craftingAlchemyExpertise", "craftingCookingBonus", "craftingCookingSkillPoints", "craftingCookingExpertise"],
       },
     ]);
+
+    const variables = result?.result.variables ?? [];
+    expect(variables.find((v) => v.id === "craftingAlchemyBonus")?.valueExpression).toBe("5 + {craftingAlchemySkillPoints}");
+    expect(variables.find((v) => v.id === "craftingCookingBonus")?.valueExpression).toBe("3 + {craftingCookingSkillPoints}");
+    expect(result?.result.variableValues.craftingAlchemyExpertise).toBe("Potions");
+    expect(result?.result.variableValues.craftingCookingExpertise).toBe("");
   });
 
   it("no crafting skills at all (every 'Crafting Skill' row blank) still returns a real page, not an empty/missing one", async () => {

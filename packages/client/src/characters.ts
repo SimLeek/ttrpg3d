@@ -326,7 +326,12 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       libraries,
       importedModIds,
       canEdit: true,
-      onPostToChat: (label, value, html) => testChatPanel.addMessage(`${character.name}: ${label} -> ${value}`, html !== undefined ? `${escapeHtml(character.name)}: ${html}` : undefined),
+      // Real request, 2026-10-26 (third pass): a single-part roll
+      // (e.g. "evasion: 13") arrives with an empty `label`, posted
+      // verbatim with no "-> " wrapper -- see characterSheetView.ts's
+      // own single-part posting path.
+      onPostToChat: (label, value, html) =>
+        testChatPanel.addMessage(`${character.name}: ${label ? `${label} -> ${value}` : value}`, html !== undefined ? `${escapeHtml(character.name)}: ${html}` : undefined),
       onSaved: (updated) => {
         const index = characters.findIndex((c) => c.id === updated.id);
         if (index !== -1) characters[index] = updated;

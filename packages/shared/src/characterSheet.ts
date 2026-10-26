@@ -45,6 +45,22 @@ export interface CharacterSheetVariableDef {
    * own (possibly also live) max needs).
    */
   maxExpression?: string;
+  /**
+   * Real request, 2026-10-26 (third pass): "Bonus on the page should
+   * show the resulting number, and the core&variables should show
+   * that equation you put" -- the SAME live-formula idea as
+   * `maxExpression` above, generalized to the "x"/current side of ANY
+   * variable (most useful for a plain "number" variable that's
+   * ENTIRELY derived, e.g. a skill's own Bonus = governing substat +
+   * skill points): when set, `{variableId}`/`{variableId.x}` (and
+   * this variable's own value box in the Core & Variables editor)
+   * ALWAYS evaluates this expression live instead of reading a flat
+   * stored number. Same cycle-aware resolution as `maxExpression`
+   * (see `resolveVariableValue` below) -- a value formula referencing
+   * ANOTHER variable's own (possibly also live) value or max needs
+   * the exact same graph-cycle check.
+   */
+  valueExpression?: string;
   default: number | string;
 }
 
@@ -106,6 +122,23 @@ export type ImportedWorkbook = Record<string, (string | number | boolean | null)
 export interface CharacterSheetImportResult {
   variableValues: Record<string, number | string>;
   pages: CharacterSheetPageDef[];
+  /**
+   * Real request/architecture fix, 2026-10-26 (skills rework): new or
+   * refined variable DEFINITIONS the importer wants merged into the
+   * character's own (per-character, already-cloned) sheet.variables --
+   * matched by id: an id that already exists on the template (e.g. a
+   * FIXED skill's own `<id>Bonus`) is OVERRIDDEN in place (e.g. to set
+   * its live `valueExpression` from this real sheet's own governing-
+   * stat column); an id that doesn't exist yet (e.g. a DYNAMIC
+   * crafting skill's own `<craftingId>Bonus`/`<craftingId>SkillPoints`,
+   * whose name varies per character) is simply APPENDED. This is what
+   * lets an importer give dynamically-named content (Crafting) the
+   * same live-formula/editable-field treatment the FIXED Skills list
+   * already gets from the template alone -- previously impossible
+   * (this type had no way to add/refine a variable DEFINITION at all,
+   * only its VALUE), a real, confirmed architectural gap this closes.
+   */
+  variables?: CharacterSheetVariableDef[];
 }
 
 /**
@@ -472,20 +505,28 @@ export interface CompoundRollSegment {
 
 /**
  * Finds every `{{<ActionLabel>; <label>: <expr> | <label>: <expr> ...}}`
- * segment -- a SINGLE clickable action that rolls/evaluates MULTIPLE
- * labeled parts together and posts them as one bundled result (real
- * request, 2026-10-26: "For light attack, we want to display the
- * attack to-hit result, the damage, and the max damage... some table
- * in the chat"). Distinguished from a plain `{{expression}}` by shape
- * alone, same as every other `{{...}}` kind: a plain expression's own
- * grammar (expr-eval's `+ - * / ^ % ()`, numeric literals, `{variableId}`
- * refs) never legitimately contains a `;` or `|` at all, so requiring
- * BOTH (an action label before the first `;`, then 2+ `|`-separated
- * `label: expr` parts after it) never collides with a genuine
- * expression. `{variableId}` refs never contain a `;`/`|`/`:` of
- * their own either (only a `.x`/`.y` component), so splitting on
- * these characters needs no depth-tracking of its own, unlike the
- * OUTER `{{`/`}}` span-finding above.
+ * segment -- a SINGLE clickable action that rolls/evaluates one OR
+ * MORE labeled parts together and posts them as one bundled result
+ * (real request, 2026-10-26: "For light attack, we want to display
+ * the attack to-hit result, the damage, and the max damage... some
+ * table in the chat"). Real correction, same day (second pass): a
+ * SINGLE part is a genuine, common case too -- "the Agility label
+ * would be a button... [that rolls] agility check: 16" needs its own
+ * custom action label (shown on the button) and its own custom
+ * posted-message label (e.g. "agility check"), neither of which a
+ * plain `{{expression}}` has any syntax for -- so this is also the
+ * general mechanism for "a labeled, clickable roll with a nicer name
+ * than its own raw formula text," not just a multi-part bundle.
+ * Distinguished from a plain `{{expression}}` by shape alone, same as
+ * every other `{{...}}` kind: a plain expression's own grammar
+ * (expr-eval's `+ - * / ^ % ()`, numeric literals, `{variableId}`
+ * refs) never legitimately contains a `;` at all, so requiring an
+ * action label (anything before the first `;`) never collides with a
+ * genuine expression, regardless of how many `|`-separated parts
+ * follow it. `{variableId}` refs never contain a `;`/`|`/`:` of their
+ * own either (only a `.x`/`.y` component), so splitting on these
+ * characters needs no depth-tracking of its own, unlike the OUTER
+ * `{{`/`}}` span-finding above.
  */
 export function findCompoundRollSegments(text: string): CompoundRollSegment[] {
   const libraryCallSpans = new Set(findLibraryCalls(text).map((c) => `${c.start}:${c.end}`));
@@ -499,7 +540,7 @@ export function findCompoundRollSegments(text: string): CompoundRollSegment[] {
       .split("|")
       .map((p) => p.trim())
       .filter((p) => p.length > 0);
-    if (rawParts.length < 2) continue; // needs at least 2 parts to be "compound" at all
+    if (rawParts.length < 1) continue; // needs at least 1 real part
     const parts: CompoundRollPart[] = [];
     let malformed = false;
     for (const raw of rawParts) {
@@ -520,30 +561,48 @@ export function findCompoundRollSegments(text: string): CompoundRollSegment[] {
   return segments;
 }
 
+/**
+ * Real bug, found live during the skills rework (2026-10-26, third
+ * pass): a blank "text"-typed variable's own stored value (`""`, e.g.
+ * an unset skill Expertise) was silently coercing to 0 here --
+ * `Number("")` is `0` in JS, which `Number.isFinite` happily accepts
+ * -- so a bare `{skillExpertise}` reference inside a compound roll's
+ * own part (shared/characterSheet.ts's own CompoundRollPart) resolved
+ * to the NUMBER 0 instead of falling through to this file's own
+ * bare-reference TEXT fallback (see evaluateCharacterSheetExpression
+ * below). The empty-string guard below matches the convention every
+ * OTHER numeric-coercion helper in this codebase already uses (e.g.
+ * characterSheetWidgets.ts's own `asNumber`).
+ */
 function asFiniteNumber(value: number | string | undefined): number | undefined {
-  const num = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const num = Number(value);
   return Number.isFinite(num) ? num : undefined;
 }
 
 /**
  * Resolves ONE variable's own current ("x") or max ("y") value --
  * real request, 2026-10-26: "Any xOfY variable should have Y be the
- * max of that... hp.y should just auto-set to the actual max hp."
- * "x" is always a flat, stored number (or the variable's own declared
- * `default` when unset) -- a character's CURRENT value is always
- * something a session actually sets/edits, never computed. "y" is
- * ALSO just a flat stored number (`xOfYMaxKey`) UNLESS the variable's
- * own def declares a `maxExpression` -- then it's resolved by
+ * max of that... hp.y should just auto-set to the actual max hp,"
+ * generalized (third pass, same day) to the "x" side too: "Bonus on
+ * the page should show the resulting number, and the core&variables
+ * should show that equation you put" -- a plain "number" variable can
+ * be ENTIRELY derived (e.g. a skill's own Bonus = governing substat +
+ * skill points) the same way an xOfY's own max can be. Either side is
+ * just a flat stored number (`variableId` for "x", `xOfYMaxKey` for
+ * "y") UNLESS the variable's own def declares the matching
+ * `valueExpression`/`maxExpression` -- then it's resolved by
  * evaluating THAT expression, recursively resolving any
- * `{ref}`/`{ref.y}` IT contains through this SAME function (so a max
- * formula can itself depend on another variable's own, possibly also
- * live, max).
+ * `{ref}`/`{ref.x}`/`{ref.y}` IT contains through this SAME function
+ * (so one variable's own live formula can depend on ANOTHER
+ * variable's own, possibly also live, value or max).
  *
  * `visiting` is the real cycle guard the user explicitly asked for
  * ("graph theory visit check... when calculating"): each variable+
  * component pair currently being resolved is added to this set before
- * recursing and removed after, so a genuine cycle (A's max depends on
- * B's max depends on A's max) hits an already-visiting key and
+ * recursing and removed after, so a genuine cycle (A's value depends
+ * on B's value depends on A's value) hits an already-visiting key and
  * returns undefined instead of recursing forever -- a real DFS-cycle
  * check, not a depth limit standing in for one.
  */
@@ -555,11 +614,12 @@ export function resolveVariableValue(
   visiting: Set<string> = new Set(),
 ): number | undefined {
   const def = defs.find((d) => d.id === variableId);
-  if (component === "y" && def?.maxExpression !== undefined) {
-    const key = `${variableId}.y`;
+  const liveExpression = component === "y" ? def?.maxExpression : def?.valueExpression;
+  if (liveExpression !== undefined) {
+    const key = `${variableId}.${component}`;
     if (visiting.has(key)) return undefined; // cyclic dependency
     visiting.add(key);
-    const substituted = substituteVariableRefs(def.maxExpression, variableValues, defs, visiting);
+    const substituted = substituteVariableRefs(liveExpression, variableValues, defs, visiting);
     visiting.delete(key);
     if (substituted === undefined) return undefined;
     try {
@@ -625,7 +685,7 @@ export function substituteVariableRefs(
  */
 export interface ExpressionEvalResult {
   value?: number;
-  /** Human-readable breakdown for a result that included a real dice roll (DiceRoll's own .output) -- undefined for plain arithmetic, where the bare number already says everything. */
+  /** Either a human-readable breakdown for a result that included a real dice roll (DiceRoll's own .output -- `value` is ALSO set in that case), or, real request 2026-10-26, the WHOLE result when the expression was a bare reference to plain informational text (e.g. a skill's own Expertise) -- `value` is absent then, this is the only thing to display. */
   text?: string;
   error?: string;
   needsRoll?: boolean;
@@ -701,7 +761,19 @@ export function evaluateCharacterSheetExpression(expression: string, variableVal
   // no use for a raw notation string, only the lenient dice-check
   // path above does).
   const substituted = substituteVariableRefs(expression, variableValues, defs);
-  if (substituted === undefined) return { error: "unknown or non-numeric variable" };
+  if (substituted === undefined) {
+    // Real request, 2026-10-26: a skill's own Expertise ("jumping")
+    // is plain informational TEXT, not a number or a roll -- the
+    // STRICT substitution above only ever fails here because `lenient`
+    // came from `substituteForDiceCheck`'s own BARE-reference fallback
+    // (the only way `lenient` can be defined while `substituted` isn't),
+    // meaning the whole expression really is just one `{variableId}`
+    // ref to a non-numeric string. Shown verbatim as `text` (no
+    // `value` at all) rather than failing -- a compound roll's own
+    // part (shared/characterSheet.ts's own CompoundRollPart) can be a
+    // plain display field, not every part is a number to roll.
+    return { text: lenient };
+  }
   try {
     const value = arithmeticParser.evaluate(substituted);
     if (typeof value !== "number" || !Number.isFinite(value)) return { error: "division by zero" };

@@ -145,7 +145,12 @@ export function mountCharacterSheetPopup(container: HTMLElement, options: Charac
           libraries,
           importedModIds,
           canEdit,
-          onPostToChat: (label, value) => options.onPostToChat(characterId, `${label} -> ${value}`),
+          // Real request, 2026-10-26 (third pass): a single-part roll
+          // (e.g. "evasion: 13") arrives with an empty `label` and an
+          // already-complete `value` text (characterSheetView.ts's own
+          // single-part posting path) -- posted verbatim, no "-> "
+          // wrapper, unlike a multi-part bundled action.
+          onPostToChat: (label, value) => options.onPostToChat(characterId, label ? `${label} -> ${value}` : value),
         });
       });
     },

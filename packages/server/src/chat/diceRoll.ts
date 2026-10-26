@@ -13,7 +13,7 @@
 // this notation is invalid" is all this wrapper needs to know.
 
 import { DiceRoll } from "@dice-roller/rpg-dice-roller";
-import { substituteVariableRefs, substituteForDiceCheck, DICE_NOTATION_PATTERN, type ExpressionEvalResult, type CompoundRollPart } from "@ttrpg3d/shared";
+import { substituteVariableRefs, substituteForDiceCheck, evaluateCharacterSheetExpression, DICE_NOTATION_PATTERN, type ExpressionEvalResult, type CompoundRollPart } from "@ttrpg3d/shared";
 
 export interface RollOk {
   ok: true;
@@ -111,8 +111,21 @@ export function rollCharacterSheetExpression(expression: string, variableValues:
  * uses -- `DiceRoll` already evaluates plain arithmetic with no dice
  * term just fine, so a part with no real dice in it (unusual for a
  * compound roll, but not disallowed) still resolves correctly here.
+ *
+ * Real request, 2026-10-26 (skills rework): a compound roll's own
+ * part can ALSO be plain informational text now (e.g. a skill's own
+ * Expertise, "jumping" -- not a number, not dice notation at all).
+ * `evaluateCharacterSheetExpression` is reused here FIRST purely for
+ * detection (same logic the client already runs to decide needsRoll)
+ * so a text-only part never reaches `new DiceRoll(...)` at all (that
+ * would throw -- "jumping" is not valid notation). Only a part that
+ * actually flags `needsRoll` goes on to the real RNG below; anything
+ * else (a plain number, an error, or display text) is already the
+ * final answer and is returned as-is.
  */
 export function rollCompoundPart(part: Pick<CompoundRollPart, "expression">, variableValues: Readonly<Record<string, number | string>>): ExpressionEvalResult {
+  const detected = evaluateCharacterSheetExpression(part.expression, variableValues, true);
+  if (!detected.needsRoll) return detected;
   const substituted = substituteForDiceCheck(part.expression, variableValues);
   if (substituted === undefined) return { error: "unknown or non-numeric variable" };
   try {

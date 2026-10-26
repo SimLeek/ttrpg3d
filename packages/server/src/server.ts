@@ -198,7 +198,20 @@ const postCharacterImportSheet = createEndpoint("/characters/:id/import-sheet", 
   // starting (and staying) at the template's own defaults.
   const customSheet = structuredClone(template);
   customSheet.pages = [...customSheet.pages, ...result.pages];
-  const defaults = Object.fromEntries(template.variables.map((v) => [v.id, v.default]));
+  // Real request/architecture fix, 2026-10-26 (skills rework): merge
+  // the importer's own `variables` by id -- an id ALREADY on the
+  // template (e.g. a fixed skill's own `<id>Bonus`) is OVERRIDDEN in
+  // place (this real sheet's own data can refine it, e.g. setting a
+  // live valueExpression from its governing-stat column); a brand new
+  // id (e.g. a dynamically-named crafting skill's own `<id>Bonus`/
+  // `<id>SkillPoints`) is APPENDED. See CharacterSheetImportResult's
+  // own doc for why this didn't exist before.
+  for (const v of result.variables ?? []) {
+    const idx = customSheet.variables.findIndex((existing) => existing.id === v.id);
+    if (idx === -1) customSheet.variables.push(v);
+    else customSheet.variables[idx] = v;
+  }
+  const defaults = Object.fromEntries(customSheet.variables.map((v) => [v.id, v.default]));
   const variableValues = { ...defaults, ...result.variableValues };
   store.updateCharacterSheet(characterId, modId, customSheet, variableValues);
   notifyCharacterSheetChanged(characterId);

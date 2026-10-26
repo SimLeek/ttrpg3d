@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { renderVariableWidget, buildVariableWidgetHtml, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
+import { renderVariableWidget, buildVariableWidgetHtml, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, valueExpressionFieldKey } from "./characterSheetWidgets.js";
 import { xOfYMaxKey, type CharacterSheetVariableDef } from "@ttrpg3d/shared";
 
 let container: HTMLElement;
@@ -129,6 +129,25 @@ describe("buildVariableComponentHtml (round 5 -- {variableId.x}/{variableId.y}, 
     wireVariableWidgets(container, (key, value) => (changed = [key, value]));
     expect(changed).toBeUndefined();
   });
+
+  it("real request, 2026-10-26 (third pass) -- for an INLINE {variableId} ref on an actual page, a plain 'number' variable with a live valueExpression (e.g. a skill's own Bonus) shows the COMPUTED number as a read-only span, never the formula text, and never editable here", () => {
+    const fitness: CharacterSheetVariableDef = { id: "fitness", label: "Fitness", type: "number", default: 0 };
+    const skillPoints: CharacterSheetVariableDef = { id: "athleticsSkillPoints", label: "Athletics Skill Points", type: "number", default: 0 };
+    const bonus: CharacterSheetVariableDef = { id: "athleticsBonus", label: "Athletics Bonus", type: "number", default: 0, valueExpression: "{fitness} + {athleticsSkillPoints}" };
+    const defs = [fitness, skillPoints, bonus];
+    const values = { fitness: 2, athleticsSkillPoints: 0 };
+
+    const html = buildVariableComponentHtml(bonus, values, "x", defs);
+    container.innerHTML = html;
+    const span = container.querySelector<HTMLSpanElement>(".computed-value")!;
+    expect(span.tagName).toBe("SPAN");
+    expect(span.textContent).toBe("2");
+    expect(span.outerHTML).not.toContain("{fitness}"); // the formula text itself never leaks into page rendering
+
+    let changed: unknown;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+    expect(changed).toBeUndefined();
+  });
 });
 
 describe("buildVariableWidgetHtml (the Core & Variables tab's own editor -- the OPPOSITE half of the test above)", () => {
@@ -161,6 +180,34 @@ describe("buildVariableWidgetHtml (the Core & Variables tab's own editor -- the 
     expect(html).toContain("sheet-widget-xofy-max");
     expect(html).not.toContain("sheet-widget-xofy-max-formula");
     expect(html).toContain('value="16"');
+  });
+
+  it("real request, 2026-10-26 (third pass) -- a plain 'number' variable with a live valueExpression shows the RAW {{formula}} text here, editable, same split as xOfY's own maxExpression above, just for the x/current side", () => {
+    const fitness: CharacterSheetVariableDef = { id: "fitness", label: "Fitness", type: "number", default: 0 };
+    const skillPoints: CharacterSheetVariableDef = { id: "athleticsSkillPoints", label: "Athletics Skill Points", type: "number", default: 0 };
+    const bonus: CharacterSheetVariableDef = { id: "athleticsBonus", label: "Athletics Bonus", type: "number", default: 0, valueExpression: "{fitness} + {athleticsSkillPoints}" };
+    const defs = [fitness, skillPoints, bonus];
+    const values = { fitness: 2, athleticsSkillPoints: 0 };
+
+    const html = buildVariableWidgetHtml(bonus, values, defs);
+    container.innerHTML = html;
+    const input = container.querySelector<HTMLInputElement>(".sheet-widget-number-formula")!;
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("text");
+    expect(input.value).toBe("{{{fitness} + {athleticsSkillPoints}}}");
+
+    let changed: [string, number | string] | undefined;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+    dispatchChange(input, "{{{fitness} + {athleticsSkillPoints} + 1}}");
+    expect(changed).toEqual([valueExpressionFieldKey("athleticsBonus"), "{{{fitness} + {athleticsSkillPoints} + 1}}"]);
+  });
+
+  it("a plain 'number' variable with NO valueExpression still shows the ordinary editable flat number here, unchanged from before this feature existed", () => {
+    const str: CharacterSheetVariableDef = { id: "str", label: "Strength", type: "number", default: 10 };
+    const html = buildVariableWidgetHtml(str, { str: 14 });
+    expect(html).toContain("sheet-widget-number");
+    expect(html).not.toContain("sheet-widget-number-formula");
+    expect(html).toContain('value="14"');
   });
 });
 

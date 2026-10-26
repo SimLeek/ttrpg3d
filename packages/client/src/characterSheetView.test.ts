@@ -204,14 +204,15 @@ describe("mountCharacterSheetView", () => {
     expect(posted).toEqual([]); // never posted a half-broken result
   });
 
-  it("real request, 2026-10-26 -- a compound roll ({{Label; part: expr | part: expr}}) renders as one 'Roll <Label>' button, and clicking it bundles every part's own result into one posted message (plain fallback: 'label: value' per part, PLUS an extra 'max label' line for any part marked +max)", async () => {
+  it("real request, 2026-10-26 (third pass) -- a compound roll ({{Label; part: expr | part: expr}}) renders as a button showing just the label itself (not 'Roll <Label>'), and clicking it bundles every part's own result into one posted message (plain fallback: 'label: value' per part, PLUS an extra 'max label' line for any part marked +max)", async () => {
+    character.variableValues = { hp: 7, focus: 3, lightDamage: "2d4+5" }; // real dice in both parts -- forces the server round trip
     character.customSheet!.pages = [{ title: "Core", markdown: "{{Light Attack; atk: 1d20 + {focus} | damage+max: {lightDamage}:button}}", variableIds: [] }];
     mountCharacterSheetView(container, baseOptions());
     await flush();
 
     const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .compound-roll-chip")!;
     expect(rollBtn).not.toBeNull();
-    expect(rollBtn.textContent).toBe("Roll Light Attack");
+    expect(rollBtn.textContent).toBe("Light Attack");
     expect(container.querySelector(".page-preview .dice-roll-chip")).toBeNull(); // not treated as a plain single-expression roll
 
     previewResponse = {
@@ -235,7 +236,7 @@ describe("mountCharacterSheetView", () => {
     await flush();
     await flush();
 
-    expect(rollBtn.textContent).toBe("Roll Light Attack");
+    expect(rollBtn.textContent).toBe("Light Attack");
     expect(posted).toEqual([["Light Attack", "atk: 24, damage: 12, max damage: 13"]]);
     const html = postedHtml[0]!;
     expect(html).toContain("<strong>Light Attack</strong>");
@@ -275,6 +276,93 @@ describe("mountCharacterSheetView", () => {
 
     expect(rollBtn.textContent).toBe("Error: unknown or non-numeric variable");
     expect(posted).toEqual([]);
+  });
+
+  it("real request, 2026-10-26 (third pass) -- a single-part, no-dice compound roll (e.g. Evasion) resolves and posts ENTIRELY client-side, no server round trip at all", async () => {
+    character.variableValues = { hp: 7, agility: 6, evasionBonus: 2 };
+    character.customSheet!.pages = [{ title: "Core", markdown: "{{Evasion; evasion: 7 + {agility} + {evasionBonus}:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .compound-roll-chip")!;
+    expect(rollBtn.textContent).toBe("Evasion");
+    previewResponse = undefined as unknown as CharacterSheetPreviewResult; // never consulted -- a fetch here would throw in mockFetch anyway if reached
+
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    // Single-part posting format: the part's own label directly
+    // ("evasion: 15"), no "Light Attack ->" actionLabel wrapper, and
+    // an empty `label` arg so callers don't add their own "-> " either.
+    expect(posted).toEqual([["", "evasion: 15"]]);
+    expect(rollBtn.textContent).toBe("Evasion"); // button face stays the label, never the last result
+    expect(rollBtn.disabled).toBe(false);
+  });
+
+  it("real request, 2026-10-26 (third pass) -- a single-part roll that DOES need real dice (e.g. a stat check, or Initiative's real 1d4 roll) still goes to the server, posting with the part's own label (not the action label)", async () => {
+    character.variableValues = { hp: 7, fitness: 4 };
+    character.customSheet!.pages = [{ title: "Core", markdown: "{{Fitness; fitness check: 1d20 + {fitness}:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .compound-roll-chip")!;
+    expect(rollBtn.textContent).toBe("Fitness");
+
+    previewResponse = {
+      resolvedMarkdown: "",
+      segments: [],
+      expressionSegments: [],
+      compoundRollSegments: [
+        {
+          start: 0,
+          end: 40,
+          actionLabel: "Fitness",
+          display: "button",
+          parts: [{ label: "fitness check", expression: "1d20 + {fitness}", showMax: false, value: 16, text: "1d20 + 4: [12]+4 = 16" }],
+        },
+      ],
+    };
+    rollBtn.click();
+    expect(rollBtn.textContent).toBe("Rolling...");
+    await flush();
+    await flush();
+
+    expect(posted).toEqual([["", "fitness check: 16"]]);
+    expect(rollBtn.textContent).toBe("Fitness");
+  });
+
+  it("real bug, found live during the skills rework (2026-10-26, third pass) -- a dice-containing part that references a LIVE valueExpression variable (e.g. a skill's own Bonus) posts the server its CURRENT computed value, not the stale flat number stored on the character -- the server has no defs of its own to resolve the formula with, so the client must resolve it before the round trip", async () => {
+    character.customSheet!.variables = [
+      { id: "fitness", label: "Fitness", type: "number", default: 0 },
+      { id: "athleticsSkillPoints", label: "Athletics Skill Points", type: "number", default: 0 },
+      { id: "athleticsBonus", label: "Athletics Bonus", type: "number", default: 0, valueExpression: "{fitness} + {athleticsSkillPoints}" },
+    ];
+    // The flat, stored athleticsBonus (0, whatever was last imported)
+    // is deliberately STALE here -- fitness/skillPoints have since
+    // moved on, same as raising a stat after import already does for
+    // every other live formula on the sheet.
+    character.variableValues = { hp: 7, fitness: 4, athleticsSkillPoints: 3, athleticsBonus: 0 };
+    character.customSheet!.pages = [{ title: "Core", markdown: "{{Athletics; roll: 1d20 + {athleticsBonus}:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .compound-roll-chip")!;
+    previewResponse = {
+      resolvedMarkdown: "",
+      segments: [],
+      expressionSegments: [],
+      compoundRollSegments: [{ start: 0, end: 40, actionLabel: "Athletics", display: "button", parts: [{ label: "roll", expression: "1d20 + {athleticsBonus}", showMax: false, value: 19, text: "1d20 + 7: [12]+7 = 19" }] }],
+    };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    const fetchMock = fetch as unknown as { mock: { calls: [string, { body?: string }][] } };
+    const previewCall = fetchMock.mock.calls.find(([url]) => url.includes("/character-sheet-preview"));
+    const body = JSON.parse(previewCall![1]!.body!);
+    // 4 + 3 = 7, the LIVE value, not the stale stored 0.
+    expect(body.variableValues.athleticsBonus).toBe(7);
   });
 
   it("real bug, found live on /characters -- a {variableId} ref NESTED inside a {{expression}} (e.g. the real Lyrian HP formula's own {toughness}) doesn't ALSO get matched as its own separate top-level ref, which would otherwise desync the substitution cursor and garble every segment after it on the page", async () => {
@@ -476,5 +564,52 @@ describe("mountCharacterSheetView", () => {
     // The box's own TYPE changes too, now that it's flat again.
     expect(container.querySelector(".sheet-widget-xofy-max-formula")).toBeNull();
     expect(container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!.value).toBe("25");
+  });
+
+  it("real request, 2026-10-26 (third pass) -- editing a plain number variable's own {{formula}} box (valueExpression) on the Core & Variables tab updates the variable's own DEFINITION, not variableValues, same split as maxExpression above", async () => {
+    character.customSheet!.variables = [
+      { id: "fitness", label: "Fitness", type: "number", default: 0 },
+      { id: "athleticsSkillPoints", label: "Athletics Skill Points", type: "number", default: 0 },
+      { id: "athleticsBonus", label: "Athletics Bonus", type: "number", default: 0, valueExpression: "{fitness} + {athleticsSkillPoints}" },
+    ];
+    character.variableValues = { fitness: 2, athleticsSkillPoints: 0 };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // Core & Variables
+    await flush();
+
+    const formulaInput = container.querySelector<HTMLInputElement>(".sheet-widget-number-formula")!;
+    expect(formulaInput).not.toBeNull();
+    expect(formulaInput.value).toBe("{{{fitness} + {athleticsSkillPoints}}}");
+
+    formulaInput.value = "{{{fitness} + {athleticsSkillPoints} + 1}}";
+    formulaInput.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(saved.at(-1)!.customSheet!.variables[2].valueExpression).toBe("{fitness} + {athleticsSkillPoints} + 1");
+    expect(saved.at(-1)!.variableValues.fitness).toBe(2); // unrelated variableValues left alone
+  });
+
+  it("real request, 2026-10-26 (third pass) -- typing a plain number into that same box toggles the formula OFF, reverting to an ordinary flat, per-character value", async () => {
+    character.customSheet!.variables = [
+      { id: "fitness", label: "Fitness", type: "number", default: 0 },
+      { id: "athleticsSkillPoints", label: "Athletics Skill Points", type: "number", default: 0 },
+      { id: "athleticsBonus", label: "Athletics Bonus", type: "number", default: 0, valueExpression: "{fitness} + {athleticsSkillPoints}" },
+    ];
+    character.variableValues = { fitness: 2, athleticsSkillPoints: 0 };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // Core & Variables
+    await flush();
+
+    const formulaInput = container.querySelector<HTMLInputElement>(".sheet-widget-number-formula")!;
+    formulaInput.value = "5";
+    formulaInput.dispatchEvent(new Event("change"));
+    await flush();
+
+    const lastSaved = saved.at(-1)!;
+    expect(lastSaved.customSheet!.variables[2].valueExpression).toBeUndefined();
+    expect(lastSaved.variableValues.athleticsBonus).toBe(5);
+    expect(container.querySelector(".sheet-widget-number-formula")).toBeNull();
   });
 });

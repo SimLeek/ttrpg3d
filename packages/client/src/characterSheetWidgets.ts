@@ -109,18 +109,53 @@ function buildXOfYMaxDisplayHtml(def: CharacterSheetVariableDef, values: Variabl
   return `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${value}" />`;
 }
 
-/** The FULL widget markup for `def`'s value in `values` -- for `xOfY`, BOTH boxes together (current and max). This is the Core & Variables tab's own per-variable value widget (round 5 -- round 4 mistakenly used this for INLINE refs too; see buildVariableComponentHtml below for the inline, one-box-at-a-time version). One `data-var-key` per interactive control, including the max box when it's a live formula (see buildXOfYMaxEditableHtml -- this is the EDITOR, so the formula text itself is what's editable here). `defs` defaults to just `[def]` -- only needed at all when `def.maxExpression` itself references ANOTHER variable. */
+/**
+ * The `data-var-key` a `valueExpression` edit arrives under -- same
+ * `::`-separated convention as `maxExpressionFieldKey` above
+ * (generalized, real request 2026-10-26 third pass: "Bonus on the
+ * page should show the resulting number, and the core&variables
+ * should show that equation you put"), just for the "x"/current side
+ * of a plain `number` variable instead of xOfY's own "y"/max side.
+ */
+export function valueExpressionFieldKey(variableId: string): string {
+  return `${variableId}::valueExpression`;
+}
+
+function resolveLiveNumberValue(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): number {
+  const fallback = typeof def.default === "number" ? def.default : 0;
+  return resolveVariableValue(def.id, "x", defs, values) ?? fallback;
+}
+
+/** The Core & Variables tab's own EDITOR for a plain `number` variable's value -- same split as `buildXOfYMaxEditableHtml` above: a live `valueExpression` shows/edits the RAW `{{...}}` formula text (a session can type either a plain number or a `{{...}}` formula directly into this one box); otherwise it's just an ordinary flat, per-character number input, unchanged from before this feature existed. */
+function buildNumberValueEditableHtml(def: CharacterSheetVariableDef, values: VariableValueMap): string {
+  if (def.valueExpression !== undefined) {
+    return `<input type="text" class="sheet-widget-number-formula" data-var-key="${escapeAttr(valueExpressionFieldKey(def.id))}" value="${escapeAttr(`{{${def.valueExpression}}}`)}" />`;
+  }
+  const value = asNumber(values[def.id] ?? def.default, typeof def.default === "number" ? def.default : 0);
+  return `<input type="number" class="sheet-widget-number" data-var-key="${escapeAttr(def.id)}" value="${value}" />`;
+}
+
+/** The read-only half for an inline `{variableId}` ref to a plain `number` variable -- shows the LIVE COMPUTED value (`.computed-value`, same class a `{{expression}}` segment's own result uses) when `valueExpression` is set, never the formula text itself (that's the Core & Variables editor's own job, see `buildNumberValueEditableHtml`). A flat (non-`valueExpression`) number stays directly editable here too, same as before this feature existed. */
+function buildNumberValueDisplayHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): string {
+  if (def.valueExpression !== undefined) return `<span class="computed-value">${resolveLiveNumberValue(def, values, defs)}</span>`;
+  const value = asNumber(values[def.id] ?? def.default, typeof def.default === "number" ? def.default : 0);
+  return `<input type="number" class="sheet-widget-number" data-var-key="${escapeAttr(def.id)}" value="${value}" />`;
+}
+
+/** The FULL widget markup for `def`'s value in `values` -- for `xOfY`, BOTH boxes together (current and max). This is the Core & Variables tab's own per-variable value widget (round 5 -- round 4 mistakenly used this for INLINE refs too; see buildVariableComponentHtml below for the inline, one-box-at-a-time version). One `data-var-key` per interactive control, including the max box when it's a live formula (see buildXOfYMaxEditableHtml -- this is the EDITOR, so the formula text itself is what's editable here). `defs` defaults to just `[def]` -- only needed at all when `def.maxExpression`/`def.valueExpression` itself references ANOTHER variable. */
 export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList = [def]): string {
   if (def.type === "xOfY") return `${buildXOfYCurrentInputHtml(def, values)} / ${buildXOfYMaxEditableHtml(def, values, defs)}`;
 
-  const value = values[def.id] ?? def.default;
-
   if (def.type === "text") {
+    const value = values[def.id] ?? def.default;
     return `<input type="text" class="sheet-widget-text" data-var-key="${escapeAttr(def.id)}" value="${escapeAttr(typeof value === "string" ? value : String(value))}" />`;
   }
 
-  // "number" -- a plain single value, one box.
-  return `<input type="number" class="sheet-widget-number" data-var-key="${escapeAttr(def.id)}" value="${asNumber(value, 0)}" />`;
+  // "number" -- a plain single value box, or (real request, 2026-10-26,
+  // third pass) a LIVE FORMULA editor when valueExpression is set --
+  // same idea as xOfY's own max-formula editor above, generalized to
+  // the "x" side.
+  return buildNumberValueEditableHtml(def, values);
 }
 
 /**
@@ -139,12 +174,19 @@ export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: 
  */
 export function buildVariableComponentHtml(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y" = "x", defs: VariableDefList = [def]): string {
   if (def.type === "xOfY") return component === "y" ? buildXOfYMaxDisplayHtml(def, values, defs) : buildXOfYCurrentInputHtml(def, values);
+  // Real request, 2026-10-26 (third pass): an inline ref to a plain
+  // `number` variable with a live `valueExpression` (e.g. a skill's
+  // own Bonus) shows the COMPUTED number here, same split as xOfY's
+  // own max above -- never the formula text (that's the Core &
+  // Variables editor's own job, buildVariableWidgetHtml).
+  if (def.type === "number") return buildNumberValueDisplayHtml(def, values, defs);
   return buildVariableWidgetHtml(def, values, defs);
 }
 
 function resolveComponentValue(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y", defs: VariableDefList): number | string {
-  if (def.type !== "xOfY") return values[def.id] ?? def.default;
-  return component === "y" ? xOfYMax(def, values, defs) : asNumber(values[def.id] ?? def.default, typeof def.default === "number" ? def.default : 0);
+  if (def.type === "xOfY") return component === "y" ? xOfYMax(def, values, defs) : asNumber(values[def.id] ?? def.default, typeof def.default === "number" ? def.default : 0);
+  if (def.type === "number" && def.valueExpression !== undefined) return resolveLiveNumberValue(def, values, defs);
+  return values[def.id] ?? def.default;
 }
 
 /** A variable rendered as a clickable chip instead of an editable box (`{variableId:button}`) -- posts the chosen component's current value to the test chat on click, same `.chat-chip` mechanism library-call buttons use. Same one-value-at-a-time `component` selection as buildVariableComponentHtml -- a chip is a single announcement, not a combined display. */

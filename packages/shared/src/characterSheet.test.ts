@@ -181,8 +181,11 @@ describe("findCompoundRollSegments (real request, 2026-10-26 -- \"For light atta
     expect(findCompoundRollSegments("{{atk: 1 | damage: 2}}")).toEqual([]);
   });
 
-  it("requires at least 2 pipe-separated parts -- a single part isn't \"compound\"", () => {
-    expect(findCompoundRollSegments("{{X; a: 1}}")).toEqual([]);
+  it("real request, 2026-10-26: a single part IS still a valid compound roll -- a labeled stat/skill check (e.g. \"Agility check\") only ever needs one part", () => {
+    const segments = findCompoundRollSegments("{{X; a: 1}}");
+    expect(segments).toHaveLength(1);
+    expect(segments[0].actionLabel).toBe("X");
+    expect(segments[0].parts).toEqual([{ label: "a", expression: "1", showMax: false }]);
   });
 
   it("requires every part to have its own 'label:' -- a malformed part (no colon) means this isn't a valid compound roll, not a partial one", () => {
@@ -295,11 +298,19 @@ describe("evaluateCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part
     expect(evaluateCharacterSheetExpression("{heavyDamage}", { heavyDamage: "4d6+10" }, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
   });
 
-  it("a bare reference to a plain NON-dice string still fails (not a number, no dice notation in it either) -- the lenient passthrough only ever flags needsRoll, it never makes a non-dice string a valid displayed value", () => {
+  it("real request, 2026-10-26: a bare reference to a plain NON-dice string (e.g. a skill's own Expertise) is shown as plain TEXT instead of failing -- it's not a number or a roll, just informational display text", () => {
     const result = evaluateCharacterSheetExpression("{characterName}", { characterName: "Alba" }, true);
     expect(result.value).toBeUndefined();
     expect(result.needsRoll).toBeUndefined();
-    expect(result.error).toBe("unknown or non-numeric variable");
+    expect(result.error).toBeUndefined();
+    expect(result.text).toBe("Alba");
+  });
+
+  it("real bug, found live during the skills rework (2026-10-26, third pass) -- a bare reference to a BLANK text variable (e.g. an unset skill Expertise) shows as empty TEXT, not the number 0 (Number('') === 0 was silently coercing it)", () => {
+    const result = evaluateCharacterSheetExpression("{skillExpertise}", { skillExpertise: "" }, true);
+    expect(result.value).toBeUndefined();
+    expect(result.error).toBeUndefined();
+    expect(result.text).toBe("");
   });
 
   it("a non-bare expression (more than just the one reference) still requires a real NUMBER from that reference, even if it holds dice notation -- the lenient passthrough is for a bare reference only", () => {

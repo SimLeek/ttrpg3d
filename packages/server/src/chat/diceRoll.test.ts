@@ -110,4 +110,11 @@ describe("rollCompoundPart (real request, 2026-10-26 -- \"For light attack, we w
     const result = rollCompoundPart({ expression: "1d20 + {doesNotExist}" }, {});
     expect(result.error).toBeTruthy();
   });
+
+  it("real request, 2026-10-26 (skills rework): a part that's a bare reference to plain text (e.g. a skill's own Expertise, \"jumping\") returns that text, never crashing into new DiceRoll(\"jumping\")", () => {
+    const result = rollCompoundPart({ expression: "{athleticsExpertise}" }, { athleticsExpertise: "jumping" });
+    expect(result.text).toBe("jumping");
+    expect(result.value).toBeUndefined();
+    expect(result.error).toBeUndefined();
+  });
 });

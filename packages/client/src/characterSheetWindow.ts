@@ -85,6 +85,11 @@ export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl:
     libraries,
     importedModIds,
     canEdit,
-    onPostToChat: (label, value) => connection.send(`${label} -> ${value}`, characterId),
+    // Real request, 2026-10-26 (third pass): a single-part label-as-
+    // button roll (e.g. "evasion: 13") posts its own already-complete
+    // "label: value" text with an empty `label` arg (characterSheetView.ts's
+    // own single-part posting path) -- shown verbatim, no "-> " wrapper,
+    // unlike a multi-part bundled action (e.g. "Light Attack -> atk: 24, damage: 12").
+    onPostToChat: (label, value) => connection.send(label ? `${label} -> ${value}` : value, characterId),
   });
 }

@@ -29,9 +29,9 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, findCompoundRollSegments, evaluateCharacterSheetExpression, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, findCompoundRollSegments, evaluateCharacterSheetExpression, resolveVariableValue, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
-import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey } from "./characterSheetWidgets.js";
+import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey, valueExpressionFieldKey } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
 import { fetchAndParseWorkbook } from "./characterSheetImport.js";
 
@@ -179,7 +179,8 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
    */
   function effectiveVariableValues(): Record<string, number | string> {
     const result: Record<string, number | string> = { ...character.variableValues };
-    for (const def of allVariableDefs()) {
+    const defs = allVariableDefs();
+    for (const def of defs) {
       if (result[def.id] === undefined) result[def.id] = def.default;
       // A live `maxExpression` (real request, 2026-10-26) always wins
       // over any stored max key -- resolveVariableValue never reads
@@ -187,6 +188,31 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       if (def.type === "xOfY" && def.maxExpression === undefined) {
         const maxKey = xOfYMaxKey(def.id);
         if (result[maxKey] === undefined) result[maxKey] = typeof def.max === "number" ? def.max : def.default;
+      }
+    }
+    // Real bug, found live (2026-10-26, third pass -- skills rework):
+    // a variable with a live `valueExpression`/`maxExpression` (e.g. a
+    // skill's own Bonus = governing substat + skill points) has a
+    // STALE flat value in `result` above (whatever was last imported/
+    // stored, never the live formula's own result) -- harmless for
+    // every CLIENT-side evaluation (`resolveVariableValue`, used by
+    // every `evaluateCharacterSheetExpression` call below, always
+    // ignores the flat value in favor of the live formula when one
+    // exists), but this flat map is ALSO exactly what gets POSTED to
+    // the server for a genuine dice roll (`fetchCharacterSheetPreview`'s
+    // own `variableValues` body, e.g. every skill's own roll) -- the
+    // server has no `defs` of its own to resolve the formula WITH, so
+    // it would roll against the stale number instead. Overlaying each
+    // one's own LIVE value here, right before anything reads this map,
+    // closes that gap at its one source.
+    for (const def of defs) {
+      if (def.valueExpression !== undefined) {
+        const live = resolveVariableValue(def.id, "x", defs, result);
+        if (live !== undefined) result[def.id] = live;
+      }
+      if (def.type === "xOfY" && def.maxExpression !== undefined) {
+        const live = resolveVariableValue(def.id, "y", defs, result);
+        if (live !== undefined) result[xOfYMaxKey(def.id)] = live;
       }
     }
     return result;
@@ -296,51 +322,81 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
 
     // Real request, 2026-10-26: "For light attack, we want to display
     // the attack to-hit result, the damage, and the max damage...
-    // some table in the chat." Same click-to-fetch-then-post pattern
-    // as a plain dice-roll chip, just bundling every part of the
-    // compound roll into ONE result instead of one number.
+    // some table in the chat," generalized (third pass, same day) to
+    // EVERY label-as-button roll (stat checks, Evasion, Initiative,
+    // a skill's own name). Each part is evaluated CLIENT-SIDE first
+    // (same evaluateCharacterSheetExpression every plain expression
+    // already uses) -- a compound roll with NO real dice in any part
+    // (Evasion, a skill's own Expertise-only companion text) resolves
+    // and posts immediately, no server round trip at all, same
+    // principle as every other no-dice expression on this page. Only
+    // when some part genuinely needs RNG (a "1d20 + ..." stat/skill
+    // check, Initiative's real "1d4 + ...") does this fetch a fresh
+    // server roll for the WHOLE segment (simplest correct behavior --
+    // re-evaluating an already-resolved sibling part server-side is
+    // harmless, it's pure arithmetic either way).
     previewEl.addEventListener("click", (event) => {
-      const rollBtn = (event.target as HTMLElement).closest<HTMLButtonElement>(".compound-roll-chip");
-      if (!rollBtn || rollBtn.disabled) return;
+      const target = (event.target as HTMLElement).closest<HTMLButtonElement>(".compound-roll-chip");
+      if (!target || target.disabled) return;
+      const rollBtn: HTMLButtonElement = target; // narrowed to non-null, used inside the nested `finish` closure below
       const start = Number(rollBtn.dataset.rollStart);
       const end = Number(rollBtn.dataset.rollEnd);
       const actionLabel = rollBtn.dataset.actionLabel ?? "Roll";
+      const parts: { label: string; expression: string; showMax: boolean }[] = JSON.parse(rollBtn.dataset.rollParts ?? "[]");
+
+      // Real request, 2026-10-26 (third pass): "the Agility label
+      // would be a button... [posting] agility check: 16" -- a
+      // SINGLE-part roll posts using its OWN part label directly
+      // (e.g. "evasion: 13", "fitness check: 16"), not wrapped in the
+      // multi-part "ActionLabel -> part1: v1, part2: v2" format a
+      // bundled action (Light Attack, a skill's roll+expertise pair)
+      // still uses.
+      function finish(resolved: { label: string; value?: number; text?: string; error?: string; maxValue?: number; showMax: boolean }[]): void {
+        rollBtn.disabled = false;
+        rollBtn.textContent = actionLabel;
+        const firstError = resolved.find((p) => p.error !== undefined);
+        if (firstError) {
+          rollBtn.textContent = `Error: ${firstError.error}`;
+          return;
+        }
+        const plainParts: string[] = [];
+        const htmlLines: string[] = [];
+        for (const part of resolved) {
+          const text = part.value !== undefined ? String(part.value) : part.text ?? "";
+          plainParts.push(`${part.label}: ${text}`);
+          htmlLines.push(`${escapeHtml(part.label)}: <span class="roll-result" title="${escapeHtml(part.text ?? part.label)}">${escapeHtml(text)}</span>`);
+          if (part.showMax && part.maxValue !== undefined) {
+            plainParts.push(`max ${part.label}: ${part.maxValue}`);
+            htmlLines.push(`max ${escapeHtml(part.label)}: ${escapeHtml(String(part.maxValue))}`);
+          }
+        }
+        if (resolved.length === 1) {
+          const html = `<span class="roll-result" title="${escapeHtml(resolved[0].text ?? resolved[0].label)}">${escapeHtml(plainParts[0])}</span>`;
+          options.onPostToChat("", plainParts[0], html);
+        } else {
+          const html = `<div class="roll-result-group"><strong>${escapeHtml(actionLabel)}</strong><br>${htmlLines.join("<br>")}</div>`;
+          options.onPostToChat(actionLabel, plainParts.join(", "), html);
+        }
+      }
+
+      const effectiveValues = effectiveVariableValues();
+      const defs = allVariableDefs();
+      const clientResolved = parts.map((part) => ({ ...part, ...evaluateCharacterSheetExpression(part.expression, effectiveValues, true, defs) }));
+      if (!clientResolved.some((p) => p.needsRoll)) {
+        finish(clientResolved);
+        return;
+      }
       rollBtn.disabled = true;
       rollBtn.textContent = "Rolling...";
-      void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown.slice(start, end), effectiveVariableValues())
+      void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown.slice(start, end), effectiveValues)
         .then((result) => {
           const rolled = result.compoundRollSegments[0]; // exactly one -- the sliced text is just this one {{...}} segment
-          rollBtn.disabled = false;
           if (!rolled) {
+            rollBtn.disabled = false;
             rollBtn.textContent = `Error: roll failed`;
             return;
           }
-          const firstError = rolled.parts.find((p) => p.error !== undefined);
-          if (firstError) {
-            rollBtn.textContent = `Error: ${firstError.error}`;
-            return;
-          }
-          // Plain-text fallback (every caller, including real
-          // in-game chat, gets a sane result even without any HTML
-          // support): "atk: 24, damage: 12, max damage: 13".
-          const plainParts: string[] = [];
-          // Rich fallback: one line per part, a hover tooltip on each
-          // real roll's own number, an extra "max <label>" line for
-          // any part that asked for one (CompoundRollPart's own
-          // `showMax`) -- same `.roll-result` span a plain roll uses.
-          const htmlLines: string[] = [];
-          for (const part of rolled.parts) {
-            const text = String(part.value);
-            plainParts.push(`${part.label}: ${text}`);
-            htmlLines.push(`${escapeHtml(part.label)}: <span class="roll-result" title="${escapeHtml(part.text ?? part.label)}">${escapeHtml(text)}</span>`);
-            if (part.showMax && part.maxValue !== undefined) {
-              plainParts.push(`max ${part.label}: ${part.maxValue}`);
-              htmlLines.push(`max ${escapeHtml(part.label)}: ${escapeHtml(String(part.maxValue))}`);
-            }
-          }
-          rollBtn.textContent = `Roll ${actionLabel}`;
-          const html = `<div class="roll-result-group"><strong>${escapeHtml(actionLabel)}</strong><br>${htmlLines.join("<br>")}</div>`;
-          options.onPostToChat(actionLabel, plainParts.join(", "), html);
+          finish(rolled.parts);
         })
         .catch((err: unknown) => {
           rollBtn.disabled = false;
@@ -445,11 +501,22 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
                     ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
                     : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
         } else if (segment.kind === "compound") {
-          // A compound roll (real request, 2026-10-26) -- always an
-          // inert "Roll <ActionLabel>" button, same click-to-fetch
-          // pattern as a plain dice-roll chip, just carrying the
-          // WHOLE action's own label instead of one expression's.
-          substituted += `<button type="button" class="compound-roll-chip" data-roll-start="${segment.start}" data-roll-end="${segment.end}" data-action-label="${escapeHtml(segment.actionLabel)}">Roll ${escapeHtml(segment.actionLabel)}</button>`;
+          // A compound roll (real request, 2026-10-26; label-as-button
+          // rework, same day, third pass: "if we could make the labels
+          // buttons instead, that would be best") -- an inert button
+          // showing just the action's own label (NOT "Roll <label>" --
+          // the button face IS the label, e.g. "Evasion", "Agility",
+          // "Medicine", "Initiative"), same click-to-resolve pattern as
+          // a plain dice-roll chip. Carries its own parts (label/
+          // expression/showMax) as a JSON data attribute so the click
+          // handler can evaluate every part CLIENT-SIDE first (same
+          // evaluateCharacterSheetExpression every plain expression
+          // already uses) and skip the server round trip entirely when
+          // none of them actually need real dice (e.g. Evasion, a pure-
+          // arithmetic combat stat) -- only a part that genuinely needs
+          // RNG (a stat/skill check's "1d20 + ...", Initiative's real
+          // "1d4 + ...") still fetches a fresh server roll.
+          substituted += `<button type="button" class="compound-roll-chip" data-roll-start="${segment.start}" data-roll-end="${segment.end}" data-action-label="${escapeHtml(segment.actionLabel)}" data-roll-parts="${escapeHtml(JSON.stringify(segment.parts))}">${escapeHtml(segment.actionLabel)}</button>`;
         } else {
           const def = findVariableDef(segment.variableId);
           // An inline ref always shows ONE value (box or chip), never
@@ -597,6 +664,30 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
               // The box's own TYPE (text formula vs. number) depends
               // on this -- same reasoning the "type" field change
               // above already rebuilds the list for.
+              renderList();
+              return;
+            }
+            // Real request, 2026-10-26 (third pass): the SAME
+            // formula-vs-flat split as maxExpression above, just for
+            // a plain `number` variable's own "x"/current value (e.g.
+            // a skill's own Bonus = governing substat + skill points).
+            const valueFormulaEdit = /^(.+)::valueExpression$/.exec(key);
+            if (valueFormulaEdit) {
+              const target = sheet.variables.find((v) => v.id === valueFormulaEdit[1]);
+              if (!target) return;
+              const raw = String(next).trim();
+              const formulaMatch = /^\{\{([\s\S]*)\}\}$/.exec(raw);
+              if (formulaMatch) {
+                target.valueExpression = formulaMatch[1].trim();
+              } else {
+                // Typing a plain number back in toggles the formula
+                // OFF -- reverts to an ordinary flat, per-character
+                // value.
+                delete target.valueExpression;
+                const num = Number(raw);
+                character.variableValues = { ...character.variableValues, [target.id]: Number.isFinite(num) ? num : 0 };
+              }
+              saveSheet();
               renderList();
               return;
             }
