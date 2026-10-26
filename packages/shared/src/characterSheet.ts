@@ -418,10 +418,24 @@ export function findExpressionSegments(text: string): ExpressionSegment[] {
   return segments;
 }
 
-/** Substitutes every `{variableId}`/`{variableId.x}`/`{variableId.y}` reference found WITHIN an expression (findVariableRefs, reused directly -- same single-brace syntax, same rules) with its current numeric value, read straight from `variableValues` (no variable-definition/default context available here, unlike the client's own widget rendering -- a reference to a variable that doesn't exist, or holds a non-numeric value, fails the WHOLE expression rather than silently defaulting to 0). Returns undefined on any unresolvable reference. */
-function substituteExpressionVariables(expression: string, variableValues: Readonly<Record<string, number | string>>): string | undefined {
-  const refs = findVariableRefs(expression);
-  if (refs.length === 0) return expression;
+/**
+ * Substitutes every `{variableId}`/`{variableId.x}`/`{variableId.y}`
+ * reference found WITHIN `text` (findVariableRefs, reused directly --
+ * same single-brace syntax, same rules) with its current numeric
+ * value, read straight from `variableValues` (no variable-definition/
+ * default context available here, unlike the client's own widget
+ * rendering -- a reference to a variable that doesn't exist, or holds
+ * a non-numeric value, fails the WHOLE substitution rather than
+ * silently defaulting to 0). Returns undefined on any unresolvable
+ * reference. Shared by BOTH the `{{expression}}` evaluator below AND
+ * the `[[dice notation]]` chat-roll system (packages/server/src/chat/
+ * diceRoll.ts) -- real request: "the rolling system should also be
+ * able to handle variables... maybe for both systems" -- same rule,
+ * same syntax, one implementation.
+ */
+export function substituteVariableRefs(text: string, variableValues: Readonly<Record<string, number | string>>): string | undefined {
+  const refs = findVariableRefs(text);
+  if (refs.length === 0) return text;
   let result = "";
   let cursor = 0;
   for (const ref of refs) {
@@ -429,94 +443,36 @@ function substituteExpressionVariables(expression: string, variableValues: Reado
     const raw = variableValues[key];
     const value = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
     if (!Number.isFinite(value)) return undefined;
-    result += expression.slice(cursor, ref.start) + String(value);
+    result += text.slice(cursor, ref.start) + String(value);
     cursor = ref.end;
   }
-  result += expression.slice(cursor);
+  result += text.slice(cursor);
   return result;
 }
 
 /**
- * A small, deliberately minimal recursive-descent parser for plain
- * arithmetic: `expression := term (('+'|'-') term)*`, `term := factor
- * (('*'|'/') factor)*`, `factor := number | '(' expression ')' | ('+'
- * | '-') factor`. No `eval`/`Function()` anywhere -- there is nothing
- * here BUT arithmetic (no variables, no function calls; those are
- * already substituted to plain numbers before this runs), so there's
- * nothing for a sandbox to contain in the first place. Returns
- * undefined for anything malformed (unbalanced parens, a stray
- * operator, trailing garbage after a syntactically-complete
- * expression, division by zero) -- never throws.
+ * What evaluating one `{{expression}}` segment produces -- plain data,
+ * shared between the server (the only place that actually computes
+ * it -- see this field's own doc on why) and the client (just renders
+ * whichever of `value`/`error` came back). Real correction, 2026-10-25:
+ * the hand-rolled arithmetic parser this type used to back
+ * (`evaluateExpression`, shared/client-side) is gone -- "we don't want
+ * to risk mistakes when we can just use libraries... the dice
+ * evaluator should be able to do everything there." The actual
+ * evaluation now reuses this project's own `@dice-roller/rpg-dice-roller`
+ * (confirmed it handles plain arithmetic with no dice term at all
+ * fine, not just dice notation) -- but that library is, and must
+ * stay, SERVER-ONLY (diceRoll.ts's own header: "the server is the
+ * only place a roll is ever computed," the same fairness boundary
+ * admin checks/voxel edits already use) -- so `{{expression}}`
+ * resolution moves into the SAME server round trip
+ * `{{modId.fn(args)}}` library calls already go through
+ * (postCharacterSheetPreview), not a separate client-only path
+ * anymore.
  */
-function evaluateArithmetic(text: string): number | undefined {
-  const s = text.replace(/\s+/g, "");
-  let i = 0;
-
-  function parseExpression(): number | undefined {
-    let value = parseTerm();
-    if (value === undefined) return undefined;
-    while (s[i] === "+" || s[i] === "-") {
-      const op = s[i++];
-      const rhs = parseTerm();
-      if (rhs === undefined) return undefined;
-      value = op === "+" ? value + rhs : value - rhs;
-    }
-    return value;
-  }
-
-  function parseTerm(): number | undefined {
-    let value = parseFactor();
-    if (value === undefined) return undefined;
-    while (s[i] === "*" || s[i] === "/") {
-      const op = s[i++];
-      const rhs = parseFactor();
-      if (rhs === undefined) return undefined;
-      if (op === "/" && rhs === 0) return undefined; // division by zero fails the expression, rather than producing Infinity/NaN
-      value = op === "*" ? value * rhs : value / rhs;
-    }
-    return value;
-  }
-
-  function parseFactor(): number | undefined {
-    if (s[i] === "-") {
-      i++;
-      const value = parseFactor();
-      return value === undefined ? undefined : -value;
-    }
-    if (s[i] === "+") {
-      i++;
-      return parseFactor();
-    }
-    if (s[i] === "(") {
-      i++;
-      const value = parseExpression();
-      if (value === undefined || s[i] !== ")") return undefined;
-      i++;
-      return value;
-    }
-    const match = /^\d+(\.\d+)?/.exec(s.slice(i));
-    if (!match) return undefined;
-    i += match[0].length;
-    return Number(match[0]);
-  }
-
-  if (s === "") return undefined;
-  const value = parseExpression();
-  if (value === undefined || i !== s.length) return undefined; // trailing garbage after an otherwise-valid expression -- malformed
-  return value;
-}
-
-/**
- * Evaluates one `{{...}}` expression's raw text (an ExpressionSegment's
- * own `expression` field) against a character's current
- * `variableValues` -- substitutes every nested `{variableId}` ref
- * first, then runs the plain-arithmetic parser on the result. Returns
- * undefined (never throws) for an unresolvable variable or malformed
- * arithmetic, same "degrade gracefully" spirit resolveCharacterSheetMarkdown
- * already uses for library calls.
- */
-export function evaluateExpression(expression: string, variableValues: Readonly<Record<string, number | string>>): number | undefined {
-  const substituted = substituteExpressionVariables(expression, variableValues);
-  if (substituted === undefined) return undefined;
-  return evaluateArithmetic(substituted);
+export interface ExpressionEvalResult {
+  value?: number;
+  /** Human-readable breakdown for a result that included a real dice roll (DiceRoll's own .output) -- undefined for plain arithmetic, where the bare number already says everything. */
+  text?: string;
+  error?: string;
 }

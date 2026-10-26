@@ -151,6 +151,7 @@ describe("listCharacterSheetTemplates (MVP goal item 4, docs/ROADMAP.md, slice 1
     expect(results.length).toBe(1);
     expect(results[0].modId).toBe("sheet-mod");
     expect(results[0].template.name).toBe("My Sheet");
+    expect(results[0].hasImporter).toBe(false); // this fixture mod exports no characterSheetImporter
   });
 
   it("resolves the real, committed mods/default fixture", async () => {
@@ -158,6 +159,14 @@ describe("listCharacterSheetTemplates (MVP goal item 4, docs/ROADMAP.md, slice 1
     const results = await listCharacterSheetTemplates(realModsDir, ["default"]);
     expect(results.length).toBe(1);
     expect(results[0].template.variables.map((v) => v.id).sort()).toEqual(["hp", "mp", "str"]);
+    expect(results[0].hasImporter).toBe(false); // the default mod is a template only, no importer
+  });
+
+  it("hasImporter is true for a mod that exports characterSheetImporter -- docs/CHARACTER_SHEET_IMPORT.md, part 1 (the real lyrian-chronicles fixture)", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const results = await listCharacterSheetTemplates(realModsDir, ["lyrian-chronicles"]);
+    expect(results.length).toBe(1);
+    expect(results[0].hasImporter).toBe(true);
   });
 });
 
@@ -244,19 +253,26 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     const workbook = {
       Core: [
         ["Unrelated", "Junk", "Row"],
-        ["Agility", 6, "", "HP", 70],
+        ["Agility", 6, "", "Toughness", 5],
         [],
-        ["", "", "Mana", 11],
+        ["", "", "Mana", 11, "", "HP Bonus", 0],
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
-    expect(result?.result.variableValues).toEqual({ hp: 70, hpMax: 70, mana: 11, manaMax: 11, agility: 6 });
+    // hp is no longer read off the sheet's own "HP" label directly --
+    // it's computed from the same formula the Core page's own
+    // `{{expression}}` shows live: 20 + (10 * Toughness) + HP Bonus.
+    expect(result?.result.variableValues).toEqual({ hp: 70, hpMax: 70, mana: 11, manaMax: 11, agility: 6, toughness: 5, hpBonus: 0 });
     expect(result?.result.pages).toEqual([]);
   });
 
   it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
-    expect(result?.result.variableValues).toEqual({ hp: 10, hpMax: 10, mana: 10, manaMax: 10, agility: 0 });
+    // toughness/hpBonus both fall back to 0, so the formula's own hp
+    // (20 + 10*0 + 0 = 20) no longer matches the "hp" variable's own
+    // unrelated default of 10 -- the formula wins, since hp is
+    // derived from it now, not read from its own default directly.
+    expect(result?.result.variableValues).toEqual({ hp: 20, hpMax: 20, mana: 10, manaMax: 10, agility: 0, toughness: 0, hpBonus: 0 });
   });
 });

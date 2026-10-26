@@ -155,15 +155,19 @@ export type ModLoader = ReturnType<typeof createModLoader>;
  * there's no "loaded" state to track here (same reasoning `ModEntry`'s
  * own doc gives for why register/unregister are optional).
  */
-export async function listCharacterSheetTemplates(modsDir: string, modIds: readonly string[]): Promise<{ modId: string; manifest: ModManifest; template: CharacterSheetTemplate }[]> {
+export async function listCharacterSheetTemplates(modsDir: string, modIds: readonly string[]): Promise<{ modId: string; manifest: ModManifest; template: CharacterSheetTemplate; hasImporter: boolean }[]> {
   const manifests = listAvailableMods(modsDir);
-  const results: { modId: string; manifest: ModManifest; template: CharacterSheetTemplate }[] = [];
+  const results: { modId: string; manifest: ModManifest; template: CharacterSheetTemplate; hasImporter: boolean }[] = [];
   for (const modId of modIds) {
     const manifest = manifests.find((m) => m.id === modId);
     if (!manifest) continue;
     const entryPath = join(modsDir, modId, manifest.entry);
     const mod = (await import(pathToFileURL(entryPath).href)) as ModEntry;
-    if (mod.characterSheetTemplate) results.push({ modId, manifest, template: mod.characterSheetTemplate });
+    // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- lets the client offer
+    // an "Import from URL" action only for a template that actually
+    // has one (today, just lyrian-chronicles), without hardcoding
+    // that mod's own id anywhere in UI code.
+    if (mod.characterSheetTemplate) results.push({ modId, manifest, template: mod.characterSheetTemplate, hasImporter: !!mod.characterSheetImporter });
   }
   return results;
 }

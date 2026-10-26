@@ -9,7 +9,7 @@
 // (pageManager.ts), not from this outer lobby. See docs/ROADMAP.md's
 // Standing Decisions for the full Game/World split.
 
-import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment } from "@ttrpg3d/shared";
+import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment, ImportedWorkbook, ExpressionSegment, ExpressionEvalResult } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -208,6 +208,8 @@ export interface CharacterSheetTemplateCatalogEntry {
   modId: string;
   manifest: ModManifest;
   template: CharacterSheetTemplate;
+  /** docs/CHARACTER_SHEET_IMPORT.md, part 1 -- whether this mod also exports a characterSheetImporter, for an "Import from URL" action distinct from "start from this template" blank-cloning. */
+  hasImporter: boolean;
 }
 
 /** Scoped to the account's OWN importedModIds -- not every mod on disk, not any game's modIds. */
@@ -236,6 +238,17 @@ export async function updateCharacterSheet(httpUrl: string, characterId: string,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ accountId, templateId, customSheet, variableValues }),
   });
+  return res.json();
+}
+
+/** docs/CHARACTER_SHEET_IMPORT.md, part 1 -- `workbook` is already parsed client-side (characterSheetImport.ts's fetchAndParseWorkbook); this just uploads it to the chosen mod's own characterSheetImporter. Same ownership gate as updateCharacterSheet above, plus a check that `accountId` has actually imported `modId`. Throws with the server's own message on failure (an unauthorized mod, a mod with no importer, a malformed workbook) rather than silently returning a stale character. */
+export async function importCharacterSheetFromWorkbook(httpUrl: string, characterId: string, accountId: string, modId: string, workbook: ImportedWorkbook): Promise<CharacterRecord> {
+  const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}/import-sheet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, modId, workbook }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "import failed");
   return res.json();
 }
 
@@ -277,6 +290,8 @@ export async function uploadImage(httpUrl: string, accountId: string, file: File
 export interface CharacterSheetPreviewResult {
   resolvedMarkdown: string;
   segments: (LibraryCallSegment & { value: string })[];
+  /** docs/CHARACTER_SHEET_IMPORT.md, part 1 -- each `{{expression}}` segment's own resolved value/error, evaluated server-side (reuses @dice-roller/rpg-dice-roller, which must never run client-side -- diceRoll.ts's own "the server is the only place a roll is ever computed" rule). */
+  expressionSegments: (ExpressionSegment & ExpressionEvalResult)[];
 }
 
 export async function fetchCharacterSheetPreview(httpUrl: string, accountId: string, markdown: string, variableValues: Record<string, number | string>): Promise<CharacterSheetPreviewResult> {

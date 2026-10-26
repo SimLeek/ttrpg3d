@@ -29,10 +29,11 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findExpressionSegments, evaluateExpression, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
-import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
+import { fetchAndParseWorkbook } from "./characterSheetImport.js";
 
 const VARIABLE_TYPES: CharacterSheetVariableType[] = ["number", "xOfY", "text"];
 const SAVE_DEBOUNCE_MS = 500;
@@ -190,18 +191,20 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // no mod/server involved, just this character's own variableValues.
     const variableSegments = findVariableRefs(page.markdown).map((s) => ({ ...s, kind: "variable" as const }));
 
-    // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the real-formula
-    // `{{<arithmetic> with {var} refs}}` expressions resolve entirely
-    // client-side too (plain arithmetic, no mod code involved, same
-    // as a plain variable ref) -- no server round trip needed, unlike
-    // an actual `{{modId.fn(args)}}` library call just below.
-    const expressionSegments = findExpressionSegments(page.markdown).map((s) => ({ ...s, kind: "expression" as const }));
-
     // Always fetches on render (not only on edit) -- a freshly-cloned/
     // just-opened page's library calls must not sit unresolved until
     // the viewer happens to type something.
     void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, character.variableValues).then((result) => {
       const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
+      // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
+      // 2026-10-25: `{{expression}}` segments now come back from the
+      // SAME server round trip library calls already use, not a
+      // separate client-side find+evaluate -- the actual evaluation
+      // (@dice-roller/rpg-dice-roller, replacing a hand-rolled parser)
+      // must never run client-side at all, same "the server is the
+      // only place a roll is ever computed" rule dice chat-rolls
+      // already follow.
+      const expressionSegments = result.expressionSegments.map((s) => ({ ...s, kind: "expression" as const }));
       // Merge all three reference kinds, sorted by position -- a page
       // can freely mix {varId}, {{modId.fn(args)}}, and {{expression}}
       // in any order.
@@ -225,16 +228,19 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
         } else if (segment.kind === "expression") {
           // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a real imported
           // formula (e.g. "20 + (10 * {toughness}) + {hpBonus}"),
-          // evaluated fresh against this character's CURRENT
-          // variableValues every render -- live, not a value frozen
-          // at import time.
-          const value = evaluateExpression(segment.expression, character.variableValues);
+          // already evaluated server-side (fresh against this
+          // character's CURRENT variableValues every render -- live,
+          // not a value frozen at import time) -- `segment.error`
+          // covers an unknown variable, a real parser error from the
+          // library, AND the "dice rolling not allowed in fixed
+          // displays" check, all rendered the SAME way: in red,
+          // directly on the sheet, not just a plain bracketed marker.
           substituted +=
-            value === undefined
-              ? `[invalid expression: ${escapeHtml(segment.expression)}]`
+            segment.error !== undefined
+              ? `<span class="expression-error" style="color: red;">${escapeHtml(segment.error)}</span>`
               : segment.display === "button"
-                ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(value))}">${escapeHtml(String(value))}</button>`
-                : `<span class="computed-value">${escapeHtml(String(value))}</span>`;
+                ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
+                : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
         } else {
           const def = findVariableDef(segment.variableId);
           // An inline ref always shows ONE value (box or chip), never
@@ -565,6 +571,7 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       <p>This character doesn't have a sheet yet.</p>
       <div class="variable-row"><button type="button" id="start-blank-btn">Start a blank sheet</button></div>
       <div class="variable-row" id="start-template-list"></div>
+      <div id="import-template-list"></div>
     `;
     container.querySelector<HTMLButtonElement>("#start-blank-btn")!.addEventListener("click", () => {
       character.customSheet = { name: `${character.name}'s Sheet`, pages: [{ title: "Overview", markdown: "", variableIds: [] }], variables: [], bars: [] };
@@ -587,6 +594,56 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       pageMode = "view";
       saveSheet();
       renderSheetSection();
+    });
+    renderImportSection(container.querySelector<HTMLDivElement>("#import-template-list")!);
+  }
+
+  /**
+   * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- "Import from URL" for
+   * any template whose mod also exports a characterSheetImporter
+   * (today, just lyrian-chronicles -- `hasImporter` is what the
+   * server actually checked, not a hardcoded mod id here). The
+   * BROWSER fetches+parses the export URL directly
+   * (characterSheetImport.ts's fetchAndParseWorkbook) -- the server
+   * never fetches an arbitrary URL itself, same as every other
+   * "paste a URL" flow would need to avoid in this codebase.
+   */
+  function renderImportSection(hostEl: HTMLDivElement): void {
+    const importers = templates.filter((t) => t.hasImporter);
+    if (importers.length === 0) return;
+    hostEl.innerHTML = importers
+      .map(
+        (t) => `
+      <div class="variable-row import-row" data-mod-id="${t.modId}">
+        <input type="text" class="import-url-input" placeholder="Paste the sheet's export URL for &quot;${escapeHtml(t.template.name)}&quot;..." />
+        <button type="button" class="import-from-url-btn">Import</button>
+        <span class="import-status"></span>
+      </div>`,
+      )
+      .join("");
+    hostEl.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".import-from-url-btn");
+      if (!button) return;
+      const row = button.closest<HTMLDivElement>(".import-row")!;
+      const modId = row.dataset.modId!;
+      const urlInput = row.querySelector<HTMLInputElement>(".import-url-input")!;
+      const statusEl = row.querySelector<HTMLSpanElement>(".import-status")!;
+      const url = urlInput.value.trim();
+      if (!url) return;
+      statusEl.textContent = "Importing...";
+      button.disabled = true;
+      void fetchAndParseWorkbook(url)
+        .then((workbook) => importCharacterSheetFromWorkbook(httpUrl, character.id, viewerAccountId, modId, workbook))
+        .then((updated) => {
+          Object.assign(character, updated);
+          selectedSheetTab = 0; // land on the imported sheet's first page, not the Core tab
+          pageMode = "view";
+          renderSheetSection();
+        })
+        .catch((err: unknown) => {
+          statusEl.textContent = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
+          button.disabled = false;
+        });
     });
   }
 

@@ -63,7 +63,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   importedModIds = [];
-  previewResponse = { resolvedMarkdown: "", segments: [] };
+  previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [] };
   character = {
     id: "char-1",
     ownerAccountId: "account-1",
@@ -84,6 +84,7 @@ beforeEach(() => {
         variables: [{ id: "str", label: "Strength", type: "number", default: 10 }],
         pages: [{ title: "Overview", markdown: "Strength: {str}, modifier: {{default.modifier(str)}}", variableIds: ["str"] }],
       },
+      hasImporter: false,
     },
   ];
   libraries = [];
@@ -231,6 +232,7 @@ describe("mountCharactersPage", () => {
     previewResponse = {
       resolvedMarkdown: "Strength: 12, modifier: 1",
       segments: [{ start: 18, end: 41, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "button" }],
+      expressionSegments: [],
     };
     character.variableValues = { str: 12 };
     mountCharactersPage(container, "http://test", "account-1");
@@ -248,7 +250,7 @@ describe("mountCharactersPage", () => {
 
   it("an inline {variableId} box sits exactly where written in the markdown and is directly editable, persisting the change (round 4's actual request -- not a list below the page)", async () => {
     importedModIds = ["default"];
-    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }] };
+    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }], expressionSegments: [] };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
@@ -359,7 +361,7 @@ describe("mountCharactersPage", () => {
 
   it("a {{modId.fn(args):box}} library call renders as a plain, non-clickable value instead of a chat-chip", async () => {
     importedModIds = ["default"];
-    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }] };
+    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }], expressionSegments: [] };
     character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "Modifier: {{default.modifier(str):box}}", variableIds: [] }], variables: [] };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
@@ -527,6 +529,7 @@ describe("mountCharactersPage", () => {
     previewResponse = {
       resolvedMarkdown: "Strength: 10, modifier: 3",
       segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "3", display: "button" }],
+      expressionSegments: [],
     };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();

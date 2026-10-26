@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, findExpressionSegments, evaluateExpression, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate } from "./characterSheet.js";
+import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, findExpressionSegments, substituteVariableRefs, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate } from "./characterSheet.js";
 
 describe("computeMissingModDependencies", () => {
   it("returns an empty array when every required mod is available", () => {
@@ -156,84 +156,33 @@ describe("findExpressionSegments (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a re
   });
 });
 
-describe("evaluateExpression (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the real arithmetic evaluator, no eval()/Function() anywhere)", () => {
-  it("evaluates plain arithmetic with no variables at all", () => {
-    expect(evaluateExpression("2+2", {})).toBe(4);
-    expect(evaluateExpression("10 - 3", {})).toBe(7);
-    expect(evaluateExpression("3 * 4", {})).toBe(12);
-    expect(evaluateExpression("10 / 4", {})).toBe(2.5);
+describe("substituteVariableRefs (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25: the actual arithmetic/dice evaluation moved server-side to reuse @dice-roller/rpg-dice-roller, see packages/server/src/chat/diceRoll.test.ts; this is the shared text-substitution half both that evaluator AND the [[dice notation]] chat-roll system reuse)", () => {
+  it("returns the text unchanged when it has no {variableId} references at all", () => {
+    expect(substituteVariableRefs("2+2", {})).toBe("2+2");
   });
 
-  it("respects standard operator precedence (* and / before + and -)", () => {
-    expect(evaluateExpression("2 + 3 * 4", {})).toBe(14); // not 20
-    expect(evaluateExpression("20 - 4 / 2", {})).toBe(18); // not 8
+  it("substitutes a single reference with its current numeric value", () => {
+    expect(substituteVariableRefs("20 + (10 * {toughness}) + {hpBonus}", { toughness: 5, hpBonus: 0 })).toBe("20 + (10 * 5) + 0");
   });
 
-  it("respects parentheses to override precedence", () => {
-    expect(evaluateExpression("(2 + 3) * 4", {})).toBe(20);
-    expect(evaluateExpression("20 / (2 + 2)", {})).toBe(5);
+  it("substitutes multiple distinct references", () => {
+    expect(substituteVariableRefs("{a} + {b} * {c}", { a: 1, b: 2, c: 3 })).toBe("1 + 2 * 3");
   });
 
-  it("supports nested parentheses", () => {
-    expect(evaluateExpression("((1 + 2) * (3 + 4))", {})).toBe(21);
-  });
-
-  it("supports unary minus/plus", () => {
-    expect(evaluateExpression("-5 + 10", {})).toBe(5);
-    expect(evaluateExpression("10 + -5", {})).toBe(5);
-    expect(evaluateExpression("-(2 + 3)", {})).toBe(-5);
-    expect(evaluateExpression("+5", {})).toBe(5);
-  });
-
-  it("supports decimal literals", () => {
-    expect(evaluateExpression("1.5 + 2.5", {})).toBe(4);
-  });
-
-  it("substitutes a single {variableId} reference with its current numeric value", () => {
-    expect(evaluateExpression("20 + (10 * {toughness}) + {hpBonus}", { toughness: 5, hpBonus: 0 })).toBe(70);
-  });
-
-  it("substitutes multiple distinct variable references", () => {
-    expect(evaluateExpression("{a} + {b} * {c}", { a: 1, b: 2, c: 3 })).toBe(7);
-  });
-
-  it("re-evaluates to a NEW result when the underlying variable changes -- the whole point of \"live\", not a frozen snapshot", () => {
-    const toughness5 = evaluateExpression("20 + (10 * {toughness}) + {hpBonus}", { toughness: 5, hpBonus: 0 });
-    const toughness6 = evaluateExpression("20 + (10 * {toughness}) + {hpBonus}", { toughness: 6, hpBonus: 0 });
-    expect(toughness5).toBe(70);
-    expect(toughness6).toBe(80);
-  });
-
-  it("supports .x/.y component refs for an xOfY variable, same as a plain {variableId} reference outside an expression", () => {
-    expect(evaluateExpression("{hp.x} + {hp.y}", { hp: 7, hpMax: 10 })).toBe(17);
+  it("supports .x/.y component refs for an xOfY variable", () => {
+    expect(substituteVariableRefs("{hp.x} + {hp.y}", { hp: 7, hpMax: 10 })).toBe("7 + 10");
   });
 
   it("coerces a numeric-STRING variable value (variableValues allows number | string)", () => {
-    expect(evaluateExpression("{toughness} + 1", { toughness: "5" })).toBe(6);
+    expect(substituteVariableRefs("{toughness} + 1", { toughness: "5" })).toBe("5 + 1");
   });
 
   it("fails gracefully (undefined, never throws) for an unknown variable", () => {
-    expect(evaluateExpression("{doesNotExist} + 1", {})).toBeUndefined();
+    expect(substituteVariableRefs("{doesNotExist} + 1", {})).toBeUndefined();
   });
 
   it("fails gracefully for a non-numeric string variable value", () => {
-    expect(evaluateExpression("{name} + 1", { name: "Aria" })).toBeUndefined();
-  });
-
-  it("fails gracefully for malformed arithmetic (unbalanced parens, stray operator, trailing garbage)", () => {
-    expect(evaluateExpression("(2 + 3", {})).toBeUndefined();
-    expect(evaluateExpression("2 +", {})).toBeUndefined();
-    expect(evaluateExpression("2 + 3)", {})).toBeUndefined();
-    expect(evaluateExpression("2 + 3 foo", {})).toBeUndefined();
-    expect(evaluateExpression("", {})).toBeUndefined();
-  });
-
-  it("fails gracefully on division by zero, rather than returning Infinity/NaN", () => {
-    expect(evaluateExpression("5 / 0", {})).toBeUndefined();
-  });
-
-  it("never uses eval/Function -- a variable value containing code-like text is treated as plain data, not executed", () => {
-    expect(evaluateExpression("{x} + 1", { x: "1; console.log(1)" })).toBeUndefined(); // non-numeric string -- fails cleanly, definitely not executed
+    expect(substituteVariableRefs("{name} + 1", { name: "Aria" })).toBeUndefined();
   });
 });
 

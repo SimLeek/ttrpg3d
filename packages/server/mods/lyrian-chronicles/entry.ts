@@ -3,21 +3,39 @@
 // held since 2026-10-21 pending real test data) against a real public
 // Lyrian Chronicles character sheet.
 //
-// Build-order step 1 ONLY (see that doc's own "Proposed build order"):
+// Build-order step 1 (see that doc's own "Proposed build order"):
 // plumbing proven with a FEW trivial, flat values pulled straight off
-// the sheet's own "Core" tab -- HP/Mana/Agility, found by scanning for
-// their own text label and reading the cell immediately to its right
-// (a generic scan, not hardcoded cell coordinates, so it isn't fragile
-// against a different character's own sheet shifting rows/columns
-// around, which the real sheet's own layout already shows happens --
-// Core is a scattered label/value grid, not a fixed form). Steps 2-3
-// (porting the REAL formula graph -- point-buy arrays, racial/class
-// bonuses, equipment SUMIFs -- so these recompute live instead of
-// staying frozen at import time) and step 4 (the generated Abilities/
+// the sheet's own "Core" tab -- Mana/Agility/Toughness/HP Bonus, found
+// by scanning for their own text label and reading the cell
+// immediately to its right (a generic scan, not hardcoded cell
+// coordinates, so it isn't fragile against a different character's
+// own sheet shifting rows/columns around, which the real sheet's own
+// layout already shows happens -- Core is a scattered label/value
+// grid, not a fixed form).
+//
+// HP specifically now demonstrates step 2's own `{{expression}}`
+// mechanism with the sheet's REAL formula (confirmed directly against
+// the real spreadsheet, not guessed): `HP = 20 + (10 * Toughness) +
+// HP Bonus`. The Core page's own markdown shows this formula
+// VERBATIM, with Toughness/HP Bonus as `{variableId}` refs -- editing
+// either one later (a level-up bumping Toughness, say) recomputes the
+// page's own displayed value live, with NO JS function written for
+// it in this mod at all (see characterSheet.ts's own `{{expression}}`
+// doc for why that's the whole point). The STORED `hp`/`hpMax`
+// variables (which the 3D token's own health BAR needs -- a bar
+// reads a real stored xOfY value, not a live formula) are seeded
+// ONCE at import time from that SAME formula, so a freshly-imported
+// character's bar already shows the correct number; they don't
+// themselves recompute afterward (no mechanism exists yet for a BAR
+// to read a formula instead of a stored value -- a real, separate
+// follow-up, not pretended-away here).
+//
+// Steps 3/4 (the REAL point-buy/racial/class-bonus formula graph
+// behind Toughness/Agility themselves, and the generated Abilities/
 // Inventory pages) are deliberately NOT here yet -- this mod's own
-// `characterSheetImporter` returns an empty `pages` array for now,
+// `characterSheetImporter` returns only the Core page for now,
 // proving the plumbing/merge path compiles and round-trips correctly
-// without yet generating real content.
+// without yet generating every page content type.
 
 import { xOfYMaxKey, type CharacterSheetTemplate, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
 
@@ -27,6 +45,8 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 },
     { id: "mana", label: "Mana", type: "xOfY", default: 10, max: 10 },
     { id: "agility", label: "Agility", type: "number", default: 0 },
+    { id: "toughness", label: "Toughness", type: "number", default: 0 },
+    { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 },
   ],
   bars: [
     { variableId: "hp", color: [0.753, 0.224, 0.169] },
@@ -35,8 +55,8 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
   pages: [
     {
       title: "Core",
-      markdown: "# Core\n\nHP: {hp}\n\nMana: {mana}\n\nAgility: {agility}",
-      variableIds: ["hp", "mana", "agility"],
+      markdown: "# Core\n\nHP: {hp} / {hp.y}\n\nMax HP (live formula): {{20 + (10 * {toughness}) + {hpBonus}}}\n\nMana: {mana}\n\nAgility: {agility}\n\nToughness: {toughness}",
+      variableIds: ["hp", "mana", "agility", "toughness", "hpBonus"],
     },
   ],
 };
@@ -72,14 +92,20 @@ function asNumber(value: string | number | boolean | undefined, fallback: number
 
 const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const core = workbook["Core"] ?? [];
-  const hp = asNumber(findLabelValue(core, "HP"), 10);
   const mana = asNumber(findLabelValue(core, "Mana"), 10);
   const agility = asNumber(findLabelValue(core, "Agility"), 0);
+  const toughness = asNumber(findLabelValue(core, "Toughness"), 0);
+  const hpBonus = asNumber(findLabelValue(core, "HP Bonus"), 0);
+  // Same formula the Core page's own `{{expression}}` shows live --
+  // this ONE-TIME snapshot just seeds the stored hp/hpMax the 3D
+  // token's bar reads (see this file's own header comment for why
+  // the bar can't read the live formula directly yet).
+  const hp = 20 + 10 * toughness + hpBonus;
   return {
     // HP/Mana import as full/current-equals-max (the sheet is a
     // character BUILD sheet, not a live combat tracker -- it has no
     // separate "current damage taken" of its own to import).
-    variableValues: { hp, [xOfYMaxKey("hp")]: hp, mana, [xOfYMaxKey("mana")]: mana, agility },
+    variableValues: { hp, [xOfYMaxKey("hp")]: hp, mana, [xOfYMaxKey("mana")]: mana, agility, toughness, hpBonus },
     pages: [],
   };
 };
