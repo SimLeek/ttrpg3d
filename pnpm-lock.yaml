@@ -105,6 +105,10 @@ importers:
         version: 5.0.0(@types/node@26.5.0)(jsdom@30.1.2)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13))
 
   packages/shared:
+    dependencies:
+      expr-eval:
+        specifier: ^2.0.2
+        version: 2.0.2
     devDependencies:
       typescript:
         specifier: ^7.0.0
@@ -1213,6 +1217,9 @@ packages:
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
+
+  expr-eval@2.0.2:
+    resolution: {integrity: sha512-4EMSHGOPSwAfBiibw3ndnP0AvjDWLsMvGOvWEZ2F96IGk0bIVdjQisOHxReSkE13mHcfbuCiXw+G4y0zv6N8Eg==}
 
   express-jwt@8.5.1:
     resolution: {integrity: sha512-Dv6QjDLpR2jmdb8M6XQXiCcpEom7mK8TOqnr0/TngDKsG2DHVkO8+XnVxkJVN7BuS1I3OrGw6N8j5DaaGgkDRQ==}
@@ -3133,6 +3140,8 @@ snapshots:
   exif-parser@0.1.12: {}
 
   expect-type@1.4.0: {}
+
+  expr-eval@2.0.2: {}
 
   express-jwt@8.5.1:
     dependencies:

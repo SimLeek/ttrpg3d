@@ -290,7 +290,16 @@ export async function uploadImage(httpUrl: string, accountId: string, file: File
 export interface CharacterSheetPreviewResult {
   resolvedMarkdown: string;
   segments: (LibraryCallSegment & { value: string })[];
-  /** docs/CHARACTER_SHEET_IMPORT.md, part 1 -- each `{{expression}}` segment's own resolved value/error, evaluated server-side (reuses @dice-roller/rpg-dice-roller, which must never run client-side -- diceRoll.ts's own "the server is the only place a roll is ever computed" rule). */
+  /**
+   * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
+   * 2026-10-25 (second pass): plain `{{expression}}` arithmetic now
+   * resolves entirely client-side (characterSheetView.ts, via shared/
+   * characterSheet.ts's evaluateCharacterSheetExpression) -- this
+   * array only ever carries segments that turned out to need a REAL
+   * dice roll (real RNG, which only the server may compute), so it's
+   * frequently empty, and this whole round trip is skipped by the
+   * caller entirely when nothing on the page needs it at all.
+   */
   expressionSegments: (ExpressionSegment & ExpressionEvalResult)[];
 }
 

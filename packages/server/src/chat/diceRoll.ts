@@ -13,7 +13,7 @@
 // this notation is invalid" is all this wrapper needs to know.
 
 import { DiceRoll } from "@dice-roller/rpg-dice-roller";
-import { substituteVariableRefs, type ExpressionEvalResult } from "@ttrpg3d/shared";
+import { substituteVariableRefs, DICE_NOTATION_PATTERN, type ExpressionEvalResult } from "@ttrpg3d/shared";
 
 export interface RollOk {
   ok: true;
@@ -52,44 +52,27 @@ export function rollNotation(notation: string, variableValues: Readonly<Record<s
 }
 
 /**
- * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25:
- * replaces the earlier hand-rolled arithmetic parser (shared/
- * characterSheet.ts's own removed evaluateExpression) -- "we don't
- * want to risk mistakes when we can just use libraries... the dice
- * evaluator should be able to do everything there." Confirmed
- * directly (not assumed): DiceRoll evaluates plain arithmetic with NO
- * dice term at all just fine (e.g. "20 + (10 * 5)"), so one evaluator
- * covers both a sheet's own derived-stat formulas AND an actual dice
- * roll.
- *
- * `allowDice` is the caller's own "is this a fixed/always-shown
- * display, or a deliberate roll-button click" decision (an
- * `ExpressionSegment`'s `display === "button"`) -- real request:
- * "search 'd\d'... if that's found then have it display an error
- * 'dice rolling not allowed in fixed displays'." Checked AFTER
- * variable substitution (never on the raw, un-substituted text) --
- * substitution replaces every `{variableId}` with a plain number, so
- * a variable's own NAME can never produce a false positive here (a
- * name like "hp2d" is gone by the time this check runs).
- *
- * This is WHY `{{expression}}` resolution has to live here, server-
- * side, rather than back in shared/characterSheet.ts where the
- * client could run it directly: `@dice-roller/rpg-dice-roller` must
- * never be evaluated client-side at all (this file's own long-
- * standing header comment: "the server is the only place a roll is
- * ever computed" -- a malicious/modified client could otherwise fake
- * any roll it wants). A "box" (no dice allowed) expression has
- * nothing to cheat either way, but keeping ONE evaluation path for
- * both cases (rather than a client-side one for "safe" expressions
- * and a server one for dice-containing ones) means there's only ever
- * one place this logic can drift from being correct.
+ * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25
+ * (second pass): plain arithmetic now evaluates client-side (shared/
+ * characterSheet.ts's own `evaluateCharacterSheetExpression`, via
+ * `expr-eval`) -- "the character sheet results for displaying on the
+ * client side can all be done client side... we should [add a
+ * library] rather than putting calculations on the server side." This
+ * function is now the ONLY `{{expression}}` work left that actually
+ * needs the server at all: a genuine dice roll, which needs real RNG
+ * (this file's own long-standing header: "the server is the only
+ * place a roll is ever computed" -- a malicious/modified client could
+ * otherwise fake any roll it wants). Everything else -- plain
+ * arithmetic, an unknown-variable error, a disallowed-dice "box"
+ * error -- the client has ALREADY resolved on its own by the time
+ * this is even called, so this returns `undefined` for all of those
+ * cases rather than redoing them; server.ts's own mapping drops every
+ * `undefined` result instead of sending it back.
  */
-const DICE_NOTATION_PATTERN = /d[0-9]/i;
-
-export function evaluateCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean): ExpressionEvalResult {
+export function rollCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean): ExpressionEvalResult | undefined {
+  if (!allowDice) return undefined;
   const substituted = substituteVariableRefs(expression, variableValues);
-  if (substituted === undefined) return { error: "unknown or non-numeric variable" };
-  if (!allowDice && DICE_NOTATION_PATTERN.test(substituted)) return { error: "dice rolling not allowed in fixed displays" };
+  if (substituted === undefined || !DICE_NOTATION_PATTERN.test(substituted)) return undefined;
   try {
     const roll = new DiceRoll(substituted);
     // Confirmed directly: DiceRoll does NOT throw on division by
@@ -97,7 +80,7 @@ export function evaluateCharacterSheetExpression(expression: string, variableVal
     // That's exactly the kind of "technically a number, not actually
     // a sane result" this needs to catch and report, not display.
     if (!Number.isFinite(roll.total)) return { error: "division by zero" };
-    return allowDice ? { value: roll.total, text: roll.output } : { value: roll.total };
+    return { value: roll.total, text: roll.output };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

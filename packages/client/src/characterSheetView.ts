@@ -29,7 +29,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, evaluateCharacterSheetExpression, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
@@ -191,30 +191,33 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // no mod/server involved, just this character's own variableValues.
     const variableSegments = findVariableRefs(page.markdown).map((s) => ({ ...s, kind: "variable" as const }));
 
-    // Always fetches on render (not only on edit) -- a freshly-cloned/
-    // just-opened page's library calls must not sit unresolved until
-    // the viewer happens to type something.
-    void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, character.variableValues).then((result) => {
-      const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
-      // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
-      // 2026-10-25: `{{expression}}` segments now come back from the
-      // SAME server round trip library calls already use, not a
-      // separate client-side find+evaluate -- the actual evaluation
-      // (@dice-roller/rpg-dice-roller, replacing a hand-rolled parser)
-      // must never run client-side at all, same "the server is the
-      // only place a roll is ever computed" rule dice chat-rolls
-      // already follow.
-      const expressionSegments = result.expressionSegments.map((s) => ({ ...s, kind: "expression" as const }));
-      // Merge all three reference kinds, sorted by position -- a page
-      // can freely mix {varId}, {{modId.fn(args)}}, and {{expression}}
-      // in any order.
-      const allSegments = [...callSegments, ...variableSegments, ...expressionSegments].sort((a, b) => a.start - b.start);
+    // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
+    // 2026-10-25 (second pass): "the character sheet results for
+    // displaying on the client side can all be done client side...
+    // rather than putting calculations on the server side." Plain
+    // `{{expression}}` arithmetic now evaluates HERE, client-side, via
+    // shared/characterSheet.ts's own evaluateCharacterSheetExpression
+    // (expr-eval, not a hand-rolled parser) -- a segment only comes
+    // back `needsRoll: true` when it genuinely contains dice notation
+    // in an allowed (`button`) spot, since only the server may ever
+    // compute a real roll (diceRoll.ts's own "the server is the only
+    // place a roll is ever computed" rule).
+    const expressionSegments = findExpressionSegments(page.markdown).map((s) => ({
+      ...s,
+      kind: "expression" as const,
+      ...evaluateCharacterSheetExpression(s.expression, character.variableValues, s.display === "button"),
+    }));
 
-      // Substitute each segment with its own HTML snippet BEFORE
-      // handing the text to marked -- by the time a flattened,
-      // plain-text-only resolution exists, the original markers are
-      // gone, so inline widgets/chips have to be built from the
-      // ORIGINAL markdown + segments instead.
+    // Substitutes each segment with its own HTML snippet BEFORE handing
+    // the text to marked -- by the time a flattened, plain-text-only
+    // resolution exists, the original markers are gone, so inline
+    // widgets/chips have to be built from the ORIGINAL markdown +
+    // segments instead. Shared by both render paths below (fully
+    // local, or merged with a server roll) so there's one place this
+    // logic can drift out of sync.
+    function finishRender(callSegments: ((typeof variableSegments)[number] | { kind: "call"; start: number; end: number; modId: string; functionName: string; value: string; display: "box" | "button" })[], exprSegments: typeof expressionSegments): void {
+      const allSegments = [...callSegments, ...variableSegments, ...exprSegments].sort((a, b) => a.start - b.start);
+
       let substituted = "";
       let cursor = 0;
       for (const segment of allSegments) {
@@ -226,21 +229,25 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
               ? `<span class="computed-value">${escapeHtml(segment.value)}</span>`
               : `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(label)}" data-chip-value="${escapeHtml(segment.value)}">${escapeHtml(segment.value)}</button>`;
         } else if (segment.kind === "expression") {
-          // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a real imported
-          // formula (e.g. "20 + (10 * {toughness}) + {hpBonus}"),
-          // already evaluated server-side (fresh against this
-          // character's CURRENT variableValues every render -- live,
-          // not a value frozen at import time) -- `segment.error`
-          // covers an unknown variable, a real parser error from the
-          // library, AND the "dice rolling not allowed in fixed
-          // displays" check, all rendered the SAME way: in red,
-          // directly on the sheet, not just a plain bracketed marker.
+          // A real imported formula (e.g. "20 + (10 * {toughness}) +
+          // {hpBonus}"), evaluated fresh against this character's
+          // CURRENT variableValues every render -- live, not a value
+          // frozen at import time. `segment.error` covers an unknown
+          // variable, a real parser error, AND the "dice rolling not
+          // allowed in fixed displays" check, all rendered the SAME
+          // way: in red, directly on the sheet. A `needsRoll` segment
+          // that reaches here unresolved (no server merge happened,
+          // or the round trip failed) just shows nothing rather than
+          // a half-broken chip -- the merge path below is the normal
+          // way these actually get a value.
           substituted +=
             segment.error !== undefined
               ? `<span class="expression-error" style="color: red;">${escapeHtml(segment.error)}</span>`
-              : segment.display === "button"
-                ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
-                : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
+              : segment.value === undefined
+                ? ""
+                : segment.display === "button"
+                  ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
+                  : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
         } else {
           const def = findVariableDef(segment.variableId);
           // An inline ref always shows ONE value (box or chip), never
@@ -267,6 +274,34 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
         character.variableValues = { ...character.variableValues, [key]: next };
         saveSheet();
       });
+    }
+
+    const libraryCallSegments = findLibraryCalls(page.markdown);
+    const needsServerRoll = expressionSegments.some((s) => s.needsRoll);
+
+    if (libraryCallSegments.length === 0 && !needsServerRoll) {
+      // Nothing on this page needs the server at all (no mod library
+      // calls, no real dice rolls) -- render immediately, with zero
+      // network round trip.
+      finishRender([], expressionSegments);
+      return;
+    }
+
+    // Always fetches on render (not only on edit) -- a freshly-cloned/
+    // just-opened page's library calls must not sit unresolved until
+    // the viewer happens to type something.
+    void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, character.variableValues).then((result) => {
+      const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
+      // Merge in the server's real-roll results for exactly the
+      // segments that needed one -- every other expression segment
+      // keeps the value/error it already resolved client-side above,
+      // untouched (the server was never asked about those at all).
+      const mergedExpressionSegments = expressionSegments.map((s) => {
+        if (!s.needsRoll) return s;
+        const rolled = result.expressionSegments.find((r) => r.start === s.start && r.end === s.end);
+        return rolled ? { ...s, ...rolled, needsRoll: false } : s;
+      });
+      finishRender(callSegments, mergedExpressionSegments);
     });
   }
 

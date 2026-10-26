@@ -15,7 +15,7 @@ import { findLibraryCalls, findExpressionSegments, type ImportedWorkbook } from 
 import { join } from "node:path";
 import express from "express";
 import { saveUploadedImage, UploadRejected } from "./data/uploads.js";
-import { evaluateCharacterSheetExpression } from "./chat/diceRoll.js";
+import { rollCharacterSheetExpression } from "./chat/diceRoll.js";
 
 store.ensureSeedData();
 
@@ -266,18 +266,20 @@ const postCharacterSheetPreview = createEndpoint("/accounts/:id/character-sheet-
     })),
   );
   // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
-  // 2026-10-25: `{{expression}}` resolution moved HERE (the same
-  // server round trip library calls already use), not a separate
-  // client-only path -- @dice-roller/rpg-dice-roller (what actually
-  // evaluates these now, replacing a hand-rolled parser) must never
-  // run client-side at all (diceRoll.ts's own "the server is the
-  // only place a roll is ever computed" rule). `allowDice` follows
-  // each segment's own display: "button" (a deliberate click) can
-  // contain a real roll; "box" (always shown, no action) cannot.
-  const expressionSegments = findExpressionSegments(markdown).map((segment) => ({
-    ...segment,
-    ...evaluateCharacterSheetExpression(segment.expression, variableValues, segment.display === "button"),
-  }));
+  // 2026-10-25 (second pass): the client now resolves plain
+  // `{{expression}}` arithmetic entirely on its own (shared/
+  // characterSheet.ts's own evaluateCharacterSheetExpression, via
+  // expr-eval) -- this round trip is no longer asked to fill out
+  // every expression in the markdown, only the ones that turn out to
+  // need a REAL dice roll (rollCharacterSheetExpression returns
+  // undefined for everything else, since the client already resolved
+  // it, value or error, with nothing left for the server to add).
+  const expressionSegments = findExpressionSegments(markdown)
+    .map((segment) => {
+      const roll = rollCharacterSheetExpression(segment.expression, variableValues, segment.display === "button");
+      return roll ? { ...segment, ...roll } : undefined;
+    })
+    .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
   return { resolvedMarkdown, segments, expressionSegments };
 });
 

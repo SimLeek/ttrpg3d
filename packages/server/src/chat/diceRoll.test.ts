@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rollNotation, evaluateCharacterSheetExpression } from "./diceRoll.js";
+import { rollNotation, rollCharacterSheetExpression } from "./diceRoll.js";
 
 describe("rollNotation (real calls into @dice-roller/rpg-dice-roller, not mocked)", () => {
   it("resolves valid notation with a numeric total and a human-readable breakdown", () => {
@@ -45,63 +45,33 @@ describe("rollNotation (real calls into @dice-roller/rpg-dice-roller, not mocked
   });
 });
 
-describe("evaluateCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25: reuses @dice-roller/rpg-dice-roller instead of a hand-rolled parser)", () => {
-  it("evaluates plain arithmetic with no dice and no variables at all", () => {
-    expect(evaluateCharacterSheetExpression("2+2", {}, false)).toEqual({ value: 4 });
-    expect(evaluateCharacterSheetExpression("20 + (10 * 5) + 0", {}, false)).toEqual({ value: 70 });
+describe("rollCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25, second pass: the ONLY {{expression}} work left server-side, now that plain arithmetic evaluates client-side -- shared/characterSheet.ts's own evaluateCharacterSheetExpression)", () => {
+  it("returns undefined for plain arithmetic -- the client already resolved this on its own, nothing for the server to add", () => {
+    expect(rollCharacterSheetExpression("20 + (10 * 5) + 0", {}, false)).toBeUndefined();
+    expect(rollCharacterSheetExpression("20 + (10 * 5) + 0", {}, true)).toBeUndefined();
   });
 
-  it("substitutes {variableId} references with their current numeric value before evaluating", () => {
-    expect(evaluateCharacterSheetExpression("20 + (10 * {toughness}) + {hpBonus}", { toughness: 5, hpBonus: 0 }, false)).toEqual({ value: 70 });
+  it("returns undefined when dice notation isn't allowed (a fixed/box display) -- the client already reported its own 'not allowed' error", () => {
+    expect(rollCharacterSheetExpression("1d20 + 5", {}, false)).toBeUndefined();
   });
 
-  it("re-evaluates to a NEW result when the underlying variable changes -- the whole point of \"live\", not a frozen snapshot", () => {
-    const at5 = evaluateCharacterSheetExpression("20 + (10 * {toughness})", { toughness: 5 }, false);
-    const at6 = evaluateCharacterSheetExpression("20 + (10 * {toughness})", { toughness: 6 }, false);
-    expect(at5).toEqual({ value: 70 });
-    expect(at6).toEqual({ value: 80 });
+  it("returns undefined for an unknown variable -- the client already reported its own error", () => {
+    expect(rollCharacterSheetExpression("1d20 + {doesNotExist}", {}, true)).toBeUndefined();
   });
 
-  it("supports .x/.y component refs for an xOfY variable", () => {
-    expect(evaluateCharacterSheetExpression("{hp.x} + {hp.y}", { hp: 7, hpMax: 10 }, false)).toEqual({ value: 17 });
+  it("actually rolls real dice when allowed (a button/clicked display) and dice notation is present", () => {
+    const result = rollCharacterSheetExpression("1d1 + 5", {}, true); // 1d1 is deterministic
+    expect(result?.value).toBe(6);
+    expect(result?.text).toContain("1d1");
   });
 
-  it("fails gracefully with an error (never throws) for an unknown variable", () => {
-    const result = evaluateCharacterSheetExpression("{doesNotExist} + 1", {}, false);
-    expect(result.value).toBeUndefined();
-    expect(result.error).toBeTruthy();
-  });
-
-  it("fails gracefully with an error for malformed arithmetic (the library's own real parser error, not a generic message)", () => {
-    const result = evaluateCharacterSheetExpression("2 + 3 foo", {}, false);
-    expect(result.value).toBeUndefined();
-    expect(result.error).toBeTruthy();
-  });
-
-  it("fails gracefully with an error on division by zero -- the library itself doesn't throw, it returns Infinity, which this catches explicitly", () => {
-    expect(evaluateCharacterSheetExpression("5 / 0", {}, false)).toEqual({ error: "division by zero" });
-  });
-
-  it("real request: dice notation (a literal 'd' followed by a digit) is rejected with the exact requested message when NOT allowed (a fixed/box display)", () => {
-    expect(evaluateCharacterSheetExpression("1d20 + 5", {}, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
-  });
-
-  it("dice notation IS allowed (and actually rolled) when the caller says so (a button/clicked display)", () => {
-    const result = evaluateCharacterSheetExpression("1d1 + 5", {}, true); // 1d1 is deterministic
-    expect(result.value).toBe(6);
-    expect(result.text).toContain("1d1");
-  });
-
-  it("a variable NAME that happens to contain a letter 'd' followed by a digit (e.g. a variable literally called 'd4bonus') never false-positives the dice check, since substitution replaces the NAME with a plain number first", () => {
-    expect(evaluateCharacterSheetExpression("{d4bonus} + 1", { d4bonus: 3 }, false)).toEqual({ value: 4 });
+  it("substitutes {variableId} references before rolling", () => {
+    const result = rollCharacterSheetExpression("1d1 + {initiative}", { initiative: 7 }, true);
+    expect(result?.value).toBe(8);
   });
 
   it("the dice check is case-insensitive on the SUBSTITUTED text (even though the real library itself only accepts lowercase 'd')", () => {
-    // Confirmed directly against the library: uppercase "D" dice
-    // notation isn't valid syntax at all (it throws its own parser
-    // error) -- this still reports the SPECIFIC "not allowed" message
-    // rather than a generic parse-error one, since the check runs
-    // before the library ever sees the text.
-    expect(evaluateCharacterSheetExpression("1D20 + 5", {}, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
+    const result = rollCharacterSheetExpression("1D1 + 5", {}, true);
+    expect(result?.error).toBeTruthy(); // the library itself rejects uppercase D as invalid syntax
   });
 });

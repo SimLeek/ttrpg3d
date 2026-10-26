@@ -1,3 +1,5 @@
+import { Parser } from "expr-eval";
+
 // MVP goal item 4 (docs/ROADMAP.md), slice 1 -- the data shapes a
 // character-sheet-template mod's entry module exports as plain,
 // side-effect-free data (`characterSheetTemplate`), readable via a
@@ -452,27 +454,67 @@ export function substituteVariableRefs(text: string, variableValues: Readonly<Re
 
 /**
  * What evaluating one `{{expression}}` segment produces -- plain data,
- * shared between the server (the only place that actually computes
- * it -- see this field's own doc on why) and the client (just renders
- * whichever of `value`/`error` came back). Real correction, 2026-10-25:
- * the hand-rolled arithmetic parser this type used to back
- * (`evaluateExpression`, shared/client-side) is gone -- "we don't want
- * to risk mistakes when we can just use libraries... the dice
- * evaluator should be able to do everything there." The actual
- * evaluation now reuses this project's own `@dice-roller/rpg-dice-roller`
- * (confirmed it handles plain arithmetic with no dice term at all
- * fine, not just dice notation) -- but that library is, and must
- * stay, SERVER-ONLY (diceRoll.ts's own header: "the server is the
- * only place a roll is ever computed," the same fairness boundary
- * admin checks/voxel edits already use) -- so `{{expression}}`
- * resolution moves into the SAME server round trip
- * `{{modId.fn(args)}}` library calls already go through
- * (postCharacterSheetPreview), not a separate client-only path
- * anymore.
+ * rendered by the client regardless of which side actually computed
+ * it (see `evaluateCharacterSheetExpression` below for the split).
+ * `needsRoll: true` means this segment contains real dice notation in
+ * an allowed (`button`) spot -- the bare number isn't known yet,
+ * since only the server may compute an actual roll (diceRoll.ts's own
+ * "the server is the only place a roll is ever computed" rule); the
+ * caller must ask the server (today: `rollCharacterSheetExpression`,
+ * via `postCharacterSheetPreview`) for the real `value`/`text`.
  */
 export interface ExpressionEvalResult {
   value?: number;
   /** Human-readable breakdown for a result that included a real dice roll (DiceRoll's own .output) -- undefined for plain arithmetic, where the bare number already says everything. */
   text?: string;
   error?: string;
+  needsRoll?: boolean;
+}
+
+/**
+ * `d` immediately followed by a digit -- real dice notation (`1d20`,
+ * `d6`), not a variable name that happens to contain both (checked
+ * against the ALREADY-substituted text, after every `{variableId}`
+ * ref has been swapped for its plain numeric value, specifically so a
+ * variable literally named e.g. `d4bonus` can never false-positive
+ * here -- its own NAME never survives into the text this pattern
+ * actually sees). Shared by the client's own arithmetic evaluator
+ * below and the server's real-roll path (diceRoll.ts) so both agree
+ * on exactly the same definition of "this needs a real die."
+ */
+export const DICE_NOTATION_PATTERN = /d[0-9]/i;
+
+const arithmeticParser = new Parser();
+
+/**
+ * Real correction, 2026-10-25: "the character sheet results for
+ * displaying on the client side can all be done client side... if we
+ * need a new library for the server not to have to execute arbitrary
+ * math to fill out an MD file, we should do that rather than putting
+ * calculations on the server side." Plain arithmetic (`+ - * / ^ %`,
+ * parentheses, `{variableId}` refs already substituted to numbers) is
+ * evaluated HERE, client-side, via `expr-eval` (a small, dependency-
+ * free, non-`eval()` expression parser -- confirmed directly: division
+ * by zero returns Infinity/NaN rather than throwing, so an explicit
+ * `Number.isFinite` check below catches it; malformed syntax throws a
+ * plain catchable `Error`). Only a genuine dice roll (real RNG) still
+ * needs the server at all -- detected here via `DICE_NOTATION_PATTERN`
+ * and reported back as `needsRoll: true` rather than attempted, since
+ * this function itself has no access to (and must never gain access
+ * to) real randomness.
+ */
+export function evaluateCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean): ExpressionEvalResult {
+  const substituted = substituteVariableRefs(expression, variableValues);
+  if (substituted === undefined) return { error: "unknown or non-numeric variable" };
+  if (DICE_NOTATION_PATTERN.test(substituted)) {
+    if (!allowDice) return { error: "dice rolling not allowed in fixed displays" };
+    return { needsRoll: true };
+  }
+  try {
+    const value = arithmeticParser.evaluate(substituted);
+    if (typeof value !== "number" || !Number.isFinite(value)) return { error: "division by zero" };
+    return { value };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, findExpressionSegments, substituteVariableRefs, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate } from "./characterSheet.js";
+import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, findExpressionSegments, substituteVariableRefs, evaluateCharacterSheetExpression, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate } from "./characterSheet.js";
 
 describe("computeMissingModDependencies", () => {
   it("returns an empty array when every required mod is available", () => {
@@ -156,7 +156,7 @@ describe("findExpressionSegments (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a re
   });
 });
 
-describe("substituteVariableRefs (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25: the actual arithmetic/dice evaluation moved server-side to reuse @dice-roller/rpg-dice-roller, see packages/server/src/chat/diceRoll.test.ts; this is the shared text-substitution half both that evaluator AND the [[dice notation]] chat-roll system reuse)", () => {
+describe("substituteVariableRefs (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the shared text-substitution half both evaluateCharacterSheetExpression below AND the [[dice notation]] chat-roll system (packages/server/src/chat/diceRoll.ts) reuse)", () => {
   it("returns the text unchanged when it has no {variableId} references at all", () => {
     expect(substituteVariableRefs("2+2", {})).toBe("2+2");
   });
@@ -183,6 +183,60 @@ describe("substituteVariableRefs (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real
 
   it("fails gracefully for a non-numeric string variable value", () => {
     expect(substituteVariableRefs("{name} + 1", { name: "Aria" })).toBeUndefined();
+  });
+});
+
+describe("evaluateCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction, 2026-10-25, second pass: plain arithmetic evaluates HERE, client-side, via expr-eval -- only a genuine dice roll still needs the server at all, see packages/server/src/chat/diceRoll.test.ts's rollCharacterSheetExpression)", () => {
+  it("evaluates plain arithmetic with no dice and no variables at all", () => {
+    expect(evaluateCharacterSheetExpression("2+2", {}, false)).toEqual({ value: 4 });
+    expect(evaluateCharacterSheetExpression("20 + (10 * 5) + 0", {}, false)).toEqual({ value: 70 });
+  });
+
+  it("substitutes {variableId} references with their current numeric value before evaluating", () => {
+    expect(evaluateCharacterSheetExpression("20 + (10 * {toughness}) + {hpBonus}", { toughness: 5, hpBonus: 0 }, false)).toEqual({ value: 70 });
+  });
+
+  it("re-evaluates to a NEW result when the underlying variable changes -- the whole point of \"live\", not a frozen snapshot", () => {
+    const at5 = evaluateCharacterSheetExpression("20 + (10 * {toughness})", { toughness: 5 }, false);
+    const at6 = evaluateCharacterSheetExpression("20 + (10 * {toughness})", { toughness: 6 }, false);
+    expect(at5).toEqual({ value: 70 });
+    expect(at6).toEqual({ value: 80 });
+  });
+
+  it("supports .x/.y component refs for an xOfY variable", () => {
+    expect(evaluateCharacterSheetExpression("{hp.x} + {hp.y}", { hp: 7, hpMax: 10 }, false)).toEqual({ value: 17 });
+  });
+
+  it("fails gracefully with an error (never throws) for an unknown variable", () => {
+    const result = evaluateCharacterSheetExpression("{doesNotExist} + 1", {}, false);
+    expect(result.value).toBeUndefined();
+    expect(result.error).toBeTruthy();
+  });
+
+  it("fails gracefully with an error for malformed arithmetic (the library's own real parser error, not a generic message)", () => {
+    const result = evaluateCharacterSheetExpression("2 + 3 foo", {}, false);
+    expect(result.value).toBeUndefined();
+    expect(result.error).toBeTruthy();
+  });
+
+  it("fails gracefully with an error on division by zero -- the library itself doesn't throw, it returns Infinity/NaN, which this catches explicitly", () => {
+    expect(evaluateCharacterSheetExpression("5 / 0", {}, false)).toEqual({ error: "division by zero" });
+  });
+
+  it("real request: dice notation (a literal 'd' followed by a digit) is rejected with the exact requested message when NOT allowed (a fixed/box display)", () => {
+    expect(evaluateCharacterSheetExpression("1d20 + 5", {}, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
+  });
+
+  it("dice notation flags needsRoll when allowed (a button/clicked display) -- the actual roll needs real RNG, which only the server may compute", () => {
+    expect(evaluateCharacterSheetExpression("1d20 + 5", {}, true)).toEqual({ needsRoll: true });
+  });
+
+  it("a variable NAME that happens to contain a letter 'd' followed by a digit (e.g. a variable literally called 'd4bonus') never false-positives the dice check, since substitution replaces the NAME with a plain number first", () => {
+    expect(evaluateCharacterSheetExpression("{d4bonus} + 1", { d4bonus: 3 }, false)).toEqual({ value: 4 });
+  });
+
+  it("the dice check is case-insensitive on the SUBSTITUTED text (even though the real dice library itself only accepts lowercase 'd')", () => {
+    expect(evaluateCharacterSheetExpression("1D20 + 5", {}, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
   });
 });
 

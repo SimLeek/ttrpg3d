@@ -101,9 +101,9 @@ describe("mountCharacterSheetView", () => {
     expect(posted).toEqual([["HP", "7"]]);
   });
 
-  it("renders a {{expression}} inline as a computed value box -- docs/CHARACTER_SHEET_IMPORT.md part 1. Real correction, 2026-10-25: the server (not this client) actually evaluates it now (@dice-roller/rpg-dice-roller must never run client-side), so this test just confirms the client correctly RENDERS whatever expressionSegments the server's own preview response came back with", async () => {
+  it("renders a {{expression}} inline as a computed value box -- docs/CHARACTER_SHEET_IMPORT.md part 1. Real correction, 2026-10-25 (second pass): plain arithmetic now evaluates entirely client-side (expr-eval), with zero server round trip, so this test sets real variableValues rather than a mocked server response", async () => {
+    character.variableValues = { toughness: 5, hpBonus: 0 };
     character.customSheet!.pages = [{ title: "Core", markdown: "HP: {{20 + (10 * {toughness}) + {hpBonus}}}", variableIds: [] }];
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 4, end: 44, expression: "20 + (10 * {toughness}) + {hpBonus}", display: "box", value: 70 }] };
     mountCharacterSheetView(container, baseOptions());
     await flush();
 
@@ -113,8 +113,8 @@ describe("mountCharacterSheetView", () => {
   });
 
   it("an expression's own :button suffix renders a clickable chip, posting the expression text + computed value, same mechanism a variable/library-call chip already uses", async () => {
+    character.variableValues = { agility: 6 };
     character.customSheet!.pages = [{ title: "Core", markdown: "Initiative check: {{10 + {agility}:button}}", variableIds: [] }];
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 19, end: 43, expression: "10 + {agility}", display: "button", value: 16, text: "10 + 6: 10+6 = 16" }] };
     mountCharacterSheetView(container, baseOptions());
     await flush();
 
@@ -124,9 +124,22 @@ describe("mountCharacterSheetView", () => {
     expect(posted).toEqual([["10 + {agility}", "16"]]);
   });
 
+  it("a button-mode expression that genuinely contains dice notation still needs the server (real RNG) -- the client flags needsRoll and merges in the server's own rolled result", async () => {
+    character.variableValues = { bonus: 3 };
+    character.customSheet!.pages = [{ title: "Core", markdown: "Attack: {{1d20 + {bonus}:button}}", variableIds: [] }];
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 8, end: 33, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }] };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const chip = container.querySelector<HTMLButtonElement>(".page-preview .chat-chip")!;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe("15");
+    chip.click();
+    expect(posted).toEqual([["1d20 + {bonus}", "15"]]);
+  });
+
   it("an expression error (unknown variable, bad syntax, or dice-not-allowed) renders in red, not just a plain bracketed marker -- real request: \"catch and display other parser errors... in red\"", async () => {
     character.customSheet!.pages = [{ title: "Core", markdown: "X: {{1 + {doesNotExist}}}", variableIds: [] }];
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 3, end: 25, expression: "1 + {doesNotExist}", display: "box", error: "unknown or non-numeric variable" }] };
     mountCharacterSheetView(container, baseOptions());
     await flush();
 
