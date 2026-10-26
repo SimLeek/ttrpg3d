@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rollNotation, rollCharacterSheetExpression } from "./diceRoll.js";
+import { rollNotation, rollCharacterSheetExpression, rollCompoundPart } from "./diceRoll.js";
 
 describe("rollNotation (real calls into @dice-roller/rpg-dice-roller, not mocked)", () => {
   it("resolves valid notation with a numeric total and a human-readable breakdown", () => {
@@ -79,5 +79,35 @@ describe("rollCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part 1 -
     const result = rollCharacterSheetExpression("{heavyDamage}", { heavyDamage: "2d1+5" }, true); // 1-sided dice are deterministic
     expect(result?.value).toBe(7); // 2*1 + 5
     expect(result?.text).toContain("2d1");
+  });
+
+  it("real request, 2026-10-26 -- a real dice roll also carries its own theoretical max (DiceRoll's own .maxTotal), \"the max damage (used if crit or nat 20)\"", () => {
+    const result = rollCharacterSheetExpression("2d4 + 5", {}, true);
+    expect(result?.maxValue).toBe(13); // 2*4 + 5
+  });
+});
+
+describe("rollCompoundPart (real request, 2026-10-26 -- \"For light attack, we want to display the attack to-hit result, the damage, and the max damage... some table in the chat\")", () => {
+  it("rolls a part containing real dice, substituting {variableId} refs first, and carries its own maxValue", () => {
+    const result = rollCompoundPart({ expression: "1d1 + {focus} + {attackBonus}" }, { focus: 3, attackBonus: 1 }); // 1d1 is deterministic
+    expect(result.value).toBe(5); // 1 + 3 + 1
+    expect(result.maxValue).toBe(5); // 1d1's own max is still just 1
+  });
+
+  it("rolls a BARE reference to a variable holding a complete dice-notation string (e.g. Light/Heavy Damage), same lenient passthrough rollCharacterSheetExpression itself uses", () => {
+    const result = rollCompoundPart({ expression: "{heavyDamage}" }, { heavyDamage: "2d4 + 10" });
+    expect(result.value).toBeGreaterThanOrEqual(12);
+    expect(result.value).toBeLessThanOrEqual(18);
+    expect(result.maxValue).toBe(18); // 2*4 + 10
+  });
+
+  it("ALWAYS resolves (never returns undefined like rollCharacterSheetExpression does) -- a compound roll's own part is always an explicit action, there's no \"client already resolved this\" case to defer to", () => {
+    const result = rollCompoundPart({ expression: "20 + 5" }, {}); // plain arithmetic, no dice at all
+    expect(result.value).toBe(25);
+  });
+
+  it("fails gracefully with an error for an unknown variable, never throws", () => {
+    const result = rollCompoundPart({ expression: "1d20 + {doesNotExist}" }, {});
+    expect(result.error).toBeTruthy();
   });
 });

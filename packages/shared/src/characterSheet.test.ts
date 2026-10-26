@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, findExpressionSegments, substituteVariableRefs, evaluateCharacterSheetExpression, resolveVariableValue, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate, type CharacterSheetVariableDef } from "./characterSheet.js";
+import { computeMissingModDependencies, RESERVED_BODY_SIZE_VARIABLES, findLibraryCalls, findVariableRefs, findExpressionSegments, findCompoundRollSegments, substituteVariableRefs, evaluateCharacterSheetExpression, resolveVariableValue, xOfYMaxKey, resolveCharacterBars, type CharacterSheetTemplate, type CharacterSheetVariableDef } from "./characterSheet.js";
 
 describe("computeMissingModDependencies", () => {
   it("returns an empty array when every required mod is available", () => {
@@ -153,6 +153,54 @@ describe("findExpressionSegments (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- a re
     const segments = findExpressionSegments("{{{hp}:button}}");
     expect(segments).toHaveLength(1);
     expect(segments[0]).toMatchObject({ expression: "{hp}", display: "button" });
+  });
+
+  it("real request, 2026-10-26 -- does NOT mis-fire on a real compound-roll segment -- the two share the same {{}} delimiter but never collide", () => {
+    expect(findExpressionSegments("{{Light Attack; atk: 1d20 + {focus} | damage+max: {lightDamage}:button}}")).toEqual([]);
+  });
+});
+
+describe("findCompoundRollSegments (real request, 2026-10-26 -- \"For light attack, we want to display the attack to-hit result, the damage, and the max damage... some table in the chat\")", () => {
+  it("finds a single compound roll with 2 parts, splitting the action label from its parts at the first ';', and each part's own label from its expression at the first ':'", () => {
+    const segments = findCompoundRollSegments("{{Light Attack; atk: 1d20 + {focus} + {attackBonus} | damage+max: {lightDamage}:button}}");
+    expect(segments).toHaveLength(1);
+    expect(segments[0].actionLabel).toBe("Light Attack");
+    expect(segments[0].display).toBe("button");
+    expect(segments[0].parts).toEqual([
+      { label: "atk", expression: "1d20 + {focus} + {attackBonus}", showMax: false },
+      { label: "damage", expression: "{lightDamage}", showMax: true },
+    ]);
+  });
+
+  it("a label ending in the exact suffix '+max' sets showMax and is stripped from the real label", () => {
+    const segments = findCompoundRollSegments("{{X; a: 1 | b+max: 2}}");
+    expect(segments[0].parts[1]).toEqual({ label: "b", expression: "2", showMax: true });
+  });
+
+  it("requires an action label (a ';') to be a compound roll at all -- without one, it's just a plain expression (or nothing)", () => {
+    expect(findCompoundRollSegments("{{atk: 1 | damage: 2}}")).toEqual([]);
+  });
+
+  it("requires at least 2 pipe-separated parts -- a single part isn't \"compound\"", () => {
+    expect(findCompoundRollSegments("{{X; a: 1}}")).toEqual([]);
+  });
+
+  it("requires every part to have its own 'label:' -- a malformed part (no colon) means this isn't a valid compound roll, not a partial one", () => {
+    expect(findCompoundRollSegments("{{X; a: 1 | justjunk}}")).toEqual([]);
+  });
+
+  it("does NOT mis-fire on a real {{modId.fn(args)}} library call", () => {
+    expect(findCompoundRollSegments("{{default.modifier(str)}}")).toEqual([]);
+  });
+
+  it("does NOT mis-fire on a plain {{expression}} that has neither ';' nor '|' at all", () => {
+    expect(findCompoundRollSegments("{{20 + {toughness}}}")).toEqual([]);
+  });
+
+  it("finds a compound roll and an ordinary expression side by side, each exactly once", () => {
+    const text = "{{Light Attack; a: 1 | b: 2:button}} HP: {{20 + {toughness}}}";
+    expect(findCompoundRollSegments(text)).toHaveLength(1);
+    expect(findExpressionSegments(text)).toHaveLength(1);
   });
 });
 

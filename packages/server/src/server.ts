@@ -11,11 +11,11 @@ import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
 import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./mods/modLoader.js";
-import { findLibraryCalls, findExpressionSegments, type ImportedWorkbook } from "@ttrpg3d/shared";
+import { findLibraryCalls, findExpressionSegments, findCompoundRollSegments, type ImportedWorkbook } from "@ttrpg3d/shared";
 import { join } from "node:path";
 import express from "express";
 import { saveUploadedImage, UploadRejected } from "./data/uploads.js";
-import { rollCharacterSheetExpression } from "./chat/diceRoll.js";
+import { rollCharacterSheetExpression, rollCompoundPart } from "./chat/diceRoll.js";
 
 store.ensureSeedData();
 
@@ -280,7 +280,15 @@ const postCharacterSheetPreview = createEndpoint("/accounts/:id/character-sheet-
       return roll ? { ...segment, ...roll } : undefined;
     })
     .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
-  return { resolvedMarkdown, segments, expressionSegments };
+  // Real request, 2026-10-26: a compound roll's own parts are ALWAYS
+  // evaluated here (never partially client-side) -- it only ever
+  // exists at all as an explicit button/action, same reasoning
+  // rollCompoundPart's own doc covers.
+  const compoundRollSegments = findCompoundRollSegments(markdown).map((segment) => ({
+    ...segment,
+    parts: segment.parts.map((part) => ({ ...part, ...rollCompoundPart(part, variableValues) })),
+  }));
+  return { resolvedMarkdown, segments, expressionSegments, compoundRollSegments };
 });
 
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {

@@ -66,17 +66,35 @@
 // flag a `needsRoll` segment -- characterSheetView.ts now renders
 // that as its own inert "Roll" button, fetching a FRESH result only
 // once actually clicked, never silently re-rolled on page render).
-// Initiative/Save Bonus roll `1d20` plus their own real modifier
-// formula (the SAME formula the Combat table's own plain display
-// already shows, just with `1d20 +` prepended). Light/Heavy Attack
-// are a different shape entirely: the real sheet's own Light/Heavy
-// Damage cells (`{{lightDamage}}`/`{{heavyDamage}}`) are ALREADY a
-// complete dice-notation STRING in their own right (e.g. "2d4+5"),
-// not a number to combine with anything -- a BARE `{{variableId}}`
-// reference (nothing else in the expression) passes a non-numeric
-// string straight through instead of failing the strict substitution
-// every other expression requires (shared/characterSheet.ts's own
-// substituteForDiceCheck).
+// Initiative rolls `1d4` plus its own real modifier formula (the SAME
+// formula the Combat table's own plain display already shows, with
+// `1d4 +` prepended); Save Bonus rolls `2d10` the same way -- real
+// correction, 2026-10-26: NOT `1d20` for either, which was guessed
+// wrong (confirmed by the user directly, since neither die size
+// appears anywhere on the sheet itself to check against).
+//
+// Real request, 2026-10-26 (second pass): Light/Heavy/Precise Attack
+// are each a COMPOUND roll (shared/characterSheet.ts's own
+// `{{Label; part: expr | part: expr}}` syntax, built specifically for
+// this: "we want to display the attack to-hit result, the damage,
+// and the max damage... some table in the chat"). Per the user's own
+// real game rule (not on the sheet anywhere -- confirmed directly by
+// asking): to-hit is `1d20 + Focus + <a manual, GM/player-editable
+// "additional bonus" -- "a misc 'additional bonus' that will just
+// apply to the heavy/light attacks so that the user can change their
+// attack as needed... both currently before the weapon inventory
+// features are added and in case of any general modifiers">` for
+// Light/Heavy, DOUBLED (`(Focus + bonus) * 2`) for Precise. Precise
+// deals the SAME damage as Light (`{lightDamage}`) but carries the
+// "pinpoint" keyword -- just plain text in its own action label, no
+// new mechanism needed for a tag that's never computed, only shown.
+// Each attack's own `damage+max` part is a BARE `{{variableId}}`
+// reference to a variable that's ITSELF a complete dice-notation
+// string (e.g. "2d4+5") -- passed straight through rather than
+// failing the strict substitution every other expression requires
+// (shared/characterSheet.ts's own substituteForDiceCheck), with its
+// own theoretical max (DiceRoll's own `.maxTotal`) shown alongside
+// the real roll because of that `+max` label suffix.
 
 import { type CharacterSheetTemplate, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
 
@@ -117,6 +135,14 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "oldArmorCalc", label: "Old Armor Calc", type: "number", default: 0 },
     { id: "lightDamage", label: "Light Damage", type: "text", default: "" },
     { id: "heavyDamage", label: "Heavy Damage", type: "text", default: "" },
+    // Real request, 2026-10-26: NOT imported from anywhere on the
+    // sheet (confirmed: no "additional bonus" cell exists anywhere on
+    // it) -- "a misc 'additional bonus' that will just apply to the
+    // heavy/light attacks so that the user can change their attack as
+    // needed... before the weapon inventory features are added and
+    // in case of any general modifiers." A plain, manually-edited
+    // number, same tier as HP Bonus/Evasion Bonus.
+    { id: "attackBonus", label: "Attack Bonus", type: "number", default: 0 },
   ],
   // Order is top-to-bottom on the 3D token's own billboard (characterToken.ts's
   // `barSlots[i]` <-> `bars[i]`) -- real request: "make HP green and
@@ -179,9 +205,15 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
         "",
         "## Rolls",
         "",
-        "| Initiative | Save Bonus | Light Attack | Heavy Attack |",
-        "| --- | --- | --- | --- |",
-        "| {{1d20 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}:button}} | {{1d20 + {toughness} + {bonusSaveValue}:button}} | {{{lightDamage}:button}} | {{{heavyDamage}:button}} |",
+        "| Initiative | Save Bonus |",
+        "| --- | --- |",
+        "| {{1d4 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}:button}} | {{2d10 + {toughness} + {bonusSaveValue}:button}} |",
+        "",
+        "## Attacks",
+        "",
+        "- {{Light Attack; atk: 1d20 + {focus} + {attackBonus} | damage+max: {lightDamage}:button}}",
+        "- {{Heavy Attack; atk: 1d20 + {focus} + {attackBonus} | damage+max: {heavyDamage}:button}}",
+        "- {{Precise Attack (pinpoint); atk: 1d20 + ({focus} + {attackBonus}) * 2 | damage+max: {lightDamage}:button}}",
         "",
         "## Main Stats",
         "",
@@ -224,6 +256,7 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
         "oldArmorCalc",
         "lightDamage",
         "heavyDamage",
+        "attackBonus",
       ],
     },
   ],

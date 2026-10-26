@@ -64,7 +64,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   importedModIds = [];
-  previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [] };
+  previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [], compoundRollSegments: [] };
   character = {
     id: "char-1",
     ownerAccountId: "account-1",
@@ -288,6 +288,7 @@ describe("mountCharactersPage", () => {
       resolvedMarkdown: "Strength: 12, modifier: 1",
       segments: [{ start: 18, end: 41, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "button" }],
       expressionSegments: [],
+      compoundRollSegments: [],
     };
     character.variableValues = { str: 12 };
     mountCharactersPage(container, "http://test", "account-1");
@@ -305,7 +306,7 @@ describe("mountCharactersPage", () => {
 
   it("an inline {variableId} box sits exactly where written in the markdown and is directly editable, persisting the change (round 4's actual request -- not a list below the page)", async () => {
     importedModIds = ["default"];
-    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }], expressionSegments: [] };
+    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }], expressionSegments: [], compoundRollSegments: [] };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
@@ -416,7 +417,7 @@ describe("mountCharactersPage", () => {
 
   it("a {{modId.fn(args):box}} library call renders as a plain, non-clickable value instead of a chat-chip", async () => {
     importedModIds = ["default"];
-    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }], expressionSegments: [] };
+    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }], expressionSegments: [], compoundRollSegments: [] };
     character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "Modifier: {{default.modifier(str):box}}", variableIds: [] }], variables: [] };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
@@ -585,6 +586,7 @@ describe("mountCharactersPage", () => {
       resolvedMarkdown: "Strength: 10, modifier: 3",
       segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "3", display: "button" }],
       expressionSegments: [],
+      compoundRollSegments: [],
     };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
@@ -596,5 +598,25 @@ describe("mountCharactersPage", () => {
     expect(testChatMessages.textContent).toContain("Aria");
     expect(testChatMessages.textContent).toContain("default.modifier");
     expect(testChatMessages.textContent).toContain("3");
+  });
+
+  it("real request, 2026-10-26 -- clicking a dice-roll chip posts to the test chat panel with the richer tooltip HTML, not just the plain fallback text", async () => {
+    character.customSheet = { name: "Aria's Sheet", pages: [{ title: "Core", markdown: "Attack: {{1d20 + {bonus}:button}}", variableIds: [] }], variables: [], bars: [] };
+    character.variableValues = { bonus: 3 };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".dice-roll-chip")!;
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 25, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }], compoundRollSegments: [] };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    const testChatMessages = container.querySelector("#test-chat-messages")!;
+    const span = testChatMessages.querySelector<HTMLElement>(".roll-result")!;
+    expect(span).not.toBeNull();
+    expect(span.title).toBe("1d20+3: [12]+3 = 15");
+    expect(span.textContent).toBe("15");
+    expect(testChatMessages.textContent).toContain("Aria");
   });
 });

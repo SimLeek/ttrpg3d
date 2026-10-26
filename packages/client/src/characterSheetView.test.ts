@@ -8,6 +8,7 @@ let container: HTMLElement;
 let character: CharacterRecord;
 let previewResponse: CharacterSheetPreviewResult;
 const posted: [string, string][] = [];
+const postedHtml: (string | undefined)[] = [];
 const saved: CharacterRecord[] = [];
 
 function jsonResponse(body: unknown): Response {
@@ -41,7 +42,10 @@ function baseOptions(overrides: Partial<CharacterSheetViewOptions> = {}): Charac
     libraries: [] as CharacterSheetLibraryCatalogEntry[],
     importedModIds: [] as string[],
     canEdit: true,
-    onPostToChat: (label, value) => posted.push([label, value]),
+    onPostToChat: (label, value, html) => {
+      posted.push([label, value]);
+      postedHtml.push(html);
+    },
     ...overrides,
   };
 }
@@ -50,8 +54,9 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   posted.length = 0;
+  postedHtml.length = 0;
   saved.length = 0;
-  previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [] };
+  previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [], compoundRollSegments: [] };
   character = {
     id: "char-1",
     ownerAccountId: "owner-1",
@@ -140,13 +145,21 @@ describe("mountCharacterSheetView", () => {
 
     // Clicking it fetches a FRESH roll for just this one segment --
     // real RNG, server-only, same trust boundary as before.
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 25, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }] };
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 25, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }], compoundRollSegments: [] };
     rollBtn.click();
     await flush();
     await flush();
 
     expect(rollBtn.textContent).toBe("1d20 + {bonus}: 15");
     expect(posted).toEqual([["1d20 + {bonus}", "15"]]);
+    // Real correction, 2026-10-26: "it should just look like 22 and
+    // when moused over that special 22 should display the formula
+    // behind it, rather than that huge arrow" -- the plain `value`
+    // posted above is already just the bare "15"; the richer `html`
+    // carries the SAME number with the real breakdown as a tooltip.
+    expect(postedHtml[0]).toContain('title="1d20+3: [12]+3 = 15"');
+    expect(postedHtml[0]).toContain(">15</span>");
+    expect(rollBtn.title).toBe("1d20+3: [12]+3 = 15"); // the button's own face also carries it, for hovering on the sheet itself
   });
 
   it("clicking a 'Roll' button twice fetches a genuinely FRESH roll each time, not a stale repost of the first result", async () => {
@@ -155,13 +168,13 @@ describe("mountCharacterSheetView", () => {
     await flush();
 
     const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .dice-roll-chip")!;
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", value: 5, text: "1d20: [5] = 5" }] };
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", value: 5, text: "1d20: [5] = 5" }], compoundRollSegments: [] };
     rollBtn.click();
     await flush();
     await flush();
     expect(posted).toEqual([["1d20", "5"]]);
 
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", value: 19, text: "1d20: [19] = 19" }] };
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", value: 19, text: "1d20: [19] = 19" }], compoundRollSegments: [] };
     rollBtn.click();
     await flush();
     await flush();
@@ -177,7 +190,7 @@ describe("mountCharacterSheetView", () => {
     await flush();
 
     const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .dice-roll-chip")!;
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", error: "division by zero" }] };
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", error: "division by zero" }], compoundRollSegments: [] };
     rollBtn.click();
     await flush();
     await flush();
@@ -185,6 +198,79 @@ describe("mountCharacterSheetView", () => {
     expect(rollBtn.textContent).toBe("Error: division by zero");
     expect(rollBtn.disabled).toBe(false);
     expect(posted).toEqual([]); // never posted a half-broken result
+  });
+
+  it("real request, 2026-10-26 -- a compound roll ({{Label; part: expr | part: expr}}) renders as one 'Roll <Label>' button, and clicking it bundles every part's own result into one posted message (plain fallback: 'label: value' per part, PLUS an extra 'max label' line for any part marked +max)", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "{{Light Attack; atk: 1d20 + {focus} | damage+max: {lightDamage}:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .compound-roll-chip")!;
+    expect(rollBtn).not.toBeNull();
+    expect(rollBtn.textContent).toBe("Roll Light Attack");
+    expect(container.querySelector(".page-preview .dice-roll-chip")).toBeNull(); // not treated as a plain single-expression roll
+
+    previewResponse = {
+      resolvedMarkdown: "",
+      segments: [],
+      expressionSegments: [],
+      compoundRollSegments: [
+        {
+          start: 0,
+          end: 74,
+          actionLabel: "Light Attack",
+          display: "button",
+          parts: [
+            { label: "atk", expression: "1d20 + {focus}", showMax: false, value: 24, text: "1d20 + 3: [21]+3 = 24" },
+            { label: "damage", expression: "{lightDamage}", showMax: true, value: 12, text: "2d4+5: [3, 4]+5 = 12", maxValue: 13 },
+          ],
+        },
+      ],
+    };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    expect(rollBtn.textContent).toBe("Roll Light Attack");
+    expect(posted).toEqual([["Light Attack", "atk: 24, damage: 12, max damage: 13"]]);
+    const html = postedHtml[0]!;
+    expect(html).toContain("<strong>Light Attack</strong>");
+    expect(html).toContain('title="1d20 + 3: [21]+3 = 24"');
+    expect(html).toContain(">24</span>");
+    expect(html).toContain('title="2d4+5: [3, 4]+5 = 12"');
+    expect(html).toContain(">12</span>");
+    expect(html).toContain("max damage: 13");
+  });
+
+  it("a compound roll where one part errors posts nothing at all, rather than a half-rolled result", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "{{Light Attack; atk: 1d20 + {focus} | damage+max: {lightDamage}:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .compound-roll-chip")!;
+    previewResponse = {
+      resolvedMarkdown: "",
+      segments: [],
+      expressionSegments: [],
+      compoundRollSegments: [
+        {
+          start: 0,
+          end: 74,
+          actionLabel: "Light Attack",
+          display: "button",
+          parts: [
+            { label: "atk", expression: "1d20 + {focus}", showMax: false, error: "unknown or non-numeric variable" },
+            { label: "damage", expression: "{lightDamage}", showMax: true, value: 12, text: "2d4+5: [3, 4]+5 = 12", maxValue: 13 },
+          ],
+        },
+      ],
+    };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    expect(rollBtn.textContent).toBe("Error: unknown or non-numeric variable");
+    expect(posted).toEqual([]);
   });
 
   it("real bug, found live on /characters -- a {variableId} ref NESTED inside a {{expression}} (e.g. the real Lyrian HP formula's own {toughness}) doesn't ALSO get matched as its own separate top-level ref, which would otherwise desync the substitution cursor and garble every segment after it on the page", async () => {

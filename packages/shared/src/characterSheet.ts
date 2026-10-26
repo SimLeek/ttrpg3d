@@ -374,22 +374,25 @@ export interface ExpressionSegment {
 }
 
 /**
- * Finds every `{{...}}` segment in `text` that is NOT a `{{modId.fn(args)}}`
- * library call (findLibraryCalls decides that shape) -- i.e. a raw
- * arithmetic expression. A plain non-greedy regex (`\{\{(.+?)\}\}`)
+ * The raw span-finding half of EVERY `{{...}}` segment kind (a
+ * library call, a plain expression, or a compound roll below) --
+ * factored out so each kind's OWN classification logic (library
+ * call's dotted-identifier shape, a compound roll's `;`/`|` shape, a
+ * plain expression as the fallback) doesn't have to re-implement this
+ * same depth-tracking scan. A plain non-greedy regex (`\{\{(.+?)\}\}`)
  * genuinely mis-splits the common case of an expression ENDING in a
  * bare variable ref (e.g. `{{20 + {hpBonus}}}` -- found live while
- * writing this function's own tests, not a hypothetical): the ref's
- * own closing `}` sits directly against the outer `}}`, so three `}`
- * in a row, and a lazy match stops at the FIRST two it sees (which
- * belong to the ref, not the real close), leaving a dangling `}` and
- * a truncated expression. Scans manually instead, tracking nested
- * single-brace depth, so a ref's own braces are never mistaken for
- * the outer close.
+ * writing findExpressionSegments' own tests, not a hypothetical): the
+ * ref's own closing `}` sits directly against the outer `}}`, so
+ * three `}` in a row, and a lazy match stops at the FIRST two it sees
+ * (which belong to the ref, not the real close), leaving a dangling
+ * `}` and a truncated expression. Scans manually instead, tracking
+ * nested single-brace depth, so a ref's own braces are never mistaken
+ * for the outer close. `excludeSpans` skips a span another kind (today:
+ * library calls) already claimed.
  */
-export function findExpressionSegments(text: string): ExpressionSegment[] {
-  const libraryCallSpans = new Set(findLibraryCalls(text).map((c) => `${c.start}:${c.end}`));
-  const segments: ExpressionSegment[] = [];
+function findDoubleBraceSpans(text: string, excludeSpans: ReadonlySet<string>): { start: number; end: number; inner: string }[] {
+  const spans: { start: number; end: number; inner: string }[] = [];
   let i = 0;
   while (i < text.length - 1) {
     if (text[i] !== "{" || text[i + 1] !== "{") {
@@ -423,18 +426,96 @@ export function findExpressionSegments(text: string): ExpressionSegment[] {
       continue; // no real "}}" close found for this "{{" -- not a valid segment here
     }
     const end = closeAt + 2;
-    if (!libraryCallSpans.has(`${i}:${end}`)) {
-      let expression = text.slice(i + 2, closeAt);
-      let display: InlineReferenceDisplay = "box";
-      if (expression.endsWith(":button")) {
-        display = "button";
-        expression = expression.slice(0, -":button".length);
-      } else if (expression.endsWith(":box")) {
-        expression = expression.slice(0, -":box".length);
-      }
-      segments.push({ start: i, end, expression: expression.trim(), display });
-    }
+    if (!excludeSpans.has(`${i}:${end}`)) spans.push({ start: i, end, inner: text.slice(i + 2, closeAt) });
     i = end;
+  }
+  return spans;
+}
+
+/** Strips a trailing `:box`/`:button` suffix, defaulting to `box` when neither is written -- the same display-suffix convention every `{{...}}` kind shares. */
+function stripDisplaySuffix(inner: string): { text: string; display: InlineReferenceDisplay } {
+  if (inner.endsWith(":button")) return { text: inner.slice(0, -":button".length), display: "button" };
+  if (inner.endsWith(":box")) return { text: inner.slice(0, -":box".length), display: "box" };
+  return { text: inner, display: "box" };
+}
+
+/**
+ * Finds every `{{...}}` segment in `text` that is NEITHER a
+ * `{{modId.fn(args)}}` library call (findLibraryCalls decides that
+ * shape) NOR a `{{Label; part: expr | part: expr}}` compound roll
+ * (findCompoundRollSegments decides THAT shape) -- i.e. a raw
+ * arithmetic expression, the fallback/default `{{...}}` kind.
+ */
+export function findExpressionSegments(text: string): ExpressionSegment[] {
+  const exclude = new Set([...findLibraryCalls(text).map((c) => `${c.start}:${c.end}`), ...findCompoundRollSegments(text).map((c) => `${c.start}:${c.end}`)]);
+  return findDoubleBraceSpans(text, exclude).map((span) => {
+    const { text: expression, display } = stripDisplaySuffix(span.inner);
+    return { start: span.start, end: span.end, expression: expression.trim(), display };
+  });
+}
+
+export interface CompoundRollPart {
+  label: string;
+  expression: string;
+  /** Real request, 2026-10-26: "the max damage (used if crit or nat 20)" -- a part's own label ending in the literal suffix `+max` (stripped here) asks for an EXTRA, automatically-computed "max <label>" line alongside this part's own real roll (DiceRoll's own `.maxTotal`, no separate computation needed -- see diceRoll.ts). Opt-in per PART, not automatic for every dice-containing part, since a compound roll's own "to hit" part typically doesn't want one shown even though it also contains real dice. */
+  showMax: boolean;
+}
+
+export interface CompoundRollSegment {
+  start: number;
+  end: number;
+  /** The action's own name, shown as this roll's own header once posted to chat (e.g. "Light Attack", or "Precise Attack (pinpoint)" -- a keyword tag is just plain text IN this name, no separate mechanism needed for it). */
+  actionLabel: string;
+  parts: CompoundRollPart[];
+  display: InlineReferenceDisplay;
+}
+
+/**
+ * Finds every `{{<ActionLabel>; <label>: <expr> | <label>: <expr> ...}}`
+ * segment -- a SINGLE clickable action that rolls/evaluates MULTIPLE
+ * labeled parts together and posts them as one bundled result (real
+ * request, 2026-10-26: "For light attack, we want to display the
+ * attack to-hit result, the damage, and the max damage... some table
+ * in the chat"). Distinguished from a plain `{{expression}}` by shape
+ * alone, same as every other `{{...}}` kind: a plain expression's own
+ * grammar (expr-eval's `+ - * / ^ % ()`, numeric literals, `{variableId}`
+ * refs) never legitimately contains a `;` or `|` at all, so requiring
+ * BOTH (an action label before the first `;`, then 2+ `|`-separated
+ * `label: expr` parts after it) never collides with a genuine
+ * expression. `{variableId}` refs never contain a `;`/`|`/`:` of
+ * their own either (only a `.x`/`.y` component), so splitting on
+ * these characters needs no depth-tracking of its own, unlike the
+ * OUTER `{{`/`}}` span-finding above.
+ */
+export function findCompoundRollSegments(text: string): CompoundRollSegment[] {
+  const libraryCallSpans = new Set(findLibraryCalls(text).map((c) => `${c.start}:${c.end}`));
+  const segments: CompoundRollSegment[] = [];
+  for (const span of findDoubleBraceSpans(text, libraryCallSpans)) {
+    const { text: body, display } = stripDisplaySuffix(span.inner);
+    const semiIdx = body.indexOf(";");
+    if (semiIdx === -1) continue; // no action label -- not a compound roll
+    const rawParts = body
+      .slice(semiIdx + 1)
+      .split("|")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (rawParts.length < 2) continue; // needs at least 2 parts to be "compound" at all
+    const parts: CompoundRollPart[] = [];
+    let malformed = false;
+    for (const raw of rawParts) {
+      const colonIdx = raw.indexOf(":");
+      if (colonIdx === -1) {
+        malformed = true;
+        break;
+      }
+      let label = raw.slice(0, colonIdx).trim();
+      const expression = raw.slice(colonIdx + 1).trim();
+      const showMax = label.endsWith("+max");
+      if (showMax) label = label.slice(0, -"+max".length).trim();
+      parts.push({ label, expression, showMax });
+    }
+    if (malformed) continue; // a part missing its own "label:" -- not a valid compound roll, falls through to the plain-expression scanner instead
+    segments.push({ start: span.start, end: span.end, actionLabel: body.slice(0, semiIdx).trim(), parts, display });
   }
   return segments;
 }
@@ -548,6 +629,8 @@ export interface ExpressionEvalResult {
   text?: string;
   error?: string;
   needsRoll?: boolean;
+  /** Real request, 2026-10-26: "the max damage (used if crit or nat 20)" -- the theoretical max this same roll could have produced (DiceRoll's own `.maxTotal`, computed on the SAME roll object, no separate calculation needed), set whenever a real dice roll actually happened. A compound roll's own `showMax` parts are the only thing that currently DISPLAYS this; it's populated on every real roll regardless, since it costs nothing extra to compute. */
+  maxValue?: number;
 }
 
 /**

@@ -11,9 +11,26 @@
 // column (not `position: fixed`/draggable/collapsible like that file
 // -- this is one column within the characters page's own layout, not
 // a persistent overlay across the whole app).
+//
+// Real request, 2026-10-26: "Hopefully the chat supports some html
+// and alt text" -- "when moused over that special 22 should display
+// the formula behind it." This panel is the right place for it: it's
+// LOCAL-only (no other player ever sees it, unlike the real in-game
+// chat -- chatPanel.ts/GameRoom.ts -- which still only ever receives
+// plain text; giving THAT one the same tooltip/table treatment safely
+// for multiplayer is a real, separate follow-up, not done here).
+// `addMessage`'s own optional `html` is sanitized (DOMPurify) right
+// before insertion, same "ONE deliberate innerHTML-of-untrusted-
+// content spot" discipline characterSheetView.ts's own page rendering
+// already follows -- the PLAIN `text` form (used for every message
+// this panel ALREADY rendered before this feature, including the
+// compose box's own human-typed input) stays on the existing,
+// unconditionally-safe `textContent` path.
+
+import DOMPurify from "dompurify";
 
 export interface TestChatPanelController {
-  addMessage(text: string): void;
+  addMessage(text: string, html?: string): void;
 }
 
 export function mountTestChatPanel(container: HTMLElement): TestChatPanelController {
@@ -24,6 +41,8 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
       .test-chat-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
       .test-chat-messages .msg { margin-bottom: 4px; }
       .test-chat-messages .empty { color: #777; font-style: italic; }
+      .test-chat-messages .roll-result { font-weight: bold; text-decoration: underline dotted; cursor: help; }
+      .test-chat-messages .roll-result-group { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 6px 8px; margin: 2px 0; }
       .test-chat-compose { flex: none; display: flex; gap: 6px; padding: 8px; border-top: 1px solid rgba(200,200,200,0.3); }
       .test-chat-compose input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; font-size: 13px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }
       .test-chat-compose button { font-size: 13px; padding: 6px 10px; }
@@ -43,14 +62,15 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
   const sendBtn = container.querySelector<HTMLButtonElement>("#test-chat-send-btn")!;
   let hasMessages = false;
 
-  function addMessage(text: string): void {
+  function addMessage(text: string, html?: string): void {
     if (!hasMessages) {
       messagesEl.innerHTML = "";
       hasMessages = true;
     }
     const line = document.createElement("div");
     line.className = "msg";
-    line.textContent = text;
+    if (html !== undefined) line.innerHTML = DOMPurify.sanitize(html);
+    else line.textContent = text;
     messagesEl.appendChild(line);
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }

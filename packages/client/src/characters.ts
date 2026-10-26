@@ -326,7 +326,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       libraries,
       importedModIds,
       canEdit: true,
-      onPostToChat: (label, value) => testChatPanel.addMessage(`${character.name}: ${label} -> ${value}`),
+      onPostToChat: (label, value, html) => testChatPanel.addMessage(`${character.name}: ${label} -> ${value}`, html !== undefined ? `${escapeHtml(character.name)}: ${html}` : undefined),
       onSaved: (updated) => {
         const index = characters.findIndex((c) => c.id === updated.id);
         if (index !== -1) characters[index] = updated;

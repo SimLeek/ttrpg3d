@@ -13,7 +13,7 @@
 // this notation is invalid" is all this wrapper needs to know.
 
 import { DiceRoll } from "@dice-roller/rpg-dice-roller";
-import { substituteVariableRefs, substituteForDiceCheck, DICE_NOTATION_PATTERN, type ExpressionEvalResult } from "@ttrpg3d/shared";
+import { substituteVariableRefs, substituteForDiceCheck, DICE_NOTATION_PATTERN, type ExpressionEvalResult, type CompoundRollPart } from "@ttrpg3d/shared";
 
 export interface RollOk {
   ok: true;
@@ -85,7 +85,40 @@ export function rollCharacterSheetExpression(expression: string, variableValues:
     // That's exactly the kind of "technically a number, not actually
     // a sane result" this needs to catch and report, not display.
     if (!Number.isFinite(roll.total)) return { error: "division by zero" };
-    return { value: roll.total, text: roll.output };
+    // `.maxTotal` is DiceRoll's own theoretical-max property, computed
+    // on this SAME roll object -- real request, 2026-10-26: "the max
+    // damage (used if crit or nat 20)." Always populated on a real
+    // roll (costs nothing extra); only a compound roll's own
+    // `showMax` parts currently display it.
+    return { value: roll.total, text: roll.output, maxValue: Number.isFinite(roll.maxTotal) ? roll.maxTotal : undefined };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Real request, 2026-10-26: "For light attack, we want to display the
+ * attack to-hit result, the damage, and the max damage... some table
+ * in the chat." A compound roll's own parts are ALWAYS evaluated here
+ * (unlike `rollCharacterSheetExpression` above, which only ever
+ * handles the subset the client flagged `needsRoll`) -- a compound
+ * roll is, by its own `;`/`|` syntax, ALWAYS an explicit button/
+ * action a session chose to click, never a value shown passively on
+ * a page, so there's no "the client already resolved this" case to
+ * skip here. Reuses the exact same lenient dice-notation substitution
+ * (a bare `{lightDamage}`-shaped part's own raw string passes
+ * through) and the SAME `DiceRoll` call every other roll in this file
+ * uses -- `DiceRoll` already evaluates plain arithmetic with no dice
+ * term just fine, so a part with no real dice in it (unusual for a
+ * compound roll, but not disallowed) still resolves correctly here.
+ */
+export function rollCompoundPart(part: Pick<CompoundRollPart, "expression">, variableValues: Readonly<Record<string, number | string>>): ExpressionEvalResult {
+  const substituted = substituteForDiceCheck(part.expression, variableValues);
+  if (substituted === undefined) return { error: "unknown or non-numeric variable" };
+  try {
+    const roll = new DiceRoll(substituted);
+    if (!Number.isFinite(roll.total)) return { error: "division by zero" };
+    return { value: roll.total, text: roll.output, maxValue: Number.isFinite(roll.maxTotal) ? roll.maxTotal : undefined };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

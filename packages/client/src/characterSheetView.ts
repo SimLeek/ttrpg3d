@@ -29,7 +29,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, evaluateCharacterSheetExpression, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, findCompoundRollSegments, evaluateCharacterSheetExpression, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
@@ -55,7 +55,18 @@ export interface CharacterSheetViewOptions {
   importedModIds: string[];
   /** false: no "Core & Variables" tab, no Edit-mode button on pages, every page forced into View -- a shared/visible character you don't own or admin is interactive (roll chips, edit CURRENT values inline) but not editable at the structural level. */
   canEdit: boolean;
-  onPostToChat(label: string, value: string): void;
+  /**
+   * `html`, real request 2026-10-26: "when moused over that special
+   * 22 should display the formula behind it." Optional, sanitized-
+   * HTML-safe richer rendering of the SAME result `value` already
+   * covers as a plain fallback -- `value` alone stays safe/plain for
+   * every EXISTING caller that doesn't care (the standalone page's
+   * own test chat panel is the only one that currently renders it;
+   * the in-game/popup/popout callers simply never look at this third
+   * argument, and get `value`'s own new simplification -- a bare "22",
+   * not the full un-substituted formula -- for free either way).
+   */
+  onPostToChat(label: string, value: string, html?: string): void;
   /** Fired after every successful save (debounced edits included) -- the caller decides what to do with the fresh record (characters.ts updates its own list; the popup/popout mostly just ignores it). */
   onSaved?(updated: CharacterRecord): void;
 }
@@ -256,9 +267,72 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
             rollBtn.textContent = `Error: ${rolled?.error ?? "roll failed"}`;
             return;
           }
+          // Real correction, 2026-10-26: "it should just look like 22
+          // and when moused over that special 22 should display the
+          // formula behind it, rather than that huge arrow" -- `value`
+          // is now just the bare result for every caller (in-game
+          // chat included); `html` (a tooltip over the SAME number,
+          // DiceRoll's own real breakdown) is the OPTIONAL richer
+          // version only a caller that can safely render it uses.
           const text = String(rolled.value);
           rollBtn.textContent = `${label}: ${text}`;
-          options.onPostToChat(label, text);
+          rollBtn.title = rolled.text ?? "";
+          const html = `<span class="roll-result" title="${escapeHtml(rolled.text ?? label)}">${escapeHtml(text)}</span>`;
+          options.onPostToChat(label, text, html);
+        })
+        .catch((err: unknown) => {
+          rollBtn.disabled = false;
+          rollBtn.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        });
+    });
+
+    // Real request, 2026-10-26: "For light attack, we want to display
+    // the attack to-hit result, the damage, and the max damage...
+    // some table in the chat." Same click-to-fetch-then-post pattern
+    // as a plain dice-roll chip, just bundling every part of the
+    // compound roll into ONE result instead of one number.
+    previewEl.addEventListener("click", (event) => {
+      const rollBtn = (event.target as HTMLElement).closest<HTMLButtonElement>(".compound-roll-chip");
+      if (!rollBtn || rollBtn.disabled) return;
+      const start = Number(rollBtn.dataset.rollStart);
+      const end = Number(rollBtn.dataset.rollEnd);
+      const actionLabel = rollBtn.dataset.actionLabel ?? "Roll";
+      rollBtn.disabled = true;
+      rollBtn.textContent = "Rolling...";
+      void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown.slice(start, end), effectiveVariableValues())
+        .then((result) => {
+          const rolled = result.compoundRollSegments[0]; // exactly one -- the sliced text is just this one {{...}} segment
+          rollBtn.disabled = false;
+          if (!rolled) {
+            rollBtn.textContent = `Error: roll failed`;
+            return;
+          }
+          const firstError = rolled.parts.find((p) => p.error !== undefined);
+          if (firstError) {
+            rollBtn.textContent = `Error: ${firstError.error}`;
+            return;
+          }
+          // Plain-text fallback (every caller, including real
+          // in-game chat, gets a sane result even without any HTML
+          // support): "atk: 24, damage: 12, max damage: 13".
+          const plainParts: string[] = [];
+          // Rich fallback: one line per part, a hover tooltip on each
+          // real roll's own number, an extra "max <label>" line for
+          // any part that asked for one (CompoundRollPart's own
+          // `showMax`) -- same `.roll-result` span a plain roll uses.
+          const htmlLines: string[] = [];
+          for (const part of rolled.parts) {
+            const text = String(part.value);
+            plainParts.push(`${part.label}: ${text}`);
+            htmlLines.push(`${escapeHtml(part.label)}: <span class="roll-result" title="${escapeHtml(part.text ?? part.label)}">${escapeHtml(text)}</span>`);
+            if (part.showMax && part.maxValue !== undefined) {
+              plainParts.push(`max ${part.label}: ${part.maxValue}`);
+              htmlLines.push(`max ${escapeHtml(part.label)}: ${escapeHtml(String(part.maxValue))}`);
+            }
+          }
+          rollBtn.textContent = `Roll ${actionLabel}`;
+          const html = `<div class="roll-result-group"><strong>${escapeHtml(actionLabel)}</strong><br>${htmlLines.join("<br>")}</div>`;
+          options.onPostToChat(actionLabel, plainParts.join(", "), html);
         })
         .catch((err: unknown) => {
           rollBtn.disabled = false;
@@ -285,6 +359,16 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       ...evaluateCharacterSheetExpression(s.expression, effectiveValues, s.display === "button", defs),
     }));
 
+    // Real request, 2026-10-26: "For light attack, we want to display
+    // the attack to-hit result, the damage, and the max damage...
+    // some table in the chat." A compound roll is NEVER resolved
+    // client-side (it only ever exists as an explicit button/action
+    // -- there's no "passive display" case for it the way a plain
+    // expression has), so it renders as its own inert button purely
+    // from this LOCAL parse, with no evaluation attempted here at
+    // all; the click handler above fetches its own fresh result.
+    const compoundSegments = findCompoundRollSegments(page.markdown).map((s) => ({ ...s, kind: "compound" as const }));
+
     // Variable refs (`{variableId}`) resolve entirely client-side --
     // no mod/server involved, just this character's own variableValues.
     // Real bug, found live: `findVariableRefs`'s own guard only checks
@@ -296,10 +380,11 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // single-pass substitution loop's cursor for the REST of the page
     // (garbled/duplicated text past the first expression). Dropped
     // here: any variable-ref segment entirely CONTAINED within an
-    // expression segment's own span is already handled as part of
-    // that expression's own text, not a second, separate reference.
+    // expression OR compound-roll segment's own span is already
+    // handled as part of that segment's own text, not a second,
+    // separate reference.
     const variableSegments = findVariableRefs(page.markdown)
-      .filter((v) => !expressionSegments.some((e) => v.start >= e.start && v.end <= e.end))
+      .filter((v) => ![...expressionSegments, ...compoundSegments].some((e) => v.start >= e.start && v.end <= e.end))
       .map((s) => ({ ...s, kind: "variable" as const }));
 
     // Substitutes each segment with its own HTML snippet BEFORE handing
@@ -310,7 +395,7 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // local, or merged with a server roll) so there's one place this
     // logic can drift out of sync.
     function finishRender(callSegments: ((typeof variableSegments)[number] | { kind: "call"; start: number; end: number; modId: string; functionName: string; value: string; display: "box" | "button" })[], exprSegments: typeof expressionSegments): void {
-      const allSegments = [...callSegments, ...variableSegments, ...exprSegments].sort((a, b) => a.start - b.start);
+      const allSegments = [...callSegments, ...variableSegments, ...exprSegments, ...compoundSegments].sort((a, b) => a.start - b.start);
 
       let substituted = "";
       let cursor = 0;
@@ -351,6 +436,12 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
                   : segment.display === "button"
                     ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
                     : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
+        } else if (segment.kind === "compound") {
+          // A compound roll (real request, 2026-10-26) -- always an
+          // inert "Roll <ActionLabel>" button, same click-to-fetch
+          // pattern as a plain dice-roll chip, just carrying the
+          // WHOLE action's own label instead of one expression's.
+          substituted += `<button type="button" class="compound-roll-chip" data-roll-start="${segment.start}" data-roll-end="${segment.end}" data-action-label="${escapeHtml(segment.actionLabel)}">Roll ${escapeHtml(segment.actionLabel)}</button>`;
         } else {
           const def = findVariableDef(segment.variableId);
           // An inline ref always shows ONE value (box or chip), never

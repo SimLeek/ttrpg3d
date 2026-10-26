@@ -9,7 +9,7 @@
 // (pageManager.ts), not from this outer lobby. See docs/ROADMAP.md's
 // Standing Decisions for the full Game/World split.
 
-import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment, ImportedWorkbook, ExpressionSegment, ExpressionEvalResult } from "@ttrpg3d/shared";
+import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment, ImportedWorkbook, ExpressionSegment, ExpressionEvalResult, CompoundRollSegment, CompoundRollPart } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -301,6 +301,8 @@ export interface CharacterSheetPreviewResult {
    * caller entirely when nothing on the page needs it at all.
    */
   expressionSegments: (ExpressionSegment & ExpressionEvalResult)[];
+  /** Real request, 2026-10-26 -- a `{{Label; part: expr | part: expr}}` compound roll's own parts, each already rolled (ALWAYS server-evaluated, unlike `expressionSegments` above -- a compound roll only ever exists as an explicit button/action, never a value shown passively, so there's no client-resolved case to skip). */
+  compoundRollSegments: (Omit<CompoundRollSegment, "parts"> & { parts: (CompoundRollPart & ExpressionEvalResult)[] })[];
 }
 
 export async function fetchCharacterSheetPreview(httpUrl: string, accountId: string, markdown: string, variableValues: Record<string, number | string>): Promise<CharacterSheetPreviewResult> {
