@@ -62,4 +62,52 @@ describe("fetchAndParseWorkbook (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the c
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false, status: 404, statusText: "Not Found" } as Response)));
     await expect(fetchAndParseWorkbook("https://example.com/missing.xlsx")).rejects.toThrow(/404/);
   });
+
+  it("real bug, found live: an ordinary Google Sheets edit/share URL (what a session actually copies from the address bar) is rewritten to the real export URL before fetching -- fetching the EDIT url directly returns an HTML page, which XLSX.read doesn't even throw on (it silently returns fake empty sheets), so every stat previously came back 0 with no error at all", async () => {
+    const buffer = buildTestWorkbookBuffer();
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        fetchedUrls.push(url);
+        return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(buffer) } as Response);
+      }),
+    );
+
+    await fetchAndParseWorkbook("https://docs.google.com/spreadsheets/d/19jeXTHGN7HKQfv9XYecgfWyY5IoYsAWE-OlYgr3Ekbw/edit?gid=391144986#gid=391144986");
+
+    expect(fetchedUrls).toEqual(["https://docs.google.com/spreadsheets/d/19jeXTHGN7HKQfv9XYecgfWyY5IoYsAWE-OlYgr3Ekbw/export?format=xlsx"]);
+  });
+
+  it("a URL that's already the real export link is used unchanged", async () => {
+    const buffer = buildTestWorkbookBuffer();
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        fetchedUrls.push(url);
+        return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(buffer) } as Response);
+      }),
+    );
+
+    await fetchAndParseWorkbook("https://docs.google.com/spreadsheets/d/19jeXTHGN7HKQfv9XYecgfWyY5IoYsAWE-OlYgr3Ekbw/export?format=xlsx");
+
+    expect(fetchedUrls).toEqual(["https://docs.google.com/spreadsheets/d/19jeXTHGN7HKQfv9XYecgfWyY5IoYsAWE-OlYgr3Ekbw/export?format=xlsx"]);
+  });
+
+  it("a non-Google-Sheets URL is used exactly as given -- presumably already a direct file link", async () => {
+    const buffer = buildTestWorkbookBuffer();
+    const fetchedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        fetchedUrls.push(url);
+        return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(buffer) } as Response);
+      }),
+    );
+
+    await fetchAndParseWorkbook("https://example.com/some-other-host/sheet.xlsx");
+
+    expect(fetchedUrls).toEqual(["https://example.com/some-other-host/sheet.xlsx"]);
+  });
 });

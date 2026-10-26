@@ -244,8 +244,9 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       .map(
         (t) => `
       <div class="variable-row import-row" data-mod-id="${t.modId}">
+        <span class="import-label">${escapeHtml(t.template.name)}:</span>
         <input type="text" class="import-new-character-name" placeholder="New character name" />
-        <input type="text" class="import-url-input" placeholder="Paste the sheet's export URL for &quot;${escapeHtml(t.template.name)}&quot;..." />
+        <input type="text" class="import-url-input" placeholder="Google Sheets URL (the ordinary edit/share link is fine)" />
         <button type="button" class="import-from-url-btn">Create + Import</button>
         <span class="import-status"></span>
       </div>`,

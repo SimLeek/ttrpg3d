@@ -65,25 +65,53 @@ function buildXOfYCurrentInputHtml(def: CharacterSheetVariableDef, values: Varia
 }
 
 /**
- * Real request, 2026-10-26: "Any xOfY variable should have Y be the
- * max of that... hp.y should just auto-set to the actual max hp."
- * When the variable's own def declares a live `maxExpression`, the
- * max box shows that COMPUTED value but is `disabled` and carries no
- * `data-var-key` at all -- editing it would be immediately overwritten
- * on the next render anyway (the live formula always wins), so it
- * isn't wired as an editable control in the first place, rather than
- * silently discarding an edit a session might think actually stuck.
+ * The `data-var-key` a `maxExpression` edit arrives under
+ * (`wireVariableWidgets`' own generic `onChange(key, next)`) -- `::`
+ * can never appear in an ordinary variable id, so this never collides
+ * with a real `variableValues`/`xOfYMaxKey` key. The CALLER (today:
+ * characterSheetView.ts's own Core & Variables tab) is the one that
+ * actually knows to route a key matching this shape into the sheet's
+ * own variable DEFINITION (`maxExpression` is template-level, same
+ * tier as label/type, not a per-character value) instead of
+ * `variableValues`.
  */
-function buildXOfYMaxInputHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): string {
-  const value = xOfYMax(def, values, defs);
-  return def.maxExpression !== undefined
-    ? `<input type="number" class="sheet-widget-xofy-max" value="${value}" disabled title="Computed live from this sheet's own formula -- not directly editable" />`
-    : `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${value}" />`;
+export function maxExpressionFieldKey(variableId: string): string {
+  return `${variableId}::maxExpression`;
 }
 
-/** The FULL widget markup for `def`'s value in `values` -- for `xOfY`, BOTH boxes together (current and max). This is the Core & Variables tab's own per-variable value widget (round 5 -- round 4 mistakenly used this for INLINE refs too; see buildVariableComponentHtml below for the inline, one-box-at-a-time version). One `data-var-key` per interactive control (unless the max box is a live `maxExpression` -- see buildXOfYMaxInputHtml). `defs` defaults to just `[def]` -- only needed at all when `def.maxExpression` itself references ANOTHER variable. */
+/**
+ * Real request, 2026-10-26 (second pass -- real correction after the
+ * first one got this backwards): "I should see {{20+{Toughness}*10}}
+ * in the y part of the xOfY for HP... when I go to the core tab or
+ * other pages, THEN those should be calculated... that allows people
+ * to make their own detailed sheets and add custom stuff." The Core &
+ * Variables tab's own per-variable EDITOR shows/edits the RAW FORMULA
+ * TEXT (wrapped in the same `{{...}}` syntax a page's own markdown
+ * already uses) when `maxExpression` is set -- a session can type
+ * either a plain number (flat max) or a `{{...}}` formula directly
+ * into this ONE box, same as any OTHER sheet author would write a
+ * derived stat's formula. `buildXOfYMaxDisplayHtml` below is the
+ * OPPOSITE, read-only-computed half of this, used for an inline
+ * `{variableId.y}` ref on an actual rendered PAGE.
+ */
+function buildXOfYMaxEditableHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): string {
+  if (def.maxExpression !== undefined) {
+    return `<input type="text" class="sheet-widget-xofy-max sheet-widget-xofy-max-formula" data-var-key="${escapeAttr(maxExpressionFieldKey(def.id))}" value="${escapeAttr(`{{${def.maxExpression}}}`)}" />`;
+  }
+  const value = xOfYMax(def, values, defs);
+  return `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${value}" />`;
+}
+
+/** The read-only half of the max box, for an inline `{variableId.y}` ref on an actual rendered page -- shows the LIVE COMPUTED value (same `.computed-value` class a `{{expression}}` segment's own result already uses), never the formula text itself. A flat (non-`maxExpression`) max stays directly editable here too, same as before this feature existed -- only the live-formula case is read-only. */
+function buildXOfYMaxDisplayHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList): string {
+  const value = xOfYMax(def, values, defs);
+  if (def.maxExpression !== undefined) return `<span class="sheet-widget-xofy-max computed-value">${value}</span>`;
+  return `<input type="number" class="sheet-widget-xofy-max" data-var-key="${escapeAttr(xOfYMaxKey(def.id))}" value="${value}" />`;
+}
+
+/** The FULL widget markup for `def`'s value in `values` -- for `xOfY`, BOTH boxes together (current and max). This is the Core & Variables tab's own per-variable value widget (round 5 -- round 4 mistakenly used this for INLINE refs too; see buildVariableComponentHtml below for the inline, one-box-at-a-time version). One `data-var-key` per interactive control, including the max box when it's a live formula (see buildXOfYMaxEditableHtml -- this is the EDITOR, so the formula text itself is what's editable here). `defs` defaults to just `[def]` -- only needed at all when `def.maxExpression` itself references ANOTHER variable. */
 export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: VariableValueMap, defs: VariableDefList = [def]): string {
-  if (def.type === "xOfY") return `${buildXOfYCurrentInputHtml(def, values)} / ${buildXOfYMaxInputHtml(def, values, defs)}`;
+  if (def.type === "xOfY") return `${buildXOfYCurrentInputHtml(def, values)} / ${buildXOfYMaxEditableHtml(def, values, defs)}`;
 
   const value = values[def.id] ?? def.default;
 
@@ -101,14 +129,16 @@ export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: 
  * correction: "if it's xOfY you should just have to choose .x or .y
  * to show one in the sheet," not both boxes together). For `xOfY`,
  * shows ONLY the current input (`component !== "y"`) or ONLY the max
- * input (`component === "y"`) -- same `data-var-key` convention as
- * `buildVariableWidgetHtml`, so `wireVariableWidgets` needs no
- * changes. For every other type, `component` is simply ignored
- * (there's only one value regardless) -- identical to
- * `buildVariableWidgetHtml`.
+ * display (`component === "y"` -- see buildXOfYMaxDisplayHtml, the
+ * COMPUTED half, not the editor's own formula-text half) -- same
+ * `data-var-key` convention as `buildVariableWidgetHtml` for
+ * everything that's still actually editable here, so
+ * `wireVariableWidgets` needs no changes. For every other type,
+ * `component` is simply ignored (there's only one value regardless)
+ * -- identical to `buildVariableWidgetHtml`.
  */
 export function buildVariableComponentHtml(def: CharacterSheetVariableDef, values: VariableValueMap, component: "x" | "y" = "x", defs: VariableDefList = [def]): string {
-  if (def.type === "xOfY") return component === "y" ? buildXOfYMaxInputHtml(def, values, defs) : buildXOfYCurrentInputHtml(def, values);
+  if (def.type === "xOfY") return component === "y" ? buildXOfYMaxDisplayHtml(def, values, defs) : buildXOfYCurrentInputHtml(def, values);
   return buildVariableWidgetHtml(def, values, defs);
 }
 

@@ -31,7 +31,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, evaluateCharacterSheetExpression, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
-import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
+import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
 import { fetchAndParseWorkbook } from "./characterSheetImport.js";
 
@@ -432,6 +432,35 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
           variable,
           character.variableValues,
           (key, next) => {
+            // Real request, 2026-10-26: editing the max box's own
+            // `{{...}}` formula text is a DEFINITION edit (maxExpression
+            // lives on the variable's own def, same tier as label/type
+            // -- shared by every page that references `{variableId.y}`),
+            // not a per-character variableValues write.
+            const formulaEdit = /^(.+)::maxExpression$/.exec(key);
+            if (formulaEdit) {
+              const target = sheet.variables.find((v) => v.id === formulaEdit[1]);
+              if (!target) return;
+              const raw = String(next).trim();
+              const formulaMatch = /^\{\{([\s\S]*)\}\}$/.exec(raw);
+              if (formulaMatch) {
+                target.maxExpression = formulaMatch[1].trim();
+              } else {
+                // Typing a plain number back in toggles the formula
+                // OFF -- reverts to an ordinary flat, per-character
+                // max value (same xOfYMaxKey convention every other
+                // xOfY variable's own max already uses).
+                delete target.maxExpression;
+                const num = Number(raw);
+                character.variableValues = { ...character.variableValues, [xOfYMaxKey(target.id)]: Number.isFinite(num) ? num : 0 };
+              }
+              saveSheet();
+              // The box's own TYPE (text formula vs. number) depends
+              // on this -- same reasoning the "type" field change
+              // above already rebuilds the list for.
+              renderList();
+              return;
+            }
             character.variableValues = { ...character.variableValues, [key]: next };
             saveSheet();
           },
@@ -714,7 +743,8 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       .map(
         (t) => `
       <div class="variable-row import-row" data-mod-id="${t.modId}">
-        <input type="text" class="import-url-input" placeholder="Paste the sheet's export URL for &quot;${escapeHtml(t.template.name)}&quot;..." />
+        <span class="import-label">${escapeHtml(t.template.name)}:</span>
+        <input type="text" class="import-url-input" placeholder="Google Sheets URL (the ordinary edit/share link is fine)" />
         <button type="button" class="import-from-url-btn">Import</button>
         <span class="import-status"></span>
       </div>`,

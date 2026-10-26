@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as XLSX from "xlsx";
 import { mountCharacterSheetView, type CharacterSheetViewOptions } from "./characterSheetView.js";
 import type { CharacterRecord, CharacterSheetTemplateCatalogEntry, CharacterSheetLibraryCatalogEntry, CharacterSheetPreviewResult } from "./api.js";
+import { xOfYMaxKey } from "@ttrpg3d/shared";
 
 let container: HTMLElement;
 let character: CharacterRecord;
@@ -290,5 +291,52 @@ describe("mountCharacterSheetView", () => {
 
     controller.refresh([{ modId: "some-mod", manifest: { id: "some-mod", name: "Some Mod", version: "0.1.0", entry: "entry.ts" }, template: { name: "Some Mod", pages: [], variables: [] }, hasImporter: false }], [], ["some-mod"]);
     expect(container.querySelector(".dependency-warning")).toBeNull(); // now imported, warning clears
+  });
+
+  it("real request, 2026-10-26 (second pass) -- editing an xOfY's own {{formula}} max box on the Core & Variables tab updates the variable's own DEFINITION (maxExpression), not variableValues, and is immediately visible as the raw formula text", async () => {
+    character.customSheet!.variables = [
+      { id: "toughness", label: "Toughness", type: "number", default: 0 },
+      { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10, maxExpression: "20 + (10 * {toughness})" },
+    ];
+    character.variableValues = { toughness: 5 };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // Core & Variables
+    await flush();
+
+    const formulaInput = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max-formula")!;
+    expect(formulaInput).not.toBeNull();
+    expect(formulaInput.value).toBe("{{20 + (10 * {toughness})}}");
+
+    formulaInput.value = "{{30 + (10 * {toughness})}}";
+    formulaInput.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(saved.at(-1)!.customSheet!.variables[1].maxExpression).toBe("30 + (10 * {toughness})");
+    expect(saved.at(-1)!.variableValues.toughness).toBe(5); // unrelated variableValues left alone
+  });
+
+  it("real request, 2026-10-26 (second pass) -- typing a plain number into that same box toggles the formula OFF, reverting to an ordinary flat, per-character max", async () => {
+    character.customSheet!.variables = [
+      { id: "toughness", label: "Toughness", type: "number", default: 0 },
+      { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10, maxExpression: "20 + (10 * {toughness})" },
+    ];
+    character.variableValues = { toughness: 5 };
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // Core & Variables
+    await flush();
+
+    const formulaInput = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max-formula")!;
+    formulaInput.value = "25";
+    formulaInput.dispatchEvent(new Event("change"));
+    await flush();
+
+    const lastSaved = saved.at(-1)!;
+    expect(lastSaved.customSheet!.variables[1].maxExpression).toBeUndefined();
+    expect(lastSaved.variableValues[xOfYMaxKey("hp")]).toBe(25);
+    // The box's own TYPE changes too, now that it's flat again.
+    expect(container.querySelector(".sheet-widget-xofy-max-formula")).toBeNull();
+    expect(container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!.value).toBe("25");
   });
 });

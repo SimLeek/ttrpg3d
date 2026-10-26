@@ -109,7 +109,7 @@ describe("buildVariableComponentHtml (round 5 -- {variableId.x}/{variableId.y}, 
     expect(changed).toEqual([xOfYMaxKey("hp"), 20]);
   });
 
-  it("real request, 2026-10-26 -- an xOfY with a live maxExpression shows the COMPUTED max, as a disabled box with no data-var-key (editing it would be silently overwritten on the next render anyway)", () => {
+  it("real request, 2026-10-26 (second pass) -- for an INLINE {variableId.y} ref on an actual page, an xOfY with a live maxExpression shows the COMPUTED max as a read-only span, same .computed-value class a {{expression}} result already uses -- never the formula text, and never editable here", () => {
     const toughness: CharacterSheetVariableDef = { id: "toughness", label: "Toughness", type: "number", default: 0 };
     const hpBonus: CharacterSheetVariableDef = { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 };
     const hp: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10, maxExpression: "20 + (10 * {toughness}) + {hpBonus}" };
@@ -118,17 +118,49 @@ describe("buildVariableComponentHtml (round 5 -- {variableId.x}/{variableId.y}, 
 
     const html = buildVariableComponentHtml(hp, values, "y", defs);
     container.innerHTML = html;
-    const input = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!;
-    expect(input.value).toBe("70");
-    expect(input.disabled).toBe(true);
-    expect(input.dataset.varKey).toBeUndefined();
+    const span = container.querySelector<HTMLSpanElement>(".sheet-widget-xofy-max")!;
+    expect(span.tagName).toBe("SPAN");
+    expect(span.classList.contains("computed-value")).toBe(true);
+    expect(span.textContent).toBe("70");
+    expect(span.outerHTML).not.toContain("{toughness}"); // the formula text itself never leaks into page rendering
 
-    // Not wired as editable at all -- wireVariableWidgets only ever
-    // looks at [data-var-key], which this box deliberately lacks.
+    // Not an <input> at all -- nothing for wireVariableWidgets to wire.
     let changed: unknown;
     wireVariableWidgets(container, (key, value) => (changed = [key, value]));
-    dispatchChange(input, "999");
     expect(changed).toBeUndefined();
+  });
+});
+
+describe("buildVariableWidgetHtml (the Core & Variables tab's own editor -- the OPPOSITE half of the test above)", () => {
+  it("real request, 2026-10-26 (second pass) -- an xOfY with a live maxExpression shows the RAW {{formula}} text here, editable, so an author can see/change it directly (\"that allows people to make their own detailed sheets and add custom stuff\")", () => {
+    const toughness: CharacterSheetVariableDef = { id: "toughness", label: "Toughness", type: "number", default: 0 };
+    const hpBonus: CharacterSheetVariableDef = { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 };
+    const hp: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10, maxExpression: "20 + (10 * {toughness}) + {hpBonus}" };
+    const defs = [toughness, hpBonus, hp];
+    const values = { toughness: 5, hpBonus: 0 };
+
+    const html = buildVariableWidgetHtml(hp, values, defs);
+    container.innerHTML = html;
+    const input = container.querySelector<HTMLInputElement>(".sheet-widget-xofy-max")!;
+    expect(input.tagName).toBe("INPUT");
+    expect(input.type).toBe("text");
+    expect(input.value).toBe("{{20 + (10 * {toughness}) + {hpBonus}}}");
+
+    // Real, editable -- carries the special maxExpressionFieldKey so
+    // the CALLER (characterSheetView.ts) can route it to the
+    // variable's own definition instead of variableValues.
+    let changed: [string, number | string] | undefined;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+    dispatchChange(input, "{{25 + {toughness}}}");
+    expect(changed).toEqual(["hp::maxExpression", "{{25 + {toughness}}}"]);
+  });
+
+  it("an xOfY with NO maxExpression still shows the ordinary editable flat number here, unchanged from before this feature existed", () => {
+    const hp: CharacterSheetVariableDef = { id: "hp", label: "HP", type: "xOfY", default: 10, max: 10 };
+    const html = buildVariableWidgetHtml(hp, { hp: 6, [xOfYMaxKey("hp")]: 16 });
+    expect(html).toContain("sheet-widget-xofy-max");
+    expect(html).not.toContain("sheet-widget-xofy-max-formula");
+    expect(html).toContain('value="16"');
   });
 });
 

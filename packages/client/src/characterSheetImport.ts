@@ -11,9 +11,32 @@ import * as XLSX from "xlsx";
 import type { ImportedWorkbook } from "@ttrpg3d/shared";
 
 /**
+ * Real bug, found live: a session pasting the sheet's own ordinary
+ * browser-address-bar URL (`.../spreadsheets/d/<id>/edit?gid=...`,
+ * exactly what you'd copy while looking at it) got back a page of
+ * all-zero stats, no error at all -- confirmed directly: fetching
+ * that EDIT url returns Google's own HTML editor page, not an XLSX
+ * file, but `XLSX.read` doesn't throw on HTML bytes either -- it
+ * silently returns two empty, fake "Sheet1"/"Sheet2" tabs, so every
+ * label scan just found nothing and every variable fell back to its
+ * own default. Nobody should have to know to hand-construct the real
+ * `.../export?format=xlsx` link themselves -- this rewrites ANY
+ * `docs.google.com/spreadsheets/d/<id>/...` URL (edit link, share
+ * link, already-an-export-link, whatever trailing path/query/hash it
+ * has) to that canonical export form by its id alone. A URL that
+ * doesn't match at all (some other host entirely) is used exactly as
+ * given -- it's presumably already a direct file link.
+ */
+function toExportUrl(url: string): string {
+  const match = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/.exec(url);
+  return match ? `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=xlsx` : url;
+}
+
+/**
  * Fetches `url` (a public spreadsheet export link, e.g. Google Sheets'
- * own `.../export?format=xlsx`) and parses it into one raw grid per
- * VISIBLE sheet -- hidden tabs are skipped entirely, not just left
+ * own `.../export?format=xlsx` -- see `toExportUrl` above for why an
+ * ordinary edit/share link works too) and parses it into one raw grid
+ * per VISIBLE sheet -- hidden tabs are skipped entirely, not just left
  * out of what a mod happens to read. Confirmed directly against the
  * real Lyrian Chronicles sheet this was scoped against: its own
  * master-ability/class/race lookup tabs (backing data for the sheet's
@@ -25,7 +48,8 @@ import type { ImportedWorkbook } from "@ttrpg3d/shared";
  * importer mod could plausibly want instead of every row of a whole
  * rulebook nobody asked to import.
  */
-export async function fetchAndParseWorkbook(url: string): Promise<ImportedWorkbook> {
+export async function fetchAndParseWorkbook(rawUrl: string): Promise<ImportedWorkbook> {
+  const url = toExportUrl(rawUrl);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`failed to fetch ${url}: ${res.status} ${res.statusText}`);
   const buffer = await res.arrayBuffer();
