@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./modLoader.js";
+import { evaluateCharacterSheetExpression } from "@ttrpg3d/shared";
 
 // Isolated synthetic mods directory per test, same spirit as store.test.ts's
 // own mkdtempSync-per-test convention -- these tests shouldn't depend on
@@ -262,7 +263,35 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     // hp is no longer read off the sheet's own "HP" label directly --
     // it's computed from the same formula the Core page's own
     // `{{expression}}` shows live: 20 + (10 * Toughness) + HP Bonus.
-    expect(result?.result.variableValues).toEqual({ hp: 70, hpMax: 70, mana: 11, manaMax: 11, agility: 6, toughness: 5, hpBonus: 0 });
+    // Every OTHER stat this fixture's own workbook doesn't define
+    // falls back to its own default (0, or 10 for mana).
+    expect(result?.result.variableValues).toEqual({
+      hp: 70,
+      hpMax: 70,
+      mana: 11,
+      manaMax: 11,
+      agility: 6,
+      toughness: 5,
+      focus: 0,
+      power: 0,
+      fitness: 0,
+      cunning: 0,
+      reason: 0,
+      awareness: 0,
+      presence: 0,
+      hpBonus: 0,
+      evasionBonus: 0,
+      evasionEquipmentBonus: 0,
+      dodgeBonus: 0,
+      dodgeEquipmentBonus: 0,
+      equipmentGuardValue: 0,
+      equipmentBlockValue: 0,
+      initiative: 0,
+      saveBonus: 0,
+      potency: 0,
+      speed: 0,
+      rp: 0,
+    });
     expect(result?.result.pages).toEqual([]);
   });
 
@@ -273,6 +302,66 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     // (20 + 10*0 + 0 = 20) no longer matches the "hp" variable's own
     // unrelated default of 10 -- the formula wins, since hp is
     // derived from it now, not read from its own default directly.
-    expect(result?.result.variableValues).toEqual({ hp: 20, hpMax: 20, mana: 10, manaMax: 10, agility: 0, toughness: 0, hpBonus: 0 });
+    expect(result?.result.variableValues).toEqual({
+      hp: 20,
+      hpMax: 20,
+      mana: 10,
+      manaMax: 10,
+      agility: 0,
+      toughness: 0,
+      focus: 0,
+      power: 0,
+      fitness: 0,
+      cunning: 0,
+      reason: 0,
+      awareness: 0,
+      presence: 0,
+      hpBonus: 0,
+      evasionBonus: 0,
+      evasionEquipmentBonus: 0,
+      dodgeBonus: 0,
+      dodgeEquipmentBonus: 0,
+      equipmentGuardValue: 0,
+      equipmentBlockValue: 0,
+      initiative: 0,
+      saveBonus: 0,
+      potency: 0,
+      speed: 0,
+      rp: 0,
+    });
+  });
+
+  it("real request, 2026-10-25 -- Evasion/Dodge/Guard/Block's own inputs are read from the sheet's real, quirkier layouts (a bonus cell BELOW its own label, an equipment-value cell TWO columns right, and a weapon/armor table's own equipped-rows SUMIF), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [
+        ["Agility", 6, "", "Toughness", 5],
+        ["Evasion Bonus"],
+        [3],
+        ["Dodge Bonus"],
+        [2],
+        ["Equipment Guard Value", null, 4],
+        ["Equipment Block Value", null, 1],
+        ["Equipment Penalty", null, 2],
+        ["Weapon", "Dodge\n- for negative", "Armor Equipped?"],
+        ["Sword", 5, false], // not equipped -- excluded from the SUMIF
+        ["Shield", 3, true], // equipped -- counted
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const values = result?.result.variableValues ?? {};
+    expect(values.evasionBonus).toBe(3);
+    expect(values.dodgeBonus).toBe(2);
+    expect(values.equipmentGuardValue).toBe(4);
+    expect(values.equipmentBlockValue).toBe(1);
+    expect(values.evasionEquipmentBonus).toBe(2); // reused directly from "Equipment Penalty"
+    expect(values.dodgeEquipmentBonus).toBe(3); // summed from the table's own equipped row only
+
+    // Same numbers the Core page's own {{expression}} formulas would
+    // show live, given these exact variableValues.
+    expect(evaluateCharacterSheetExpression("7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}", values, false)).toEqual({ value: 18 });
+    expect(evaluateCharacterSheetExpression("20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}", values, false)).toEqual({ value: 31 });
+    expect(evaluateCharacterSheetExpression("trunc({toughness} + {equipmentGuardValue})", values, false)).toEqual({ value: 9 });
+    expect(evaluateCharacterSheetExpression("({toughness} * 2) + {equipmentBlockValue}", values, false)).toEqual({ value: 11 });
   });
 });
