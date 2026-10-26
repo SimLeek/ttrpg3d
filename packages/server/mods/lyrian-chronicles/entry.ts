@@ -56,6 +56,27 @@
 // "toggle this gear on/off" mechanism in this project's variable
 // system yet, so that one piece alone stays frozen until the next
 // import -- a real, separate follow-up, not pretended away.
+//
+// Real request, 2026-10-26: "a few buttons to click and roll, like
+// heavy attack, initiative, etc." A genuine dice roll (real RNG)
+// needs the server regardless of what it's rolling, so these are all
+// `{{...:button}}` expressions same as everything else, each one
+// containing real dice notation (confirmed directly off the sheet:
+// `d[0-9]` somewhere in the substituted text is ALL that's needed to
+// flag a `needsRoll` segment -- characterSheetView.ts now renders
+// that as its own inert "Roll" button, fetching a FRESH result only
+// once actually clicked, never silently re-rolled on page render).
+// Initiative/Save Bonus roll `1d20` plus their own real modifier
+// formula (the SAME formula the Combat table's own plain display
+// already shows, just with `1d20 +` prepended). Light/Heavy Attack
+// are a different shape entirely: the real sheet's own Light/Heavy
+// Damage cells (`{{lightDamage}}`/`{{heavyDamage}}`) are ALREADY a
+// complete dice-notation STRING in their own right (e.g. "2d4+5"),
+// not a number to combine with anything -- a BARE `{{variableId}}`
+// reference (nothing else in the expression) passes a non-numeric
+// string straight through instead of failing the strict substitution
+// every other expression requires (shared/characterSheet.ts's own
+// substituteForDiceCheck).
 
 import { type CharacterSheetTemplate, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
 
@@ -94,6 +115,8 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "speed", label: "Speed", type: "number", default: 0 },
     { id: "rpAdjustment", label: "RP Adjustment", type: "number", default: 0 },
     { id: "oldArmorCalc", label: "Old Armor Calc", type: "number", default: 0 },
+    { id: "lightDamage", label: "Light Damage", type: "text", default: "" },
+    { id: "heavyDamage", label: "Heavy Damage", type: "text", default: "" },
   ],
   // Order is top-to-bottom on the 3D token's own billboard (characterToken.ts's
   // `barSlots[i]` <-> `bars[i]`) -- real request: "make HP green and
@@ -154,6 +177,12 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
         "| --- | --- | --- | --- |",
         "| {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{{toughness} + {bonusSaveValue}}} | {{11 + {focus}}} | {speed} |",
         "",
+        "## Rolls",
+        "",
+        "| Initiative | Save Bonus | Light Attack | Heavy Attack |",
+        "| --- | --- | --- | --- |",
+        "| {{1d20 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}:button}} | {{1d20 + {toughness} + {bonusSaveValue}:button}} | {{{lightDamage}:button}} | {{{heavyDamage}:button}} |",
+        "",
         "## Main Stats",
         "",
         "| Agility | Toughness | Focus | Power |",
@@ -193,6 +222,8 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
         "speed",
         "rpAdjustment",
         "oldArmorCalc",
+        "lightDamage",
+        "heavyDamage",
       ],
     },
   ],
@@ -293,6 +324,13 @@ function asNumber(value: Cell | undefined, fallback: number): number {
   return fallback;
 }
 
+/** Light/Heavy Damage are already a COMPLETE dice-notation string on the real sheet (e.g. "2d4+5") -- read verbatim, never coerced toward a number the way every other Core cell this mod reads is. */
+function asText(value: Cell | undefined, fallback: string): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  return fallback;
+}
+
 const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const core = workbook["Core"] ?? [];
   const num = (label: string, fallback = 0) => asNumber(findLabelValue(core, label), fallback);
@@ -327,6 +365,8 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const speed = num("Speed");
   const rpAdjustment = asNumber(findLabelValueAt(core, "RP Adjustment (Negative)", 1, 0), 0);
   const oldArmorCalc = findLabelValueAt(core, "Check Box if Old Armor Calc", 1, 0) === true ? 1 : 0;
+  const lightDamage = asText(findLabelValue(core, "Light Damage"), "");
+  const heavyDamage = asText(findLabelValue(core, "Heavy Damage"), "");
 
   // HP/MP/RP's own MAX is live now (the template's own maxExpression,
   // resolved fresh every render -- see this file's own header
@@ -367,6 +407,8 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       speed,
       rpAdjustment,
       oldArmorCalc,
+      lightDamage,
+      heavyDamage,
     },
     pages: [],
   };

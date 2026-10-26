@@ -566,6 +566,31 @@ export const DICE_NOTATION_PATTERN = /d[0-9]/i;
 const arithmeticParser = new Parser();
 
 /**
+ * Real request, 2026-10-26: "a few buttons to click and roll, like
+ * heavy attack, initiative, etc." Light/Heavy Attack's own notation
+ * (the real sheet's own Light/Heavy Damage cells, e.g. "2d4+5") is a
+ * complete dice-notation STRING in its own right, not a number to
+ * plug into arithmetic -- `{{heavyDamage}}` (a BARE reference to
+ * exactly one variable, nothing else in the expression) needs to
+ * pass that string through VERBATIM rather than fail the strict
+ * numeric substitution every other expression correctly requires
+ * (expr-eval has no notion of dice notation at all). Returns
+ * undefined, same as `substituteVariableRefs`, for anything that
+ * ISN'T this one narrow case (a genuinely unknown/non-numeric
+ * variable in a LARGER expression still fails normally).
+ */
+export function substituteForDiceCheck(expression: string, variableValues: Readonly<Record<string, number | string>>, defs: readonly CharacterSheetVariableDef[] = []): string | undefined {
+  const strict = substituteVariableRefs(expression, variableValues, defs);
+  if (strict !== undefined) return strict;
+  const bareRef = /^\{([a-zA-Z0-9_-]+)(?:\.(x|y))?\}$/.exec(expression.trim());
+  if (!bareRef) return undefined;
+  const component = bareRef[2] === "y" ? "y" : "x";
+  const key = component === "y" ? xOfYMaxKey(bareRef[1]) : bareRef[1];
+  const raw = variableValues[key];
+  return typeof raw === "string" ? raw : undefined;
+}
+
+/**
  * Real correction, 2026-10-25: "the character sheet results for
  * displaying on the client side can all be done client side... if we
  * need a new library for the server not to have to execute arbitrary
@@ -583,12 +608,17 @@ const arithmeticParser = new Parser();
  * to) real randomness.
  */
 export function evaluateCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean, defs: readonly CharacterSheetVariableDef[] = []): ExpressionEvalResult {
-  const substituted = substituteVariableRefs(expression, variableValues, defs);
-  if (substituted === undefined) return { error: "unknown or non-numeric variable" };
-  if (DICE_NOTATION_PATTERN.test(substituted)) {
+  const lenient = substituteForDiceCheck(expression, variableValues, defs);
+  if (lenient === undefined) return { error: "unknown or non-numeric variable" };
+  if (DICE_NOTATION_PATTERN.test(lenient)) {
     if (!allowDice) return { error: "dice rolling not allowed in fixed displays" };
     return { needsRoll: true };
   }
+  // No dice in play -- back to the STRICT substitution (expr-eval has
+  // no use for a raw notation string, only the lenient dice-check
+  // path above does).
+  const substituted = substituteVariableRefs(expression, variableValues, defs);
+  if (substituted === undefined) return { error: "unknown or non-numeric variable" };
   try {
     const value = arithmeticParser.evaluate(substituted);
     if (typeof value !== "number" || !Number.isFinite(value)) return { error: "division by zero" };

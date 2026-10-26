@@ -238,6 +238,27 @@ describe("evaluateCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part
   it("the dice check is case-insensitive on the SUBSTITUTED text (even though the real dice library itself only accepts lowercase 'd')", () => {
     expect(evaluateCharacterSheetExpression("1D20 + 5", {}, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
   });
+
+  it("real request, 2026-10-26 -- a BARE reference to a variable holding a complete dice-notation STRING (e.g. Light/Heavy Damage, \"4d6+10\") flags needsRoll, even though that string fails the strict numeric substitution every OTHER expression requires", () => {
+    expect(evaluateCharacterSheetExpression("{heavyDamage}", { heavyDamage: "4d6+10" }, true)).toEqual({ needsRoll: true });
+  });
+
+  it("the SAME bare notation-string reference still rejects correctly when dice aren't allowed (a fixed/box display)", () => {
+    expect(evaluateCharacterSheetExpression("{heavyDamage}", { heavyDamage: "4d6+10" }, false)).toEqual({ error: "dice rolling not allowed in fixed displays" });
+  });
+
+  it("a bare reference to a plain NON-dice string still fails (not a number, no dice notation in it either) -- the lenient passthrough only ever flags needsRoll, it never makes a non-dice string a valid displayed value", () => {
+    const result = evaluateCharacterSheetExpression("{characterName}", { characterName: "Alba" }, true);
+    expect(result.value).toBeUndefined();
+    expect(result.needsRoll).toBeUndefined();
+    expect(result.error).toBe("unknown or non-numeric variable");
+  });
+
+  it("a non-bare expression (more than just the one reference) still requires a real NUMBER from that reference, even if it holds dice notation -- the lenient passthrough is for a bare reference only", () => {
+    const result = evaluateCharacterSheetExpression("{heavyDamage} + 1", { heavyDamage: "4d6+10" }, true);
+    expect(result.error).toBeTruthy();
+    expect(result.needsRoll).toBeUndefined();
+  });
 });
 
 describe("resolveCharacterBars (replaces the old hardcoded hp/mp billboard bars with configurable var-ref + color bars)", () => {

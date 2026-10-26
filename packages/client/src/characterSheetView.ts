@@ -230,6 +230,42 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       options.onPostToChat(chip.dataset.chipLabel ?? "", chip.dataset.chipValue ?? "");
     });
 
+    // Real correction, 2026-10-26: a `[dice-roll-chip]` is a GENUINE
+    // dice roll (real RNG) -- unlike every other chip on this page,
+    // its own value is never pre-computed on render (see this
+    // function's own header below for why auto-rolling on every
+    // render was wrong). Clicking it fetches a FRESH roll for JUST
+    // this one segment (re-slicing the page's own markdown down to
+    // this segment's own span, same per-segment resolution
+    // findLibraryCalls' own segments already use), then both updates
+    // the button's own face AND posts to chat -- never both silently
+    // happening on page load.
+    previewEl.addEventListener("click", (event) => {
+      const rollBtn = (event.target as HTMLElement).closest<HTMLButtonElement>(".dice-roll-chip");
+      if (!rollBtn || rollBtn.disabled) return;
+      const start = Number(rollBtn.dataset.rollStart);
+      const end = Number(rollBtn.dataset.rollEnd);
+      const label = rollBtn.dataset.rollLabel ?? "Roll";
+      rollBtn.disabled = true;
+      rollBtn.textContent = "Rolling...";
+      void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown.slice(start, end), effectiveVariableValues())
+        .then((result) => {
+          const rolled = result.expressionSegments[0]; // exactly one -- the sliced text is just this one {{...}} segment
+          rollBtn.disabled = false;
+          if (!rolled || rolled.error !== undefined) {
+            rollBtn.textContent = `Error: ${rolled?.error ?? "roll failed"}`;
+            return;
+          }
+          const text = String(rolled.value);
+          rollBtn.textContent = `${label}: ${text}`;
+          options.onPostToChat(label, text);
+        })
+        .catch((err: unknown) => {
+          rollBtn.disabled = false;
+          rollBtn.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        });
+    });
+
     // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
     // 2026-10-25 (second pass): "the character sheet results for
     // displaying on the client side can all be done client side...
@@ -293,19 +329,28 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
           // frozen at import time. `segment.error` covers an unknown
           // variable, a real parser error, AND the "dice rolling not
           // allowed in fixed displays" check, all rendered the SAME
-          // way: in red, directly on the sheet. A `needsRoll` segment
-          // that reaches here unresolved (no server merge happened,
-          // or the round trip failed) just shows nothing rather than
-          // a half-broken chip -- the merge path below is the normal
-          // way these actually get a value.
+          // way: in red, directly on the sheet. Real correction,
+          // 2026-10-26: a `needsRoll` segment is a GENUINE dice roll
+          // -- "a few buttons to click and roll, like heavy attack,
+          // initiative" means the roll happens when CLICKED, not
+          // silently re-rolled every time the page merely renders (a
+          // real trust/UX problem: you'd see a DIFFERENT number every
+          // time you just looked at your own sheet, with no action on
+          // your part). So this renders an inert "Roll" button that
+          // fetches its own fresh result on click (this previewEl's
+          // own `.dice-roll-chip` listener above), carrying its own
+          // span as data attributes since nothing has been resolved
+          // yet at render time.
           substituted +=
             segment.error !== undefined
               ? `<span class="expression-error" style="color: red;">${escapeHtml(segment.error)}</span>`
-              : segment.value === undefined
-                ? ""
-                : segment.display === "button"
-                  ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
-                  : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
+              : segment.needsRoll
+                ? `<button type="button" class="dice-roll-chip" data-roll-start="${segment.start}" data-roll-end="${segment.end}" data-roll-label="${escapeHtml(segment.expression)}">Roll</button>`
+                : segment.value === undefined
+                  ? ""
+                  : segment.display === "button"
+                    ? `<button type="button" class="chat-chip" data-chip-label="${escapeHtml(segment.expression)}" data-chip-value="${escapeHtml(String(segment.value))}">${escapeHtml(String(segment.value))}</button>`
+                    : `<span class="computed-value">${escapeHtml(String(segment.value))}</span>`;
         } else {
           const def = findVariableDef(segment.variableId);
           // An inline ref always shows ONE value (box or chip), never
@@ -335,31 +380,26 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     }
 
     const libraryCallSegments = findLibraryCalls(page.markdown);
-    const needsServerRoll = expressionSegments.some((s) => s.needsRoll);
 
-    if (libraryCallSegments.length === 0 && !needsServerRoll) {
-      // Nothing on this page needs the server at all (no mod library
-      // calls, no real dice rolls) -- render immediately, with zero
-      // network round trip.
+    if (libraryCallSegments.length === 0) {
+      // Nothing on this page needs a round trip just to RENDER it --
+      // no mod library calls, and a `needsRoll` segment renders as
+      // its own inert "Roll" button (above), fetched only once
+      // actually clicked, never automatically here.
       finishRender([], expressionSegments);
       return;
     }
 
     // Always fetches on render (not only on edit) -- a freshly-cloned/
     // just-opened page's library calls must not sit unresolved until
-    // the viewer happens to type something.
+    // the viewer happens to type something. Only `segments` (library
+    // calls) ever come from this automatic round trip -- expression
+    // segments, including any `needsRoll` ones, are exactly what was
+    // already resolved client-side above; this fetch is never asked
+    // about them at all.
     void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, effectiveValues).then((result) => {
       const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
-      // Merge in the server's real-roll results for exactly the
-      // segments that needed one -- every other expression segment
-      // keeps the value/error it already resolved client-side above,
-      // untouched (the server was never asked about those at all).
-      const mergedExpressionSegments = expressionSegments.map((s) => {
-        if (!s.needsRoll) return s;
-        const rolled = result.expressionSegments.find((r) => r.start === s.start && r.end === s.end);
-        return rolled ? { ...s, ...rolled, needsRoll: false } : s;
-      });
-      finishRender(callSegments, mergedExpressionSegments);
+      finishRender(callSegments, expressionSegments);
     });
   }
 

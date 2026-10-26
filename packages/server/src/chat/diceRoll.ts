@@ -13,7 +13,7 @@
 // this notation is invalid" is all this wrapper needs to know.
 
 import { DiceRoll } from "@dice-roller/rpg-dice-roller";
-import { substituteVariableRefs, DICE_NOTATION_PATTERN, type ExpressionEvalResult } from "@ttrpg3d/shared";
+import { substituteVariableRefs, substituteForDiceCheck, DICE_NOTATION_PATTERN, type ExpressionEvalResult } from "@ttrpg3d/shared";
 
 export interface RollOk {
   ok: true;
@@ -71,7 +71,12 @@ export function rollNotation(notation: string, variableValues: Readonly<Record<s
  */
 export function rollCharacterSheetExpression(expression: string, variableValues: Readonly<Record<string, number | string>>, allowDice: boolean): ExpressionEvalResult | undefined {
   if (!allowDice) return undefined;
-  const substituted = substituteVariableRefs(expression, variableValues);
+  // Same lenient substitution the client's own needsRoll DETECTION
+  // already uses (shared/characterSheet.ts's substituteForDiceCheck)
+  // -- a bare `{{heavyDamage}}` reference to a variable that's
+  // ITSELF a complete dice-notation string (e.g. "4d6+10") passes
+  // through verbatim here too, not just when merely checking for it.
+  const substituted = substituteForDiceCheck(expression, variableValues);
   if (substituted === undefined || !DICE_NOTATION_PATTERN.test(substituted)) return undefined;
   try {
     const roll = new DiceRoll(substituted);

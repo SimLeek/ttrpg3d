@@ -125,18 +125,66 @@ describe("mountCharacterSheetView", () => {
     expect(posted).toEqual([["10 + {agility}", "16"]]);
   });
 
-  it("a button-mode expression that genuinely contains dice notation still needs the server (real RNG) -- the client flags needsRoll and merges in the server's own rolled result", async () => {
+  it("real correction, 2026-10-26 -- a button-mode expression that genuinely contains dice notation renders as an inert 'Roll' button, NOT auto-rolled on render (a real trust/UX problem: silently re-rolling every time the page merely renders, with no click at all)", async () => {
     character.variableValues = { bonus: 3 };
     character.customSheet!.pages = [{ title: "Core", markdown: "Attack: {{1d20 + {bonus}:button}}", variableIds: [] }];
-    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 8, end: 33, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }] };
     mountCharacterSheetView(container, baseOptions());
     await flush();
 
-    const chip = container.querySelector<HTMLButtonElement>(".page-preview .chat-chip")!;
-    expect(chip).not.toBeNull();
-    expect(chip.textContent).toBe("15");
-    chip.click();
+    // Nothing fetched yet -- no library calls on this page, and the
+    // needsRoll segment doesn't trigger a round trip just to render.
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .dice-roll-chip")!;
+    expect(rollBtn).not.toBeNull();
+    expect(rollBtn.textContent).toBe("Roll");
+    expect(container.querySelector(".page-preview .chat-chip")).toBeNull(); // not pre-resolved into a chip
+
+    // Clicking it fetches a FRESH roll for just this one segment --
+    // real RNG, server-only, same trust boundary as before.
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 25, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }] };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    expect(rollBtn.textContent).toBe("1d20 + {bonus}: 15");
     expect(posted).toEqual([["1d20 + {bonus}", "15"]]);
+  });
+
+  it("clicking a 'Roll' button twice fetches a genuinely FRESH roll each time, not a stale repost of the first result", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "Attack: {{1d20:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .dice-roll-chip")!;
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", value: 5, text: "1d20: [5] = 5" }] };
+    rollBtn.click();
+    await flush();
+    await flush();
+    expect(posted).toEqual([["1d20", "5"]]);
+
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", value: 19, text: "1d20: [19] = 19" }] };
+    rollBtn.click();
+    await flush();
+    await flush();
+    expect(posted).toEqual([
+      ["1d20", "5"],
+      ["1d20", "19"],
+    ]);
+  });
+
+  it("a roll that errors (e.g. the server round trip itself fails) shows the error on the button and re-enables it, rather than getting stuck disabled", async () => {
+    character.customSheet!.pages = [{ title: "Core", markdown: "Attack: {{1d20:button}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".page-preview .dice-roll-chip")!;
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 11, expression: "1d20", display: "button", error: "division by zero" }] };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    expect(rollBtn.textContent).toBe("Error: division by zero");
+    expect(rollBtn.disabled).toBe(false);
+    expect(posted).toEqual([]); // never posted a half-broken result
   });
 
   it("real bug, found live on /characters -- a {variableId} ref NESTED inside a {{expression}} (e.g. the real Lyrian HP formula's own {toughness}) doesn't ALSO get matched as its own separate top-level ref, which would otherwise desync the substitution cursor and garble every segment after it on the page", async () => {

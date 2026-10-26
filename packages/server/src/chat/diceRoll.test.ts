@@ -74,4 +74,10 @@ describe("rollCharacterSheetExpression (docs/CHARACTER_SHEET_IMPORT.md, part 1 -
     const result = rollCharacterSheetExpression("1D1 + 5", {}, true);
     expect(result?.error).toBeTruthy(); // the library itself rejects uppercase D as invalid syntax
   });
+
+  it("real request, 2026-10-26 -- actually rolls a BARE reference to a variable holding a complete dice-notation string (e.g. the real sheet's own Light/Heavy Damage, \"2d1+5\"), not just a formula that merely CONTAINS dice notation", () => {
+    const result = rollCharacterSheetExpression("{heavyDamage}", { heavyDamage: "2d1+5" }, true); // 1-sided dice are deterministic
+    expect(result?.value).toBe(7); // 2*1 + 5
+    expect(result?.text).toContain("2d1");
+  });
 });

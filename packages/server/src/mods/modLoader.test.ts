@@ -300,6 +300,8 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       speed: 0,
       rpAdjustment: 0,
       oldArmorCalc: 0,
+      lightDamage: "",
+      heavyDamage: "",
     });
     expect(result?.result.pages).toEqual([]);
   });
@@ -339,6 +341,8 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       speed: 0,
       rpAdjustment: 0,
       oldArmorCalc: 0,
+      lightDamage: "",
+      heavyDamage: "",
     });
   });
 
@@ -366,6 +370,7 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
         [1],
         ["Check Box if Old Armor Calc"],
         [true],
+        ["Light Damage", "2d4+5", "", "Heavy Damage", "4d6+10"],
         ["Weapon", "Dodge\n- for negative", "Initiative Penalty", "Armor Equipped?"],
         ["Sword", 5, 7, false], // not equipped -- excluded from both SUMIFs
         ["Shield", 3, 1, true], // equipped -- counted in both
@@ -387,6 +392,14 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(values.oldArmorCalc).toBe(1);
     expect(values.mp).toBe(15); // seeded at import time from the SAME formula: trunc(6+5+4)
     expect(values.rp).toBe(5); // (1 ? (2+(6-2)) : (2+6)) - 1
+    expect(values.lightDamage).toBe("2d4+5");
+    expect(values.heavyDamage).toBe("4d6+10");
+
+    // Real request, 2026-10-26 -- the Core page's own "Rolls" table
+    // reads these as a BARE reference (a complete dice-notation
+    // string passed straight through, not plugged into arithmetic).
+    expect(evaluateCharacterSheetExpression("{lightDamage}", values, true)).toEqual({ needsRoll: true });
+    expect(evaluateCharacterSheetExpression("{heavyDamage}", values, true)).toEqual({ needsRoll: true });
 
     // Same numbers the Core page's own {{expression}} formulas would
     // show live, given these exact variableValues.
