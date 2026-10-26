@@ -138,6 +138,43 @@ describe("mountCharacterSheetView", () => {
     expect(posted).toEqual([["1d20 + {bonus}", "15"]]);
   });
 
+  it("real bug, found live on /characters -- a {variableId} ref NESTED inside a {{expression}} (e.g. the real Lyrian HP formula's own {toughness}) doesn't ALSO get matched as its own separate top-level ref, which would otherwise desync the substitution cursor and garble every segment after it on the page", async () => {
+    character.variableValues = { toughness: 5, hpBonus: 0, agility: 6 };
+    character.customSheet!.variables = [
+      { id: "toughness", label: "Toughness", type: "number", default: 0 },
+      { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 },
+      { id: "agility", label: "Agility", type: "number", default: 0 },
+    ];
+    character.customSheet!.pages = [{ title: "Core", markdown: "HP: {{20 + (10 * {toughness}) + {hpBonus}}}\n\nAgility: {agility}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const boxes = container.querySelectorAll(".page-preview .computed-value");
+    expect(boxes).toHaveLength(1); // the nested {toughness} must NOT also render as its own separate box
+    expect(boxes[0].textContent).toBe("70");
+    expect(container.querySelector(".page-preview")!.textContent).toContain("Agility:");
+    // The real garbled-output bug: the nested ref's own cursor rollback
+    // left stray, un-substituted markdown markers in the final output.
+    expect(container.querySelector(".page-preview")!.innerHTML).not.toContain("{toughness}");
+    expect(container.querySelector(".page-preview")!.innerHTML).not.toContain("{hpBonus}");
+  });
+
+  it("real bug, found live -- a character that just started from a template (empty variableValues) still resolves an expression against each variable's own declared default, same as its plain {variableId} box neighbor already does", async () => {
+    character.variableValues = {}; // exactly what renderStartPrompt's start-blank/start-template buttons leave behind
+    character.customSheet!.variables = [
+      { id: "toughness", label: "Toughness", type: "number", default: 4 },
+      { id: "hpBonus", label: "HP Bonus", type: "number", default: 1 },
+    ];
+    character.customSheet!.pages = [{ title: "Core", markdown: "HP: {{20 + (10 * {toughness}) + {hpBonus}}}", variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    expect(container.querySelector(".page-preview .expression-error")).toBeNull();
+    const box = container.querySelector(".page-preview .computed-value")!;
+    expect(box).not.toBeNull();
+    expect(box.textContent).toBe("61"); // 20 + (10*4) + 1, using each variable's own declared default
+  });
+
   it("an expression error (unknown variable, bad syntax, or dice-not-allowed) renders in red, not just a plain bracketed marker -- real request: \"catch and display other parser errors... in red\"", async () => {
     character.customSheet!.pages = [{ title: "Core", markdown: "X: {{1 + {doesNotExist}}}", variableIds: [] }];
     mountCharacterSheetView(container, baseOptions());

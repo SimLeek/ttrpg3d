@@ -29,7 +29,7 @@
 
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, evaluateCharacterSheetExpression, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
+import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, evaluateCharacterSheetExpression, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets } from "./characterSheetWidgets.js";
 import { colorToHex, hexToColor } from "./lobby.js";
@@ -138,6 +138,35 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     return character.customSheet!.variables.find((v) => v.id === variableId) ?? RESERVED_CHARACTER_VARIABLES.find((v) => v.id === variableId);
   }
 
+  /**
+   * Real bug, found live: a character that just "started from
+   * template" (renderStartPrompt's start-blank/start-template
+   * buttons) has an EMPTY `variableValues` -- every variable's own
+   * widget already falls back to its own declared `default` at
+   * render time (buildVariableComponentHtml's own `values[id] ??
+   * def.default`), but `evaluateCharacterSheetExpression`/
+   * `substituteVariableRefs` only ever look directly in
+   * `variableValues` with no concept of a declared default at all, so
+   * an expression referencing a never-explicitly-set variable (e.g.
+   * `{{...{toughness}...}}` before a real import) fails with "unknown
+   * or non-numeric variable" even though the PAGE's own plain
+   * `{toughness}` box next to it shows a sensible 0. This builds the
+   * SAME effective value every widget already uses, so an
+   * expression sees exactly what's visibly on the page, with or
+   * without a real import.
+   */
+  function effectiveVariableValues(): Record<string, number | string> {
+    const result: Record<string, number | string> = { ...character.variableValues };
+    for (const def of [...character.customSheet!.variables, ...RESERVED_CHARACTER_VARIABLES]) {
+      if (result[def.id] === undefined) result[def.id] = def.default;
+      if (def.type === "xOfY") {
+        const maxKey = xOfYMaxKey(def.id);
+        if (result[maxKey] === undefined) result[maxKey] = typeof def.max === "number" ? def.max : def.default;
+      }
+    }
+    return result;
+  }
+
   // ---- dependency warning -------------------------------------------
 
   function renderDependencyWarning(): void {
@@ -187,10 +216,6 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       options.onPostToChat(chip.dataset.chipLabel ?? "", chip.dataset.chipValue ?? "");
     });
 
-    // Variable refs (`{variableId}`) resolve entirely client-side --
-    // no mod/server involved, just this character's own variableValues.
-    const variableSegments = findVariableRefs(page.markdown).map((s) => ({ ...s, kind: "variable" as const }));
-
     // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
     // 2026-10-25 (second pass): "the character sheet results for
     // displaying on the client side can all be done client side...
@@ -202,11 +227,29 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // in an allowed (`button`) spot, since only the server may ever
     // compute a real roll (diceRoll.ts's own "the server is the only
     // place a roll is ever computed" rule).
+    const effectiveValues = effectiveVariableValues();
     const expressionSegments = findExpressionSegments(page.markdown).map((s) => ({
       ...s,
       kind: "expression" as const,
-      ...evaluateCharacterSheetExpression(s.expression, character.variableValues, s.display === "button"),
+      ...evaluateCharacterSheetExpression(s.expression, effectiveValues, s.display === "button"),
     }));
+
+    // Variable refs (`{variableId}`) resolve entirely client-side --
+    // no mod/server involved, just this character's own variableValues.
+    // Real bug, found live: `findVariableRefs`'s own guard only checks
+    // ONE character back, so a `{variableId}` ref NESTED inside a
+    // `{{expression}}` (e.g. the `{toughness}` inside `{{20 + (10 *
+    // {toughness}) + {hpBonus}}}`) still matches as its OWN, separate
+    // top-level segment -- the expression's own span and this nested
+    // ref's span then OVERLAP once merged below, which desyncs the
+    // single-pass substitution loop's cursor for the REST of the page
+    // (garbled/duplicated text past the first expression). Dropped
+    // here: any variable-ref segment entirely CONTAINED within an
+    // expression segment's own span is already handled as part of
+    // that expression's own text, not a second, separate reference.
+    const variableSegments = findVariableRefs(page.markdown)
+      .filter((v) => !expressionSegments.some((e) => v.start >= e.start && v.end <= e.end))
+      .map((s) => ({ ...s, kind: "variable" as const }));
 
     // Substitutes each segment with its own HTML snippet BEFORE handing
     // the text to marked -- by the time a flattened, plain-text-only
@@ -290,7 +333,7 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // Always fetches on render (not only on edit) -- a freshly-cloned/
     // just-opened page's library calls must not sit unresolved until
     // the viewer happens to type something.
-    void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, character.variableValues).then((result) => {
+    void fetchCharacterSheetPreview(httpUrl, sheetOwnerAccountId, page.markdown, effectiveValues).then((result) => {
       const callSegments = result.segments.map((s) => ({ ...s, kind: "call" as const }));
       // Merge in the server's real-roll results for exactly the
       // segments that needed one -- every other expression segment
