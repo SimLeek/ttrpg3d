@@ -260,16 +260,19 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
-    // hp is no longer read off the sheet's own "HP" label directly --
-    // it's computed from the same formula the Core page's own
-    // `{{expression}}` shows live: 20 + (10 * Toughness) + HP Bonus.
-    // Every OTHER stat this fixture's own workbook doesn't define
-    // falls back to its own default (0, or 10 for mana).
+    // hp/mana are no longer read off the sheet's own "HP"/"Mana"
+    // labels directly -- both are computed from the SAME real
+    // formulas the Core page's own `{{expression}}`s show live: HP =
+    // 20 + (10 * Toughness) + HP Bonus; Mana = ROUNDDOWN(6 + Power +
+    // Mana Adjustments, 0). This fixture's own "Mana" cell is now
+    // unused (power/manaAdjustments both fall back to 0, so Mana =
+    // trunc(6+0+0) = 6). Every OTHER stat this fixture's own workbook
+    // doesn't define falls back to its own default.
     expect(result?.result.variableValues).toEqual({
       hp: 70,
       hpMax: 70,
-      mana: 11,
-      manaMax: 11,
+      mana: 6,
+      manaMax: 6,
       agility: 6,
       toughness: 5,
       focus: 0,
@@ -280,17 +283,19 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       awareness: 0,
       presence: 0,
       hpBonus: 0,
+      manaAdjustments: 0,
       evasionBonus: 0,
       evasionEquipmentBonus: 0,
       dodgeBonus: 0,
       dodgeEquipmentBonus: 0,
       equipmentGuardValue: 0,
       equipmentBlockValue: 0,
-      initiative: 0,
-      saveBonus: 0,
-      potency: 0,
+      initiativeAdjustment: 0,
+      initiativeEquipmentPenalty: 0,
+      bonusSaveValue: 0,
       speed: 0,
-      rp: 0,
+      rpAdjustment: 0,
+      oldArmorCalc: 0,
     });
     expect(result?.result.pages).toEqual([]);
   });
@@ -298,15 +303,16 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
   it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
-    // toughness/hpBonus both fall back to 0, so the formula's own hp
-    // (20 + 10*0 + 0 = 20) no longer matches the "hp" variable's own
-    // unrelated default of 10 -- the formula wins, since hp is
-    // derived from it now, not read from its own default directly.
+    // toughness/hpBonus/power/manaAdjustments all fall back to 0, so
+    // hp (20 + 10*0 + 0 = 20) and mana (trunc(6+0+0) = 6) are both
+    // purely the formula's own result -- neither has an independent
+    // default of its own anymore, since both are derived now, not
+    // read directly.
     expect(result?.result.variableValues).toEqual({
       hp: 20,
       hpMax: 20,
-      mana: 10,
-      manaMax: 10,
+      mana: 6,
+      manaMax: 6,
       agility: 0,
       toughness: 0,
       focus: 0,
@@ -317,25 +323,27 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       awareness: 0,
       presence: 0,
       hpBonus: 0,
+      manaAdjustments: 0,
       evasionBonus: 0,
       evasionEquipmentBonus: 0,
       dodgeBonus: 0,
       dodgeEquipmentBonus: 0,
       equipmentGuardValue: 0,
       equipmentBlockValue: 0,
-      initiative: 0,
-      saveBonus: 0,
-      potency: 0,
+      initiativeAdjustment: 0,
+      initiativeEquipmentPenalty: 0,
+      bonusSaveValue: 0,
       speed: 0,
-      rp: 0,
+      rpAdjustment: 0,
+      oldArmorCalc: 0,
     });
   });
 
-  it("real request, 2026-10-25 -- Evasion/Dodge/Guard/Block's own inputs are read from the sheet's real, quirkier layouts (a bonus cell BELOW its own label, an equipment-value cell TWO columns right, and a weapon/armor table's own equipped-rows SUMIF), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
+  it("real request, 2026-10-25 -- Mana/Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP's own inputs are read from the sheet's real, quirkier layouts (a bonus cell one or two rows BELOW its own label, an equipment-value cell TWO columns right, and a weapon/armor table's own equipped-rows SUMIF), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const workbook = {
       Core: [
-        ["Agility", 6, "", "Toughness", 5],
+        ["Agility", 6, "", "Toughness", 5, "", "Power", 5, "", "Focus", 3],
         ["Evasion Bonus"],
         [3],
         ["Dodge Bonus"],
@@ -343,9 +351,21 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
         ["Equipment Guard Value", null, 4],
         ["Equipment Block Value", null, 1],
         ["Equipment Penalty", null, 2],
-        ["Weapon", "Dodge\n- for negative", "Armor Equipped?"],
-        ["Sword", 5, false], // not equipped -- excluded from the SUMIF
-        ["Shield", 3, true], // equipped -- counted
+        ["Mana Adjustments"],
+        [], // a stray row in between (same spirit as the real sheet's own "Add - for Negative" row) -- the real value sits 2 rows below the label, not 1
+        [4],
+        ["Bonus Save Value"],
+        [],
+        [6],
+        ["Initiative Adjustment (Positive)"],
+        [2],
+        ["RP Adjustment (Negative)"],
+        [1],
+        ["Check Box if Old Armor Calc"],
+        [true],
+        ["Weapon", "Dodge\n- for negative", "Initiative Penalty", "Armor Equipped?"],
+        ["Sword", 5, 7, false], // not equipped -- excluded from both SUMIFs
+        ["Shield", 3, 1, true], // equipped -- counted in both
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
@@ -356,12 +376,24 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(values.equipmentBlockValue).toBe(1);
     expect(values.evasionEquipmentBonus).toBe(2); // reused directly from "Equipment Penalty"
     expect(values.dodgeEquipmentBonus).toBe(3); // summed from the table's own equipped row only
+    expect(values.manaAdjustments).toBe(4);
+    expect(values.bonusSaveValue).toBe(6);
+    expect(values.initiativeAdjustment).toBe(2);
+    expect(values.initiativeEquipmentPenalty).toBe(1);
+    expect(values.rpAdjustment).toBe(1);
+    expect(values.oldArmorCalc).toBe(1);
+    expect(values.mana).toBe(15); // seeded at import time from the SAME formula: trunc(6+5+4)
 
     // Same numbers the Core page's own {{expression}} formulas would
     // show live, given these exact variableValues.
+    expect(evaluateCharacterSheetExpression("trunc(6 + {power} + {manaAdjustments})", values, false)).toEqual({ value: 15 });
     expect(evaluateCharacterSheetExpression("7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}", values, false)).toEqual({ value: 18 });
     expect(evaluateCharacterSheetExpression("20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}", values, false)).toEqual({ value: 31 });
     expect(evaluateCharacterSheetExpression("trunc({toughness} + {equipmentGuardValue})", values, false)).toEqual({ value: 9 });
     expect(evaluateCharacterSheetExpression("({toughness} * 2) + {equipmentBlockValue}", values, false)).toEqual({ value: 11 });
+    expect(evaluateCharacterSheetExpression("{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}", values, false)).toEqual({ value: 7 });
+    expect(evaluateCharacterSheetExpression("{toughness} + {bonusSaveValue}", values, false)).toEqual({ value: 11 });
+    expect(evaluateCharacterSheetExpression("11 + {focus}", values, false)).toEqual({ value: 14 });
+    expect(evaluateCharacterSheetExpression("({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}", values, false)).toEqual({ value: 5 });
   });
 });

@@ -12,32 +12,39 @@
 // shows happens -- Core is a scattered label/value grid, not a fixed
 // form).
 //
-// Steps 3/4 (Main+sub stats, the top stat block) -- real finding,
-// 2026-10-25, that reshapes both: Google Sheets bakes in each formula
-// cell's own LAST-COMPUTED value when it exports to XLSX, and the
-// `xlsx` library this project's own client-side fetch already uses
-// (characterSheetImport.ts) reads exactly that cached value, not the
-// formula text (confirmed directly: fetching the real sheet and
-// reading cell B9, labelled "Focus", returns the plain number 3 --
-// the ALREADY-EVALUATED result of its own real formula, point-buy
-// array lookup and racial/class bonus included). There is nothing
-// left to re-derive for most of Core's stat block -- every Main/Sub
-// stat, and most of the "top stat block" (Mana/Initiative/Save Bonus/
-// Potency/Speed/RP), import as plain flat numbers via the exact same
-// `findLabelValue` scan HP/Mana/Agility/Toughness already used.
+// Steps 3/4 (Main+sub stats, the top stat block) -- real correction,
+// 2026-10-25: Google's own XLSX export DOES carry every formula
+// cell's real formula string (confirmed directly, on two separately
+// exported copies of the real sheet -- B9 reads
+// `=IFS(B45 = A9, A45, ...)+F45`, not just its cached number) --
+// an earlier pass here wrongly treated the cached VALUE this
+// project's `xlsx` library happens to read by default as "nothing
+// left to re-derive" and left several derived stats as flat reads of
+// that frozen number. Fixed: every stat that's genuinely a FORMULA on
+// the real sheet (Mana/Evasion/Dodge/Guard/Block/Initiative/Save
+// Bonus/Potency/RP) is hand-transcribed here as a live
+// `{{expression}}`, same treatment HP already had, each one's real
+// formula text read directly off the sheet (not guessed) and ported
+// with each cell reference swapped for the matching `{variableId}`.
+// Only the genuine LEAF inputs stay flat: the Main/Sub stats
+// (Focus/Power/Agility/Toughness/Fitness/Cunning/Reason/Awareness/
+// Presence -- each already a one-time point-buy-array + racial/class-
+// bonus choice baked into ITS OWN cached value, not something this
+// mod re-derives), the small named adjustment cells (HP Bonus,
+// Evasion/Dodge Bonus, Mana/Initiative/RP Adjustment, Bonus Save
+// Value, the "old armor calc" checkbox), and Speed (confirmed: a
+// plain typed-in number on the real sheet, not a formula at all).
 //
-// Evasion/Dodge/Guard/Block are the deliberate exception (real
-// request, 2026-10-25): kept as LIVE `{{expression}}` formulas, same
-// treatment as HP, because their own inputs (Agility/Toughness, and a
-// GM-editable adjustment number) are things a session can plausibly
-// change mid-game without a re-import. Each one's own EQUIPMENT
-// contribution (the real sheet's own SUMIF over its weapon/armor
-// table's "Armor Equipped?" column) is computed ONCE at import time
-// into its own flat variable, same limitation this file's own HP
-// comment already covers for the 3D token's bar: there is no live
-// "toggle this gear on/off" mechanism in this project's variable
-// system yet, so that one piece stays frozen until the next import --
-// a real, separate follow-up, not pretended away.
+// Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP are
+// never their OWN stored variable at all -- only their own leaf
+// inputs are (same shape HP's own `{toughness}`/`{hpBonus}` already
+// have). Each one's own EQUIPMENT contribution (the real sheet's own
+// `SUMIF` over its weapon/armor table's "Armor Equipped?" column) is
+// computed ONCE at import time into its own flat leaf variable, same
+// limitation this file's own HP/Mana note below covers: there is no
+// live "toggle this gear on/off" mechanism in this project's variable
+// system yet, so that one piece alone stays frozen until the next
+// import -- a real, separate follow-up, not pretended away.
 
 import { xOfYMaxKey, type CharacterSheetTemplate, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
 
@@ -56,17 +63,19 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "awareness", label: "Awareness", type: "number", default: 0 },
     { id: "presence", label: "Presence", type: "number", default: 0 },
     { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 },
+    { id: "manaAdjustments", label: "Mana Adjustments", type: "number", default: 0 },
     { id: "evasionBonus", label: "Evasion Bonus", type: "number", default: 0 },
     { id: "evasionEquipmentBonus", label: "Evasion Equipment Bonus", type: "number", default: 0 },
     { id: "dodgeBonus", label: "Dodge Bonus", type: "number", default: 0 },
     { id: "dodgeEquipmentBonus", label: "Dodge Equipment Bonus", type: "number", default: 0 },
     { id: "equipmentGuardValue", label: "Equipment Guard Value", type: "number", default: 0 },
     { id: "equipmentBlockValue", label: "Equipment Block Value", type: "number", default: 0 },
-    { id: "initiative", label: "Initiative", type: "number", default: 0 },
-    { id: "saveBonus", label: "Save Bonus", type: "number", default: 0 },
-    { id: "potency", label: "Potency", type: "number", default: 0 },
+    { id: "initiativeAdjustment", label: "Initiative Adjustment", type: "number", default: 0 },
+    { id: "initiativeEquipmentPenalty", label: "Initiative Equipment Penalty", type: "number", default: 0 },
+    { id: "bonusSaveValue", label: "Bonus Save Value", type: "number", default: 0 },
     { id: "speed", label: "Speed", type: "number", default: 0 },
-    { id: "rp", label: "RP", type: "number", default: 0 },
+    { id: "rpAdjustment", label: "RP Adjustment", type: "number", default: 0 },
+    { id: "oldArmorCalc", label: "Old Armor Calc", type: "number", default: 0 },
   ],
   bars: [
     { variableId: "hp", color: [0.753, 0.224, 0.169] },
@@ -75,30 +84,41 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
   pages: [
     {
       title: "Core",
+      // Every `{{...}}` below is the real sheet's own formula
+      // (confirmed directly, not guessed), each cell reference
+      // swapped for its matching `{variableId}`:
+      //   HP     = 20+(10*Toughness)+HP Bonus
+      //   Mana   = ROUNDDOWN(6+Power+Mana Adjustments, 0)
+      //   Evasion= 7+Agility+Evasion Bonus+equipment
+      //   Dodge  = 20+Agility+Dodge Bonus+equipment
+      //   Guard  = ROUNDDOWN(Toughness+equipment, 0)
+      //   Block  = (Toughness*2)+equipment
+      //   Initiative = Agility+Initiative Adjustment-equipment
+      //   Save Bonus = Toughness+Bonus Save Value
+      //   Potency    = 11+Focus
+      //   RP = IF(oldArmorCalc, 2+(Agility-equipmentPenalty), 2+Agility)-RP Adjustment
+      // (expr-eval's `trunc` matches ROUNDDOWN(x,0) for this sheet's
+      // always-non-negative inputs; its `cond ? a : b` ternary matches
+      // IF(), with the checkbox stored as 0/1 since this project's
+      // variable system has no boolean type.)
       markdown: [
         "# Core",
         "",
         "HP: {hp} / {hp.y}",
         "Max HP (live formula): {{20 + (10 * {toughness}) + {hpBonus}}}",
         "",
-        "Mana: {mana}",
+        "Mana: {mana} / {mana.y}",
+        "Max Mana (live formula): {{trunc(6 + {power} + {manaAdjustments})}}",
         "",
-        // The real sheet's own formulas (confirmed directly): Evasion
-        // = 7+Agility+EvasionBonus+equipment; Dodge = 20+Agility+
-        // DodgeBonus+equipment; Guard = ROUNDDOWN(Toughness+equipment,
-        // 0) (expr-eval's `trunc` matches ROUNDDOWN(x,0) for this
-        // sheet's always-non-negative inputs); Block =
-        // (Toughness*2)+equipment.
         "Evasion: {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}}",
         "Dodge: {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}}",
         "Guard: {{trunc({toughness} + {equipmentGuardValue})}}",
         "Block: {{({toughness} * 2) + {equipmentBlockValue}}}",
-        "",
-        "Initiative: {initiative}",
-        "Save Bonus: {saveBonus}",
-        "Potency: {potency}",
+        "Initiative: {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}}",
+        "Save Bonus: {{{toughness} + {bonusSaveValue}}}",
+        "Potency: {{11 + {focus}}}",
         "Speed: {speed}",
-        "RP: {rp}",
+        "RP: {{({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}}}",
         "",
         "Agility: {agility}",
         "Toughness: {toughness}",
@@ -124,17 +144,19 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
         "awareness",
         "presence",
         "hpBonus",
+        "manaAdjustments",
         "evasionBonus",
         "evasionEquipmentBonus",
         "dodgeBonus",
         "dodgeEquipmentBonus",
         "equipmentGuardValue",
         "equipmentBlockValue",
-        "initiative",
-        "saveBonus",
-        "potency",
+        "initiativeAdjustment",
+        "initiativeEquipmentPenalty",
+        "bonusSaveValue",
         "speed",
-        "rp",
+        "rpAdjustment",
+        "oldArmorCalc",
       ],
     },
   ],
@@ -150,12 +172,22 @@ type Cell = string | number | boolean | null;
  * rows/columns around. The Core tab's real layout (confirmed directly,
  * not guessed) uses more than one offset depending on the cell: most
  * labels sit immediately LEFT of their own value (`rowOffset: 0,
- * colOffset: 1` -- see `findLabelValue` below, the common case); the
- * "Evasion Bonus"/"Dodge Bonus" adjustment cells instead sit ONE ROW
- * ABOVE their own value in the SAME column (`rowOffset: 1, colOffset:
- * 0`); "Equipment Guard/Block Value" and "Equipment Penalty" sit TWO
- * COLUMNS left of their own value, with a blank spacer column between
- * them (`rowOffset: 0, colOffset: 2`).
+ * colOffset: 1` -- see `findLabelValue` below, the common case);
+ * "Evasion Bonus"/"Dodge Bonus"/"Initiative Adjustment (Positive)"/
+ * "RP Adjustment (Negative)"/"Check Box if Old Armor Calc" each sit
+ * ONE ROW ABOVE their own value in the SAME column (`rowOffset: 1,
+ * colOffset: 0`) -- note the real label text includes that trailing
+ * "(Positive)"/"(Negative)"; an exact match against the SHORTER name
+ * alone silently finds nothing and falls back to the variable's own
+ * default (found live: Initiative read 0 instead of its real
+ * "Adjustment" value of 1 until this was caught). "Mana
+ * Adjustments"/"Bonus Save Value" sit TWO ROWS above their own value
+ * (`rowOffset: 2, colOffset: 0` -- a stray "Add - for Negative" text
+ * row sits directly beneath the "Mana Adjustments" label itself,
+ * pushing its real value down one extra row versus the other
+ * adjustment cells); "Equipment Guard/Block Value" and "Equipment
+ * Penalty" sit TWO COLUMNS right of their own label, with a blank
+ * spacer column between them (`rowOffset: 0, colOffset: 2`).
  *
  * Only the FIRST match (scanning rows top-to-bottom, each row's own
  * columns left-to-right) is used -- confirmed safe against the real
@@ -190,8 +222,8 @@ function findLabelValue(grid: Cell[][], label: string): Cell | undefined {
  * a header row naming each column, then one row per equipment slot,
  * with a boolean "Armor Equipped?" column gating whether that row's
  * own bonus columns count at all -- exactly what the sheet's own
- * Evasion/Dodge/Guard/Block formulas each run a `SUMIF` over. Found by
- * header text, not a fixed row/column, same spirit as
+ * Evasion/Dodge/Guard/Block/Initiative formulas each run a `SUMIF`
+ * over. Found by header text, not a fixed row/column, same spirit as
  * `findLabelValueAt` above: locates the EXACT "Armor Equipped?" header
  * cell for the gating column, then the FIRST header cell in that same
  * row whose text CONTAINS `valueColumnContains` (case-insensitive --
@@ -229,7 +261,6 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const core = workbook["Core"] ?? [];
   const num = (label: string, fallback = 0) => asNumber(findLabelValue(core, label), fallback);
 
-  const mana = num("Mana", 10);
   const agility = num("Agility");
   const toughness = num("Toughness");
   const focus = num("Focus");
@@ -240,28 +271,34 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const awareness = num("Awareness");
   const presence = num("Presence");
   const hpBonus = num("HP Bonus");
+  const manaAdjustments = asNumber(findLabelValueAt(core, "Mana Adjustments", 2, 0), 0);
   const evasionBonus = asNumber(findLabelValueAt(core, "Evasion Bonus", 1, 0), 0);
   const dodgeBonus = asNumber(findLabelValueAt(core, "Dodge Bonus", 1, 0), 0);
   const equipmentGuardValue = asNumber(findLabelValueAt(core, "Equipment Guard Value", 0, 2), 0);
   const equipmentBlockValue = asNumber(findLabelValueAt(core, "Equipment Block Value", 0, 2), 0);
   // "Equipment Penalty" is the real sheet's own pre-computed duplicate
   // of Evasion's equipment SUMIF (confirmed directly: identical
-  // formula, same cell range) -- reused rather than re-summed.
-  // Dodge's own equipment term has no such duplicate anywhere else on
-  // the tab, so it's computed directly from the weapon/armor table.
+  // formula, same cell range) -- reused rather than re-summed; RP's
+  // own formula references this SAME cell too. Dodge's and
+  // Initiative's own equipment terms have no such duplicate anywhere
+  // else on the tab, so they're computed directly from the weapon/
+  // armor table.
   const evasionEquipmentBonus = asNumber(findLabelValueAt(core, "Equipment Penalty", 0, 2), 0);
   const dodgeEquipmentBonus = sumIfEquipped(core, "dodge");
-  const initiative = num("Initiative");
-  const saveBonus = num("Save Bonus");
-  const potency = num("Potency");
+  const initiativeAdjustment = asNumber(findLabelValueAt(core, "Initiative Adjustment (Positive)", 1, 0), 0);
+  const initiativeEquipmentPenalty = sumIfEquipped(core, "initiative penalty");
+  const bonusSaveValue = asNumber(findLabelValueAt(core, "Bonus Save Value", 2, 0), 0);
   const speed = num("Speed");
-  const rp = num("RP");
+  const rpAdjustment = asNumber(findLabelValueAt(core, "RP Adjustment (Negative)", 1, 0), 0);
+  const oldArmorCalc = findLabelValueAt(core, "Check Box if Old Armor Calc", 1, 0) === true ? 1 : 0;
 
-  // Same formula the Core page's own `{{expression}}` shows live --
-  // this ONE-TIME snapshot just seeds the stored hp/hpMax the 3D
-  // token's bar reads (see this file's own header comment for why
-  // the bar can't read the live formula directly yet).
+  // Same formulas the Core page's own `{{expression}}`s show live --
+  // these ONE-TIME snapshots just seed the stored hp/hpMax and mana/
+  // manaMax the 3D token's own health/mana bars read (see this file's
+  // own header comment for why a bar can't read a live formula
+  // directly yet).
   const hp = 20 + 10 * toughness + hpBonus;
+  const mana = Math.trunc(6 + power + manaAdjustments);
 
   return {
     // HP/Mana import as full/current-equals-max (the sheet is a
@@ -282,17 +319,19 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       awareness,
       presence,
       hpBonus,
+      manaAdjustments,
       evasionBonus,
       evasionEquipmentBonus,
       dodgeBonus,
       dodgeEquipmentBonus,
       equipmentGuardValue,
       equipmentBlockValue,
-      initiative,
-      saveBonus,
-      potency,
+      initiativeAdjustment,
+      initiativeEquipmentPenalty,
+      bonusSaveValue,
       speed,
-      rp,
+      rpAdjustment,
+      oldArmorCalc,
     },
     pages: [],
   };
