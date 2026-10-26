@@ -274,8 +274,16 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
           // chat included); `html` (a tooltip over the SAME number,
           // DiceRoll's own real breakdown) is the OPTIONAL richer
           // version only a caller that can safely render it uses.
+          // Real correction, 2026-10-26 (third pass): "it expands into
+          // the formula being rolled instead of remaining 'roll'" --
+          // the RESULT belongs in chat (already fixed above), not on
+          // the button's own face; a "Roll" button is a reusable
+          // ACTION trigger, not a one-shot display of its own last
+          // result. Stays "Roll" (its own title still updates, for a
+          // quick hover-recall of the last breakdown without needing
+          // to check chat).
           const text = String(rolled.value);
-          rollBtn.textContent = `${label}: ${text}`;
+          rollBtn.textContent = "Roll";
           rollBtn.title = rolled.text ?? "";
           const html = `<span class="roll-result" title="${escapeHtml(rolled.text ?? label)}">${escapeHtml(text)}</span>`;
           options.onPostToChat(label, text, html);

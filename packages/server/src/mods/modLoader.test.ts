@@ -6,6 +6,29 @@ import { pathToFileURL } from "node:url";
 import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./modLoader.js";
 import { evaluateCharacterSheetExpression } from "@ttrpg3d/shared";
 
+// Mirrors mods/lyrian-chronicles/entry.ts's own SKILLS list and
+// skillVariableId -- duplicated here (not imported) so these tests
+// stay independent of that file's own internals; a real mismatch
+// between the two would show up as the real fixture tests below
+// failing, same as any other hand-verified expectation in this file.
+const LYRIAN_SKILLS = ["Athletics", "Riding", "Stealth", "Deception", "Roguecraft", "Medicine", "Common Knowledge", "Linguistics", "Magic", "Religion", "Appraise", "History", "Flight", "Artifice", "Perception", "Insight", "Survival", "Animal Husbandry", "Art", "Negotiation", "Intimidation"];
+function lyrianSkillId(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((word, i) => (i === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join("");
+}
+function emptyLyrianSkillFields(): Record<string, number | string> {
+  const result: Record<string, number | string> = {};
+  for (const name of LYRIAN_SKILLS) {
+    const id = lyrianSkillId(name);
+    result[`${id}Bonus`] = 0;
+    result[`${id}Expertise`] = "";
+  }
+  return result;
+}
+const EMPTY_CRAFTING_PAGE = { title: "Crafting", markdown: "# Crafting\n\nNo crafting skills.", variableIds: [] };
+
 // Isolated synthetic mods directory per test, same spirit as store.test.ts's
 // own mkdtempSync-per-test convention -- these tests shouldn't depend on
 // (or be able to corrupt) the real, committed mods/example-noop fixture.
@@ -302,8 +325,9 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       oldArmorCalc: 0,
       lightDamage: "",
       heavyDamage: "",
+      ...emptyLyrianSkillFields(),
     });
-    expect(result?.result.pages).toEqual([]);
+    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE]);
   });
 
   it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
@@ -343,6 +367,7 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       oldArmorCalc: 0,
       lightDamage: "",
       heavyDamage: "",
+      ...emptyLyrianSkillFields(),
     });
   });
 
@@ -412,5 +437,51 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(evaluateCharacterSheetExpression("{toughness} + {bonusSaveValue}", values, false)).toEqual({ value: 11 });
     expect(evaluateCharacterSheetExpression("11 + {focus}", values, false)).toEqual({ value: 14 });
     expect(evaluateCharacterSheetExpression("({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}", values, false)).toEqual({ value: 5 });
+  });
+
+  it("real request, 2026-10-26 (third pass) -- 'the skill checks, from athletics at the top to intimidation at the bottom' import each skill's own Bonus and Expertise, found by the skill's own name, two and four columns right respectively", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [
+        ["Athletics", "Fitness", 2, 0, "Fit"],
+        ["Intimidation", "Presence", 1, 0, "Soc"],
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const values = result?.result.variableValues ?? {};
+    expect(values.athleticsBonus).toBe(2);
+    expect(values.athleticsExpertise).toBe("Fit");
+    expect(values.intimidationBonus).toBe(1);
+    expect(values.intimidationExpertise).toBe("Soc");
+    // Every OTHER skill this fixture's own workbook doesn't define
+    // falls back to its own default (0 / "").
+    expect(values.ridingBonus).toBe(0);
+    expect(values.ridingExpertise).toBe("");
+  });
+
+  it("real request, 2026-10-26 (third pass) -- crafting skills are a DYNAMIC page (unlike the fixed Skills list), one row per non-blank 'Crafting Skill' name, its own Total Bonus baked straight into the roll as a plain number", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [
+        ["Crafting Skill", "Total Bonus"],
+        ["Alchemy", 5],
+        [null, 0], // blank name -- "only add those if the crafting skill is not blank"
+        ["Cooking", 3],
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    expect(result?.result.pages).toEqual([
+      {
+        title: "Crafting",
+        markdown: ["# Crafting", "", "| Skill | Roll |", "| --- | --- |", "| Alchemy | {{1d20 + 5:button}} |", "| Cooking | {{1d20 + 3:button}} |"].join("\n"),
+        variableIds: [],
+      },
+    ]);
+  });
+
+  it("no crafting skills at all (every 'Crafting Skill' row blank) still returns a real page, not an empty/missing one", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
+    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE]);
   });
 });

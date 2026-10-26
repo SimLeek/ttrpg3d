@@ -150,13 +150,17 @@ describe("mountCharacterSheetView", () => {
     await flush();
     await flush();
 
-    expect(rollBtn.textContent).toBe("1d20 + {bonus}: 15");
+    // Real correction, 2026-10-26 (third pass): "it expands into the
+    // formula being rolled instead of remaining 'roll'" -- the button
+    // is a reusable ACTION trigger, not a one-shot display of its own
+    // last result; it stays "Roll" whether it just succeeded or not.
+    expect(rollBtn.textContent).toBe("Roll");
     expect(posted).toEqual([["1d20 + {bonus}", "15"]]);
-    // Real correction, 2026-10-26: "it should just look like 22 and
-    // when moused over that special 22 should display the formula
-    // behind it, rather than that huge arrow" -- the plain `value`
-    // posted above is already just the bare "15"; the richer `html`
-    // carries the SAME number with the real breakdown as a tooltip.
+    // "it should just look like 22 and when moused over that special
+    // 22 should display the formula behind it, rather than that huge
+    // arrow" -- the plain `value` posted above is already just the
+    // bare "15"; the richer `html` carries the SAME number with the
+    // real breakdown as a tooltip.
     expect(postedHtml[0]).toContain('title="1d20+3: [12]+3 = 15"');
     expect(postedHtml[0]).toContain(">15</span>");
     expect(rollBtn.title).toBe("1d20+3: [12]+3 = 15"); // the button's own face also carries it, for hovering on the sheet itself
