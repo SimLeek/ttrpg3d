@@ -218,6 +218,58 @@ describe("GameRoom", () => {
     }
   });
 
+  it("real request, 2026-10-25 -- [[...]] rolls posted AS a character resolve {variableId} refs against that character's own variableValues (same substitution rule {{expression}} sheet formulas use)", async () => {
+    const owner = store.createAccount(`GameRoom-test-rollvar-owner-${Date.now()}`);
+    const character = store.createCharacter(owner.id, "Rolla", [0.1, 0.2, 0.3]);
+    store.updateCharacterVariableValue(character.id, "initiative", 7);
+    try {
+      const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+      const sender = await colyseus.connectTo(room, { name: "Alice", accountId: owner.id });
+      const observer = await colyseus.connectTo(room, { name: "Bob" });
+
+      const received = new Promise<{ text: string }>((resolve) => observer.onMessage("chatMessage", resolve));
+      sender.send("chatSend", { text: "init check [[1d1+{initiative}]]", asCharacterId: character.id }); // deterministic: 1+7=8
+
+      const message = await received;
+      expect(message.text).toContain("init check");
+      expect(message.text).not.toContain("{initiative}");
+      expect(message.text).toContain("8");
+    } finally {
+      store.deleteAccount(owner.id);
+    }
+  });
+
+  it("real request, 2026-10-25 -- /roll also resolves {variableId} refs when posted AS a character", async () => {
+    const owner = store.createAccount(`GameRoom-test-rollvar-slash-owner-${Date.now()}`);
+    const character = store.createCharacter(owner.id, "Rolla2", [0.1, 0.2, 0.3]);
+    store.updateCharacterVariableValue(character.id, "bonus", 4);
+    try {
+      const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+      const sender = await colyseus.connectTo(room, { name: "Alice", accountId: owner.id });
+      const observer = await colyseus.connectTo(room, { name: "Bob" });
+
+      const received = new Promise<{ text: string }>((resolve) => observer.onMessage("chatMessage", resolve));
+      sender.send("chatSend", { text: "/roll 1d1+{bonus}", asCharacterId: character.id }); // deterministic: 1+4=5
+
+      const message = await received;
+      expect(message.text).toContain("5");
+    } finally {
+      store.deleteAccount(owner.id);
+    }
+  });
+
+  it("a [[...]] roll posted WITHOUT a character selected has no variables in scope -- an unknown {variableId} ref still degrades gracefully to an inline error marker", async () => {
+    const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+    const sender = await colyseus.connectTo(room, { name: "Alice" });
+    const observer = await colyseus.connectTo(room, { name: "Bob" });
+
+    const received = new Promise<{ text: string }>((resolve) => observer.onMessage("chatMessage", resolve));
+    sender.send("chatSend", { text: "roll [[1d1+{initiative}]] please" });
+
+    const message = await received;
+    expect(message.text).toContain("[invalid dice: 1d1+{initiative}]");
+  });
+
   it("a blank message is silently ignored -- no broadcast, no error", async () => {
     const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
     const sender = await colyseus.connectTo(room, { name: "Alice" });
