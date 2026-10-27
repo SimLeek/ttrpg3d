@@ -612,4 +612,38 @@ describe("mountCharacterSheetView", () => {
     expect(lastSaved.variableValues.athleticsBonus).toBe(5);
     expect(container.querySelector(".sheet-widget-number-formula")).toBeNull();
   });
+
+  it("real request, 2026-10-26 (traits & abilities round) -- a literal <button data-mod-action=\"modId.actionName\"> written directly into a mod's own page markdown (NOT a {{...}} segment) calls the registered function, merges its returned patch into variableValues, saves, and re-renders the page with the new values visible", async () => {
+    character.customSheet!.variables = [{ id: "totalExp", label: "Total Exp", type: "number", default: 0 }];
+    character.variableValues = { hp: 7, totalExp: 1000 };
+    character.customSheet!.pages = [
+      { title: "Traits", markdown: 'Remaining: {totalExp}\n\n<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts">Auto-Calculate</button>', variableIds: ["totalExp"] },
+    ];
+    const recalc = vi.fn((values: Record<string, number | string>) => ({ totalExp: Number(values.totalExp) - 1 }));
+    mountCharacterSheetView(container, baseOptions({ modActions: { "lyrian-chronicles": { recalculateTraitsCosts: recalc } } }));
+    await flush();
+
+    const actionBtn = container.querySelector<HTMLButtonElement>('[data-mod-action="lyrian-chronicles.recalculateTraitsCosts"]')!;
+    expect(actionBtn).not.toBeNull();
+    actionBtn.click();
+    await flush();
+
+    expect(recalc).toHaveBeenCalledTimes(1);
+    expect(saved.at(-1)!.variableValues.totalExp).toBe(999);
+    // Re-rendered immediately -- the OTHER field on the same page
+    // (never directly touched by the click) already reflects the
+    // patched value, no tab switch needed.
+    expect(container.querySelector<HTMLInputElement>('[data-var-key="totalExp"]')!.value).toBe("999");
+  });
+
+  it("a mod-action button for an action that isn't registered (or a mod id that isn't) does nothing, rather than throwing", async () => {
+    character.customSheet!.pages = [{ title: "Traits", markdown: '<button type="button" data-mod-action="lyrian-chronicles.notRegistered">Auto-Calculate</button>', variableIds: [] }];
+    mountCharacterSheetView(container, baseOptions({ modActions: { "lyrian-chronicles": {} } }));
+    await flush();
+
+    const actionBtn = container.querySelector<HTMLButtonElement>("[data-mod-action]")!;
+    expect(() => actionBtn.click()).not.toThrow();
+    await flush();
+    expect(saved).toEqual([]);
+  });
 });

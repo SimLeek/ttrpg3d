@@ -211,6 +211,40 @@ function craftingVariableId(name: string): string {
   return `crafting${base.charAt(0).toUpperCase()}${base.slice(1)}`;
 }
 
+/**
+ * Real request, 2026-10-26 (traits & abilities round): sanitizes a
+ * class/breakthrough's own display name into a valid `{variableId}`
+ * (shared/characterSheet.ts's own findVariableRefs only ever matches
+ * `[a-zA-Z0-9_-]+`) -- unlike a skill's own name (skillVariableId
+ * above, which never needed this), a real class or breakthrough name
+ * can contain parentheses, apostrophes, commas, or colons (e.g. "Fae
+ * Flash Acrobat (Fae)", "Divine's Chosen", "Summon Contract: Fortuna,
+ * Lady Luck"), which would otherwise break every `{variableId}`
+ * reference built from it. Confirmed directly against the real
+ * sheet's own 185 classes and 89 breakthroughs: no two distinct names
+ * collide under this transform.
+ */
+function slugify(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+    .map((word, i) => (i === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join("");
+}
+
+/** `classVariableId`/`breakthroughVariableId` below are the SAME transform `packages/client/src/mods/lyrianChronicles.ts`'s own auto-calculate button duplicates (not imported -- that file is CLIENT code, this one's SERVER-only) to recover a row's own id shape without ever needing its display name again. */
+function classVariableId(name: string): string {
+  const base = slugify(name);
+  return `class${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+function breakthroughVariableId(name: string): string {
+  const base = slugify(name);
+  return `breakthrough${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
 const skillVariables: CharacterSheetVariableDef[] = SKILLS.flatMap((name) => {
   const id = skillVariableId(name);
   return [
@@ -285,6 +319,22 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     // in case of any general modifiers." A plain, manually-edited
     // number, same tier as HP Bonus/Evasion Bonus.
     { id: "attackBonus", label: "Attack Bonus", type: "number", default: 0 },
+    // Real request, 2026-10-26 (traits & abilities round): "traits
+    // will be character race... sub-race, character taken classes,
+    // breakthroughs, and 'spirit core'." Race/Sub-Race are plain,
+    // editable text (same tier as everything else in this mod);
+    // Total EXP Earned is a single imported snapshot of the real
+    // sheet's own running ledger total ('EXP & Transactions'!D2 --
+    // the ledger ITSELF stays un-imported, same "a derived snapshot
+    // is enough" precedent HP/MP/RP already set); Spirit Core is the
+    // remaining currency after every class/breakthrough is paid for,
+    // imported as the real sheet's own number until the Traits page's
+    // own Auto-Calculate button recomputes it live (see
+    // packages/client/src/mods/lyrianChronicles.ts).
+    { id: "race", label: "Race", type: "text", default: "" },
+    { id: "subRace", label: "Sub-Race", type: "text", default: "" },
+    { id: "totalExp", label: "Total EXP Earned", type: "number", default: 0 },
+    { id: "spiritCore", label: "Spirit Core (Remaining)", type: "number", default: 0 },
     ...skillVariables,
   ],
   // Order is top-to-bottom on the 3D token's own billboard (characterToken.ts's
@@ -534,6 +584,73 @@ function findCraftingSkills(grid: Cell[][]): { name: string; bonus: number; expe
   return [];
 }
 
+/**
+ * Real request, 2026-10-26 (traits & abilities round): "the table
+ * should go Class, tier, level, cost which would be like mage, 1, 8,
+ * 800." The real sheet's own Class/Class Tier/Class Level/Cost (EXP)
+ * table (Core tab, found by its own 4-cell header row, same "found by
+ * text, not a fixed row/column" spirit as `findCraftingSkills` above)
+ * -- confirmed a FIXED 21-row span (the real sheet's own Spirit Core
+ * formula literally sums `D15:D35`, 21 rows), one row per class the
+ * character has actually taken, blank rows padding the rest. Tier is
+ * read as a bare NUMBER (the real sheet stores it as text, "Tier
+ * 1"/"Tier 2"/"Tier 3") since the auto-calculate button's own cost
+ * formula needs a number, not text. Cost is the real sheet's own
+ * PLAYER-TYPED number -- real confirmation, 2026-10-26: "when
+ * importing prefer the typed xp until that [auto-calculate] button is
+ * pressed" -- so it's imported VERBATIM here, never recomputed at
+ * import time (confirmed directly: this cell is a flat typed number
+ * on the real sheet, never a live formula, for every real class row
+ * checked).
+ */
+function findClasses(grid: Cell[][]): { name: string; tier: number; level: number; cost: number }[] {
+  const MAX_ROWS = 21; // matches the real sheet's own reserved D15:D35 span (its own Spirit Core formula's SUM range)
+  for (let row = 0; row < grid.length; row++) {
+    if (!(typeof grid[row][0] === "string" && grid[row][0].trim().toLowerCase() === "class")) continue;
+    if (!(typeof grid[row][1] === "string" && grid[row][1].trim().toLowerCase() === "class tier")) continue;
+    const results: { name: string; tier: number; level: number; cost: number }[] = [];
+    for (let r = row + 1; r <= row + MAX_ROWS && r < grid.length; r++) {
+      const name = grid[r]?.[0];
+      if (typeof name !== "string" || name.trim() === "") continue;
+      const tierMatch = /(\d+)/.exec(asText(grid[r]?.[1], ""));
+      results.push({ name: name.trim(), tier: tierMatch ? Number(tierMatch[1]) : 1, level: asNumber(grid[r]?.[2], 1), cost: asNumber(grid[r]?.[3], 0) });
+    }
+    return results;
+  }
+  return [];
+}
+
+/**
+ * Real request, 2026-10-26 (traits & abilities round): "Breakthroughs
+ * should go breakthrough, cost, description." The CHARACTER's own
+ * "Breakthrough" tab (singular -- distinct from the game's own hidden
+ * "Breakthroughs" rulebook tab, which is NEVER available to this
+ * importer at all: `characterSheetImport.ts`'s own fetch-and-parse
+ * step deliberately skips every hidden tab before the workbook ever
+ * reaches the server, confirmed directly -- see packages/client/src/
+ * mods/lyrianChronicles.ts's own header for how the auto-calculate
+ * button still gets the real rulebook cost anyway, via a hand-
+ * transcribed table instead). Header row names its own 4 columns
+ * (Breakthrough/XP Spent/Requirement/Description); every row below
+ * with a non-blank name is a real pick. Cost is imported VERBATIM
+ * from "XP Spent" -- real confirmation, 2026-10-26: "when importing
+ * prefer the typed xp until that button is pressed... if the xlsx
+ * says 0 xp spent, then we can assume those are the starting
+ * breakthroughs" (the one-time 300exp character-creation pool, never
+ * costing ongoing Spirit Core -- the SAME 0-means-free rule the auto-
+ * calculate button re-derives at click time, see that file).
+ */
+function findBreakthroughs(workbook: ImportedWorkbook): { name: string; cost: number; description: string }[] {
+  const grid = workbook["Breakthrough"] ?? [];
+  const results: { name: string; cost: number; description: string }[] = [];
+  for (let r = 1; r < grid.length; r++) {
+    const name = grid[r]?.[0];
+    if (typeof name !== "string" || name.trim() === "") continue;
+    results.push({ name: name.trim(), cost: asNumber(grid[r]?.[1], 0), description: asText(grid[r]?.[3], "") });
+  }
+  return results;
+}
+
 const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const core = workbook["Core"] ?? [];
   const num = (label: string, fallback = 0) => asNumber(findLabelValue(core, label), fallback);
@@ -570,6 +687,21 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const oldArmorCalc = findLabelValueAt(core, "Check Box if Old Armor Calc", 1, 0) === true ? 1 : 0;
   const lightDamage = asText(findLabelValue(core, "Light Damage"), "");
   const heavyDamage = asText(findLabelValue(core, "Heavy Damage"), "");
+
+  // Traits & abilities round, 2026-10-26: Race/Sub-Race are plain
+  // label-scans, same convention as everything else on Core. Total
+  // EXP Earned is a single snapshot off a DIFFERENT tab's own running
+  // total ('EXP & Transactions'!D2, label "Experience Total" one row
+  // below itself, same `findLabelValueAt` shape) -- the ledger itself
+  // stays un-imported. Spirit Core is the real sheet's own number
+  // (its own formula: Total EXP minus every class/breakthrough cost)
+  // -- imported verbatim, "take from the xlsx" until the Traits
+  // page's own Auto-Calculate button recomputes it live.
+  const race = asText(findLabelValue(core, "Race"), "");
+  const subRace = asText(findLabelValue(core, "Sub-Race | House"), "");
+  const expTab = workbook["EXP & Transactions"] ?? [];
+  const totalExp = asNumber(findLabelValueAt(expTab, "Experience Total", 1, 0), 0);
+  const spiritCore = asNumber(findLabelValue(core, "Spirit Core"), 0);
 
   // Each fixed skill's own governing substat (column F, 1 right of its
   // own name in column E), Skill Points (column H, 3 right), and
@@ -630,6 +762,88 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
     variableIds: craftingVariables.map((v) => v.id),
   };
 
+  // Traits & abilities round, 2026-10-26: "There should be one button
+  // to auto-calculate costs on that traits page... but when importing
+  // prefer the typed xp until that button is pressed" -- every
+  // class/breakthrough row's own Cost is imported VERBATIM (the real
+  // sheet's own player-typed number), never recomputed here; only the
+  // Traits page's own Auto-Calculate button (packages/client/src/mods/
+  // lyrianChronicles.ts) ever overwrites it, client-side, on request.
+  const classes = findClasses(core);
+  const classVariables: CharacterSheetVariableDef[] = [];
+  const classValues: Record<string, number | string> = {};
+  for (const cls of classes) {
+    const id = classVariableId(cls.name);
+    classVariables.push(
+      { id: `${id}Tier`, label: `${cls.name} Tier`, type: "number", default: 1 },
+      { id: `${id}Level`, label: `${cls.name} Level`, type: "number", default: 1 },
+      { id: `${id}Cost`, label: `${cls.name} Cost`, type: "number", default: 0 },
+    );
+    classValues[`${id}Tier`] = cls.tier;
+    classValues[`${id}Level`] = cls.level;
+    classValues[`${id}Cost`] = cls.cost;
+  }
+
+  const breakthroughs = findBreakthroughs(workbook);
+  const breakthroughVariables: CharacterSheetVariableDef[] = [];
+  const breakthroughValues: Record<string, number | string> = {};
+  for (const bt of breakthroughs) {
+    const id = breakthroughVariableId(bt.name);
+    breakthroughVariables.push({ id: `${id}Cost`, label: `${bt.name} Cost`, type: "number", default: 0 }, { id: `${id}Description`, label: `${bt.name} Description`, type: "text", default: "" });
+    breakthroughValues[`${id}Cost`] = bt.cost;
+    breakthroughValues[`${id}Description`] = bt.description;
+  }
+
+  const traitsPage: CharacterSheetPageDef = {
+    title: "Traits",
+    markdown: [
+      "# Traits",
+      "",
+      "## Identity",
+      "",
+      "| Race | Sub-Race |",
+      "| --- | --- |",
+      "| {race} | {subRace} |",
+      "",
+      "## Currency",
+      "",
+      "| Total EXP Earned | Spirit Core (Remaining) |",
+      "| --- | --- |",
+      "| {totalExp} | {spiritCore} |",
+      "",
+      "Recomputes every class's own Cost (tier's first level costs tier × 100, every level after costs 100) and every breakthrough's own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.",
+      "",
+      '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts">Auto-Calculate Costs</button>',
+      "",
+      "## Classes",
+      "",
+      classes.length === 0
+        ? "No classes."
+        : [
+            "| Class | Tier | Level | Cost |",
+            "| --- | --- | --- | --- |",
+            ...classes.map((cls) => {
+              const id = classVariableId(cls.name);
+              return `| ${cls.name} | {${id}Tier} | {${id}Level} | {${id}Cost} |`;
+            }),
+          ].join("\n"),
+      "",
+      "## Breakthroughs",
+      "",
+      breakthroughs.length === 0
+        ? "No breakthroughs."
+        : [
+            "| Breakthrough | Cost | Description |",
+            "| --- | --- | --- |",
+            ...breakthroughs.map((bt) => {
+              const id = breakthroughVariableId(bt.name);
+              return `| ${bt.name} | {${id}Cost} | {${id}Description} |`;
+            }),
+          ].join("\n"),
+    ].join("\n"),
+    variableIds: ["race", "subRace", "totalExp", "spiritCore", ...classVariables.map((v) => v.id), ...breakthroughVariables.map((v) => v.id)],
+  };
+
   // HP/MP/RP's own MAX is live now (the template's own maxExpression,
   // resolved fresh every render -- see this file's own header
   // comment), so only the CURRENT value needs seeding here, computed
@@ -671,11 +885,17 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       oldArmorCalc,
       lightDamage,
       heavyDamage,
+      race,
+      subRace,
+      totalExp,
+      spiritCore,
       ...skillValues,
       ...craftingValues,
+      ...classValues,
+      ...breakthroughValues,
     },
-    pages: [craftingPage],
-    variables: [...skillVariableOverrides, ...craftingVariables],
+    pages: [craftingPage, traitsPage],
+    variables: [...skillVariableOverrides, ...craftingVariables, ...classVariables, ...breakthroughVariables],
   };
 };
 

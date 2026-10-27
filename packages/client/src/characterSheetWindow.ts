@@ -14,6 +14,7 @@
 import { fetchAccounts, fetchCharacter, fetchCharacterSheetTemplates, fetchCharacterSheetLibraries, fetchAccountMods, ACCOUNT_STORAGE_KEY } from "./api.js";
 import { connectChat } from "./chatNet.js";
 import { mountCharacterSheetView } from "./characterSheetView.js";
+import { MOD_ACTIONS } from "./modActions.js";
 
 export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl: string, wsUrl: string, gameId: string, characterId: string): Promise<void> {
   container.innerHTML = `
@@ -85,6 +86,7 @@ export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl:
     libraries,
     importedModIds,
     canEdit,
+    modActions: MOD_ACTIONS,
     // Real request, 2026-10-26 (third pass): a single-part label-as-
     // button roll (e.g. "evasion: 13") posts its own already-complete
     // "label: value" text with an empty `label` arg (characterSheetView.ts's

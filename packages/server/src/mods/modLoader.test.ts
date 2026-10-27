@@ -34,6 +34,42 @@ function emptyLyrianSkillFields(): Record<string, number | string> {
   return result;
 }
 const EMPTY_CRAFTING_PAGE = { title: "Crafting", markdown: "# Crafting\n\nNo crafting skills.", variableIds: [] };
+// Real request, 2026-10-26 (traits & abilities round): the fixed
+// Race/Sub-Race/Total EXP Earned/Spirit Core fields, always present
+// in variableValues regardless of whether the fixture's own workbook
+// defines them.
+const EMPTY_TRAITS_FIELDS = { race: "", subRace: "", totalExp: 0, spiritCore: 0 };
+const EMPTY_TRAITS_PAGE = {
+  title: "Traits",
+  markdown: [
+    "# Traits",
+    "",
+    "## Identity",
+    "",
+    "| Race | Sub-Race |",
+    "| --- | --- |",
+    "| {race} | {subRace} |",
+    "",
+    "## Currency",
+    "",
+    "| Total EXP Earned | Spirit Core (Remaining) |",
+    "| --- | --- |",
+    "| {totalExp} | {spiritCore} |",
+    "",
+    "Recomputes every class's own Cost (tier's first level costs tier × 100, every level after costs 100) and every breakthrough's own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.",
+    "",
+    '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts">Auto-Calculate Costs</button>',
+    "",
+    "## Classes",
+    "",
+    "No classes.",
+    "",
+    "## Breakthroughs",
+    "",
+    "No breakthroughs.",
+  ].join("\n"),
+  variableIds: ["race", "subRace", "totalExp", "spiritCore"],
+};
 
 // Isolated synthetic mods directory per test, same spirit as store.test.ts's
 // own mkdtempSync-per-test convention -- these tests shouldn't depend on
@@ -331,9 +367,10 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       oldArmorCalc: 0,
       lightDamage: "",
       heavyDamage: "",
+      ...EMPTY_TRAITS_FIELDS,
       ...emptyLyrianSkillFields(),
     });
-    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE]);
+    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE, EMPTY_TRAITS_PAGE]);
   });
 
   it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
@@ -373,6 +410,7 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       oldArmorCalc: 0,
       lightDamage: "",
       heavyDamage: "",
+      ...EMPTY_TRAITS_FIELDS,
       ...emptyLyrianSkillFields(),
     });
   });
@@ -507,6 +545,7 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
         ].join("\n"),
         variableIds: ["craftingAlchemyBonus", "craftingAlchemySkillPoints", "craftingAlchemyExpertise", "craftingCookingBonus", "craftingCookingSkillPoints", "craftingCookingExpertise"],
       },
+      EMPTY_TRAITS_PAGE,
     ]);
 
     const variables = result?.result.variables ?? [];
@@ -519,6 +558,86 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
   it("no crafting skills at all (every 'Crafting Skill' row blank) still returns a real page, not an empty/missing one", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
-    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE]);
+    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE, EMPTY_TRAITS_PAGE]);
+  });
+
+  it("real request, 2026-10-26 (traits & abilities round) -- Race/Sub-Race/Spirit Core import as plain label-scans off Core, Total EXP Earned imports as a single snapshot off the DIFFERENT 'EXP & Transactions' tab's own running total", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [
+        ["Race", "Chimera", "Sub-Race | House", "Harpy"],
+        ["Spirit Core", 2600],
+      ],
+      "EXP & Transactions": [["Event", "Date", "Amount of Experience Gained", "Experience Total"], ["Character Creation", "N/A", 1000, 2600]],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const values = result?.result.variableValues ?? {};
+    expect(values.race).toBe("Chimera");
+    expect(values.subRace).toBe("Harpy");
+    expect(values.spiritCore).toBe(2600);
+    expect(values.totalExp).toBe(2600);
+  });
+
+  it("real data, confirmed against the real sheet -- the Class/Class Tier/Class Level/Cost (EXP) table imports verbatim (Cost is a flat PLAYER-TYPED number on the real sheet, never recomputed at import time), Tier parsed to a bare number for the auto-calculate button's own formula", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [
+        ["Class", "Class Tier", "Class Level", "Cost (EXP)"],
+        ["Mage", "Tier 1", "8", 800],
+        ["Starcaller", "Tier 2", "4", 500],
+        [null, "", null, 0], // blank padding row, same shape the real sheet's own reserved 21-row span has
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const values = result?.result.variableValues ?? {};
+    expect(values.classMageTier).toBe(1);
+    expect(values.classMageLevel).toBe(8);
+    expect(values.classMageCost).toBe(800); // imported verbatim, not recomputed (100 + 7*100 would ALSO be 800 here, but that's not why -- see the dedicated auto-calc test in lyrianChronicles.test.ts)
+    expect(values.classStarcallerTier).toBe(2);
+    expect(values.classStarcallerLevel).toBe(4);
+    expect(values.classStarcallerCost).toBe(500);
+
+    const page = result?.result.pages.find((p) => p.title === "Traits");
+    expect(page?.markdown).toContain("| Mage | {classMageTier} | {classMageLevel} | {classMageCost} |");
+    expect(page?.markdown).toContain("| Starcaller | {classStarcallerTier} | {classStarcallerLevel} | {classStarcallerCost} |");
+  });
+
+  it("real request, 2026-10-26 (traits & abilities round) -- the character's own 'Breakthrough' tab (singular -- distinct from the game's own hidden 'Breakthroughs' rulebook tab, never available to this importer) imports Cost verbatim from 'XP Spent' and Description, by name", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [],
+      Breakthrough: [
+        ["Breakthrough", "XP Spent", "Requirement", "Description"],
+        ["On the draw", 0, "", "You gain +1 to your initiative."],
+        ["Light Sleeper", 999, "", "When asleep, you may roll Perception rolls as if you were awake."], // a wrong/stale typed number -- imported verbatim anyway; only the auto-calculate button ever corrects it
+        [null, 0, "", ""], // blank name -- skipped
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const values = result?.result.variableValues ?? {};
+    expect(values.breakthroughOnTheDrawCost).toBe(0);
+    expect(values.breakthroughOnTheDrawDescription).toBe("You gain +1 to your initiative.");
+    expect(values.breakthroughLightSleeperCost).toBe(999);
+    expect(values.breakthroughLightSleeperDescription).toBe("When asleep, you may roll Perception rolls as if you were awake.");
+
+    const page = result?.result.pages.find((p) => p.title === "Traits");
+    expect(page?.markdown).toContain("| On the draw | {breakthroughOnTheDrawCost} | {breakthroughOnTheDrawDescription} |");
+    expect(page?.markdown).toContain("| Light Sleeper | {breakthroughLightSleeperCost} | {breakthroughLightSleeperDescription} |");
+  });
+
+  it("a breakthrough/class name with parentheses, apostrophes, or commas still produces a valid {variableId} (sanitized, unlike skill names which never need it)", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [["Class", "Class Tier", "Class Level", "Cost (EXP)"]],
+      Breakthrough: [
+        ["Breakthrough", "XP Spent", "Requirement", "Description"],
+        ["Fae Flash Acrobat (Fae)", 50, "", "..."],
+        ["Divine's Chosen", 0, "", "..."],
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const values = result?.result.variableValues ?? {};
+    expect(values.breakthroughFaeFlashAcrobatFaeCost).toBe(50);
+    expect(values.breakthroughDivinesChosenCost).toBe(0);
   });
 });
