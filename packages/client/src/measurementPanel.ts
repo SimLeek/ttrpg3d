@@ -16,14 +16,25 @@
 // file here) -- all data and actions come in via injected callbacks/
 // update(), so this stays jsdom-testable.
 
-export type MeasurementShapeKind = "chain" | "cube" | "sphere" | "cone" | "beam";
+// Real request, 2026-10-27: "please change the 'cube' button in the
+// measurement table to 'box', and add a 'cube' option which is
+// almost exactly the same as the sphere." The OLD "cube" (an
+// arbitrary axis-aligned box from 2 opposite corners, possibly a
+// different size per axis) is renamed "box"; the NEW "cube" takes its
+// two points the SAME way a sphere does (center, then a point whose
+// own distance sets the size) but uses the LARGEST single-axis
+// distance as its "radius" and applies that same number to all three
+// axes, so it always comes out a true, equal-sided cube (see
+// measurementShapes.ts's own `shapeAabb`/`buildShapeVisuals`).
+export type MeasurementShapeKind = "chain" | "box" | "sphere" | "cube" | "cone" | "beam";
 export type SnapMode = "center" | "corner" | "free";
 
 const COLLAPSED_WIDTH = 28;
 const SHAPE_LABELS: Record<MeasurementShapeKind, string> = {
   chain: "Chain",
-  cube: "Cube",
+  box: "Box",
   sphere: "Sphere",
+  cube: "Cube",
   cone: "Cone",
   beam: "Beam",
 };

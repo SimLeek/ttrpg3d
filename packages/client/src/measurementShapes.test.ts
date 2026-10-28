@@ -10,9 +10,10 @@ describe("requiredPointCount", () => {
     expect(requiredPointCount("chain")).toBeUndefined();
   });
 
-  it("cube/sphere/cone/beam all require exactly 2 points", () => {
-    expect(requiredPointCount("cube")).toBe(2);
+  it("box/sphere/cube/cone/beam all require exactly 2 points", () => {
+    expect(requiredPointCount("box")).toBe(2);
     expect(requiredPointCount("sphere")).toBe(2);
+    expect(requiredPointCount("cube")).toBe(2);
     expect(requiredPointCount("cone")).toBe(2);
     expect(requiredPointCount("beam")).toBe(2);
   });
@@ -207,15 +208,15 @@ describe("onPlacePoint -- real request, 2026-10-24: \"once I click the screen ag
     const room = { state: { measurementShapes: [], ftPerVoxel: 5 }, send: vi.fn() } as unknown as Room & { send: ReturnType<typeof vi.fn> };
 
     const controller = installMeasurementShapes(noa, room, {} as unknown as PlayerController, "acct1");
-    controller.selectKind("cube");
+    controller.selectKind("box"); // the shape this test's own quoted request meant by "cube," since renamed -- see measurementPanel.ts
 
     controller.onPlacePoint(); // starts the drag (point 1 + a duplicate point 2)
     document.dispatchEvent(new Event("mouseup")); // releases the drag -- persists immediately (no Enter/finalize step any more)
     expect(room.send).toHaveBeenCalledTimes(1);
-    expect(room.send).toHaveBeenNthCalledWith(1, "placeMeasurementShape", expect.objectContaining({ kind: "cube" }));
+    expect(room.send).toHaveBeenNthCalledWith(1, "placeMeasurementShape", expect.objectContaining({ kind: "box" }));
 
     controller.onPlacePoint(); // a second click, with NO call to selectKind in between
-    expect(controller.activeKind()).toBe("cube"); // never had to re-pick the shape button
+    expect(controller.activeKind()).toBe("box"); // never had to re-pick the shape button
     document.dispatchEvent(new Event("mouseup"));
     expect(room.send).toHaveBeenCalledTimes(2); // a real second shape was started and persisted, not a no-op
 
@@ -267,12 +268,22 @@ describe("frustumFarCorners (real request, 2026-10-24: \"the top and bottom line
 });
 
 describe("shapeAabb (the shared bounding box every sized billboard's scale is fed from)", () => {
-  it("a cube's own AABB is exactly its two corners", () => {
-    expect(shapeAabb("cube", [[0, 0, 0], [2, 3, 4]])).toEqual({ width: 2, height: 3, depth: 4 });
+  it("a box's own AABB is exactly its two corners", () => {
+    expect(shapeAabb("box", [[0, 0, 0], [2, 3, 4]])).toEqual({ width: 2, height: 3, depth: 4 });
   });
 
   it("a sphere's own AABB is a cube of side 2*radius", () => {
     expect(shapeAabb("sphere", [[0, 0, 0], [3, 0, 0]])).toEqual({ width: 6, height: 6, depth: 6 });
+  });
+
+  it("real request, 2026-10-27 -- a 'cube' option's own AABB uses the LARGEST single-axis distance as its radius, applied to all three axes (unlike sphere's real corner-to-corner distance)", () => {
+    // max(|2|, |3|, |4|) = 4 -> radius 4 -> side 8 on every axis.
+    expect(shapeAabb("cube", [[0, 0, 0], [2, 3, 4]])).toEqual({ width: 8, height: 8, depth: 8 });
+  });
+
+  it("the cube's own radius is symmetric regardless of which axis is largest", () => {
+    expect(shapeAabb("cube", [[0, 0, 0], [1, 1, 5]])).toEqual({ width: 10, height: 10, depth: 10 });
+    expect(shapeAabb("cube", [[0, 0, 0], [7, 1, 1]])).toEqual({ width: 14, height: 14, depth: 14 });
   });
 
   it("a beam's own AABB pads the axis segment by its own width", () => {
@@ -286,5 +297,56 @@ describe("shapeAabb (the shared bounding box every sized billboard's scale is fe
     const narrow = shapeAabb("cone", [[0, 0, 0], [0, 10, 0]], 30);
     const wide = shapeAabb("cone", [[0, 0, 0], [0, 10, 0]], 90);
     expect(wide.width).toBeGreaterThan(narrow.width);
+  });
+});
+
+describe("installMeasurementShapes -- real request, 2026-10-27 -- a finalized 'cube' renders as an equal-sided BOX mesh (not a sphere), centered on the first point, sized by the largest single-axis distance to the second", () => {
+  it("builds a box mesh sized 2*maxAxisDistance on every side, positioned at the center point", () => {
+    const scene = makeSceneWithCamera();
+    const cubeShape = {
+      shapeId: "cube-1",
+      kind: "cube",
+      ownerAccountId: "acct1",
+      points: [{ x: 5, y: 1, z: 2 }, { x: 7, y: 1, z: 2 }], // max axis distance = |7-5| = 2 -> radius 2 -> side 4
+      broadcast: true,
+      coneDegrees: 60,
+      isFrustum: false,
+      beamWidth: 1,
+    };
+    const noa = {
+      rendering: { getScene: () => scene, addMeshToScene: () => {} },
+      container: { hasPointerLock: false, setPointerLock: () => {} },
+      camera: { heading: 0 },
+      pick: () => undefined,
+      localToGlobal: (local: number[], global: number[]) => {
+        global[0] = local[0];
+        global[1] = local[1];
+        global[2] = local[2];
+        return global;
+      },
+      on: (event: string, cb: () => void) => {
+        if (event === "tick") tick = cb;
+      },
+    } as unknown as Engine;
+    let tick: (() => void) | undefined;
+    const room = { state: { measurementShapes: [cubeShape], ftPerVoxel: 5 }, send: () => {} } as unknown as Room;
+
+    installMeasurementShapes(noa, room, {} as unknown as PlayerController, "acct1");
+    tick!();
+
+    const cubeMesh = scene.meshes.find((m) => m.name.endsWith("-cube")) as BABYLON.Mesh | undefined;
+    expect(cubeMesh).not.toBeUndefined();
+    expect(cubeMesh!.position.x).toBeCloseTo(5, 9);
+    expect(cubeMesh!.position.y).toBeCloseTo(1, 9);
+    expect(cubeMesh!.position.z).toBeCloseTo(2, 9);
+    // A BABYLON box's own bounding info reflects its real built size --
+    // extendSize is HALF the full side length on each axis.
+    const extend = cubeMesh!.getBoundingInfo().boundingBox.extendSize;
+    expect(extend.x * 2).toBeCloseTo(4, 5);
+    expect(extend.y * 2).toBeCloseTo(4, 5);
+    expect(extend.z * 2).toBeCloseTo(4, 5);
+
+    // Never a sphere mesh for this kind.
+    expect(scene.meshes.some((m) => m.name.includes("-sphere"))).toBe(false);
   });
 });

@@ -1775,6 +1775,22 @@ describe("WorldRoom", () => {
       expect(room.state.measurementShapes).toHaveLength(0);
     });
 
+    it("real request, 2026-10-27 -- 'box' (renamed from 'cube') and the new sphere-like 'cube' are both accepted kinds", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-box-cube-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-box-cube-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Box Cube Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      client.send("placeMeasurementShape", { kind: "box", points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 3, z: 4 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes[0].kind).toBe("box");
+
+      client.send("placeMeasurementShape", { kind: "cube", points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 3, z: 4 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes[0].kind).toBe("cube"); // replaced the box, same single-slot-per-session rule
+    });
+
     it("cone/beam settings (coneDegrees/isFrustum/beamWidth) are stored as sent", async () => {
       const owner = trackedAccount(`WorldRoom-test-ms-cone-owner-${Date.now()}`);
       const game = trackedGame(`WorldRoom-test-ms-cone-game-${Date.now()}`, owner.id);

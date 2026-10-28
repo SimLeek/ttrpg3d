@@ -1373,7 +1373,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
 
     // docs/BATTLE_SYSTEM.md's measurement shapes -- sent once, only
     // when a shape is actually FINALIZED client-side (a chain via
-    // Enter; a fixed-point-count shape -- cube/sphere/cone/beam --
+    // Enter; a fixed-point-count shape -- box/sphere/cube/cone/beam --
     // the moment its last required point is placed). Everything
     // before that (the live ghost-preview/WASD/Tab editing) is pure
     // client-side state, never reaching the server at all -- see
@@ -1388,7 +1388,7 @@ export class WorldRoom extends Room<{ state: WorldStateType }> {
       (client, { kind, points, broadcast, coneDegrees, isFrustum, beamWidth }) => {
         const sender = this.state.players.get(client.sessionId);
         if (!sender) return;
-        if (!["chain", "cube", "sphere", "cone", "beam"].includes(kind)) return;
+        if (!["chain", "box", "sphere", "cube", "cone", "beam"].includes(kind)) return;
         if (points.length === 0 || !points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z))) return;
 
         // Real correction, 2026-10-24: "each session has ONE current

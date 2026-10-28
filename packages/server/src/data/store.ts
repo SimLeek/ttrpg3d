@@ -152,7 +152,7 @@ export interface WorldRecord {
 /** The persisted half of WorldState.ts's `MeasurementShapeState` -- a 1:1 mirror (nothing here is derived/re-resolvable from elsewhere, same tier as TurnOrderEntryRecord). */
 export interface MeasurementShapeRecord {
   shapeId: string;
-  kind: "chain" | "cube" | "sphere" | "cone" | "beam";
+  kind: "chain" | "box" | "sphere" | "cube" | "cone" | "beam";
   ownerAccountId: string;
   points: { x: number; y: number; z: number }[];
   broadcast: boolean;
