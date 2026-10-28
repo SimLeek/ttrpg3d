@@ -22,8 +22,15 @@ function buildTestWorkbookBuffer(): ArrayBuffer {
 
   // A hidden reference tab -- must be skipped entirely.
   const hiddenSheet = XLSX.utils.aoa_to_sheet([["should", "never", "appear"]]);
-  XLSX.utils.book_append_sheet(wb, hiddenSheet, "All Abilities");
-  wb.Workbook = { Sheets: [{ Hidden: 0 }, { Hidden: 0 }, { Hidden: 1 }] };
+  XLSX.utils.book_append_sheet(wb, hiddenSheet, "Classes");
+
+  // Real request, 2026-10-28: "All Abilities" is the ONE named
+  // exception -- hidden, but let through anyway (see this file's own
+  // ALWAYS_INCLUDED_HIDDEN_SHEETS).
+  const allAbilitiesSheet = XLSX.utils.aoa_to_sheet([["Name", "Description"], ["Sense Magic", "You can detect active magical effects."]]);
+  XLSX.utils.book_append_sheet(wb, allAbilitiesSheet, "All Abilities");
+
+  wb.Workbook = { Sheets: [{ Hidden: 0 }, { Hidden: 0 }, { Hidden: 1 }, { Hidden: 1 }] };
 
   return XLSX.write(wb, { type: "array" }) as ArrayBuffer;
 }
@@ -54,8 +61,18 @@ describe("fetchAndParseWorkbook (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the c
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(buffer) } as Response)));
 
     const workbook = await fetchAndParseWorkbook("https://example.com/sheet.xlsx");
-    expect(Object.keys(workbook)).toEqual(["Core", "Abilities"]);
-    expect(workbook["All Abilities"]).toBeUndefined();
+    expect(workbook["Classes"]).toBeUndefined();
+  });
+
+  it("real request, 2026-10-28 -- 'All Abilities' is let through despite being hidden, the one named exception to the skip rule above (the 'Add Ability' search popup's own catalog needs it)", async () => {
+    const buffer = buildTestWorkbookBuffer();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(buffer) } as Response)));
+
+    const workbook = await fetchAndParseWorkbook("https://example.com/sheet.xlsx");
+    expect(workbook["All Abilities"]).toEqual([
+      ["Name", "Description"],
+      ["Sense Magic", "You can detect active magical effects."],
+    ]);
   });
 
   it("throws (not silently returns garbage) when the fetch itself fails", async () => {

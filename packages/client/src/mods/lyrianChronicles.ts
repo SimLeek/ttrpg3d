@@ -65,7 +65,10 @@
 // set) minus every class's own (freshly recomputed) cost minus every
 // breakthrough's own (freshly recomputed-or-left-alone) cost.
 
-import type { CharacterSheetVariableDef } from "@ttrpg3d/shared";
+import type { CharacterSheetVariableDef, CharacterSheetPageDef, AbilityCatalogEntry } from "@ttrpg3d/shared";
+import type { ModActionFn } from "../modActions.js";
+import { fetchAbilityCatalog } from "../api.js";
+import { ABILITY_LINKS } from "./lyrianAbilityLinks.generated.js";
 
 /**
  * Real data, read directly off the real sheet's own hidden
@@ -204,12 +207,16 @@ function findRowIds(defs: readonly CharacterSheetVariableDef[], prefix: string, 
  * still a free, starting breakthrough -- otherwise looked up by id
  * against `BREAKTHROUGH_COST_BY_ID` above), and Spirit Core
  * (Total EXP earned minus every one of those freshly-recomputed
- * costs). Returns only the keys that changed, to be merged into the
- * character's own `variableValues` by the caller (characterSheetView.ts's
- * generic mod-action click handler) -- this function itself never
- * touches the DOM or persists anything.
+ * costs). Calls `apply` once with only the keys that changed, to be
+ * merged into the character's own `variableValues` by the caller
+ * (characterSheetView.ts's generic mod-action click handler) -- this
+ * function itself never touches the DOM or persists anything. (Real
+ * generalization, 2026-10-28: every mod action now receives a single
+ * `ctx` object and an `apply` callback instead of returning a plain
+ * patch -- see modActions.ts's own header for why; this action's own
+ * body is otherwise unchanged.)
  */
-export function recalculateTraitsCosts(variableValues: Readonly<Record<string, number | string>>, defs: readonly CharacterSheetVariableDef[]): Record<string, number | string> {
+export const recalculateTraitsCosts: ModActionFn = ({ variableValues, defs }, apply) => {
   const patch: Record<string, number | string> = {};
   let totalCost = 0;
 
@@ -233,5 +240,219 @@ export function recalculateTraitsCosts(variableValues: Readonly<Record<string, n
 
   const totalExp = asNumber(variableValues.totalExp, 0);
   patch.spiritCore = totalExp - totalCost;
-  return patch;
+  apply({ variableValues: patch });
+};
+
+// ---- Abilities round, 2026-10-28 ---------------------------------
+//
+// Real request: "allow the user to click 'add ability' and then have
+// a pop up where they can click a search button and have it narrow
+// down to all the abilities in the game... Each ability should have
+// an info click which should open a description, but clicking the
+// ability name itself (a button) should roll the ability in chat,
+// which means posting the description. We'll leave any dice rolls or
+// other stuff out... We also want to auto-populate abilities based on
+// classes, races, sub-races, and breakthroughs, with an auto-populate
+// button."
+//
+// An added ability is NOT its own per-character variable (unlike a
+// skill/class/breakthrough) -- it's purely reference info, baked as
+// literal HTML directly into the Abilities page's own markdown the
+// moment it's added (same "reference info stays literal text, never
+// re-editable via Core & Variables" tier skill/class/breakthrough
+// NAMES already use), for two concrete reasons: (1) a real
+// description is long, multi-paragraph free text that would need its
+// OWN new "read-only multi-line text" rendering mode to show
+// correctly (the existing inline `{variableId}` text widget is a
+// single-line `<input>`, confirmed wrong for this); (2) raw
+// description text often contains `:`/`|` (e.g. "1 AP, 1 MP") that
+// would corrupt `{{Label; part: expr}}` compound-roll parsing if
+// embedded in one. Reusing TWO mechanisms that already exist solves
+// both without inventing anything new:
+//   - "click name -> post description to chat" is the EXACT same
+//     `.chat-chip` mechanism a `{variableId:button}` ref already uses
+//     (characterSheetView.ts's own click listener reads
+//     `data-chip-label`/`data-chip-value` and posts them, verbatim --
+//     baking those two attributes directly is all that's needed).
+//   - "info click -> show description personally" is a plain native
+//     `<details><summary>` disclosure -- zero JS, DOMPurify's own
+//     default allowlist keeps it intact (confirmed live via this
+//     file's own test).
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+
+/**
+ * Same transform `packages/server/mods/lyrian-chronicles/entry.ts`'s
+ * own `classVariableId`/`breakthroughVariableId` use, duplicated here
+ * (not imported -- that file is SERVER code, this one's CLIENT-only)
+ * so `autoPopulateAbilities` below can recognize "does this character
+ * have a class/breakthrough named X" purely from `ABILITY_LINKS`'s
+ * own `sourceName` text, without ever needing the REVERSE mapping
+ * (id -> display name) at all.
+ */
+function slugify(name: string): string {
+  return name
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0)
+    .map((word, i) => (i === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join("");
+}
+
+function classVariableId(name: string): string {
+  const base = slugify(name);
+  return `class${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+function breakthroughVariableId(name: string): string {
+  const base = slugify(name);
+  return `breakthrough${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+/** The HTML an added ability's own row becomes -- plain `<div>` (not a markdown list item) specifically so marked.js never has to reconcile block-level HTML against list-item indentation rules. */
+function abilityRowHtml(name: string, description: string): string {
+  const safeName = escapeHtml(name);
+  const safeDescAttr = escapeHtml(description); // HTML-escaping also covers attribute-safety here (the one extra thing an attribute needs beyond text content, a literal `"`, is already escaped to `&quot;`)
+  const safeDescHtml = safeDescAttr.replace(/\n/g, "<br>");
+  return `\n\n<div class="ability-row"><button type="button" class="chat-chip" data-chip-label="${safeName}" data-chip-value="${safeDescAttr}">${safeName}</button> <details><summary>ℹ</summary>${safeDescHtml}</details></div>`;
+}
+
+/** Whether `name` is already listed on the Abilities page -- checked against the page's own raw markdown (the `data-chip-label` an earlier `abilityRowHtml` call baked in), not a variable, since an added ability isn't one (see this section's own header). */
+function abilityAlreadyListed(pages: readonly CharacterSheetPageDef[], name: string): boolean {
+  const page = pages.find((p) => p.title === "Abilities");
+  if (!page) return false;
+  return page.markdown.includes(`data-chip-label="${escapeHtml(name)}"`);
+}
+
+/**
+ * Real request, 2026-10-28: "allow the user to click 'add ability'
+ * and then have a pop up where they can click a search button and
+ * have it narrow down to all the abilities in the game (gathered from
+ * their imported character sheet xlsx... and then a default list if
+ * that wasn't imported)." Fetches this account's own stored catalog
+ * (store.ts's own getAbilityCatalog, seeded from the mod's bundled
+ * default until a real import refreshes it) and opens a self-
+ * contained search popup; `apply` only ever runs if/when a session
+ * actually picks a result.
+ */
+export const addAbility: ModActionFn = async (ctx, apply) => {
+  const catalog = await fetchAbilityCatalog(ctx.httpUrl, ctx.accountId, "lyrian-chronicles");
+  mountAbilitySearchPopup(catalog, (entry) => {
+    if (abilityAlreadyListed(ctx.pages, entry.name)) return; // already have it -- a no-op, not a duplicate row
+    apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: abilityRowHtml(entry.name, entry.description) }] });
+  });
+};
+
+/** Self-contained search popup -- mounts/removes itself directly against `document.body`, same pattern measurementShapes.ts's own right-click context menu already uses. `onAdd` fires once per "Add" click; the popup stays open afterward (same session may want to add several abilities in a row) and only closes via its own ✕/outside-click/Escape. */
+function mountAbilitySearchPopup(catalog: readonly AbilityCatalogEntry[], onAdd: (entry: AbilityCatalogEntry) => void): void {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000; font-family:system-ui,sans-serif;";
+  overlay.innerHTML = `
+    <div style="background:rgba(24,24,28,0.97); border:1px solid rgba(200,200,200,0.4); border-radius:6px; padding:16px; width:min(500px,90vw); max-height:80vh; display:flex; flex-direction:column; color:#eee;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
+        <strong>Add Ability</strong>
+        <button type="button" id="ability-search-close" style="background:none; border:none; color:#eee; cursor:pointer; font-size:16px;">&#x2715;</button>
+      </div>
+      <input type="text" id="ability-search-input" placeholder="Search abilities..." style="padding:6px; margin-bottom:8px; background:#111; border:1px solid rgba(200,200,200,0.4); color:#eee; border-radius:4px;" />
+      <div id="ability-search-results" style="overflow-y:auto; flex:1;"></div>
+    </div>
+  `;
+  document.body.append(overlay);
+
+  const input = overlay.querySelector<HTMLInputElement>("#ability-search-input")!;
+  const resultsEl = overlay.querySelector<HTMLDivElement>("#ability-search-results")!;
+  const closeBtn = overlay.querySelector<HTMLButtonElement>("#ability-search-close")!;
+
+  function close(): void {
+    overlay.remove();
+    document.removeEventListener("keydown", onKeydown);
+  }
+  function onKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") close();
+  }
+
+  let currentMatches: AbilityCatalogEntry[] = [];
+  function renderResults(): void {
+    const query = input.value.trim().toLowerCase();
+    currentMatches = query === "" ? [] : catalog.filter((e) => e.name.toLowerCase().includes(query)).slice(0, 30);
+    resultsEl.innerHTML =
+      currentMatches.length === 0
+        ? `<div style="opacity:0.6; padding:8px;">${query === "" ? "Type to search..." : "No matches."}</div>`
+        : currentMatches
+            .map(
+              (e, i) =>
+                `<div style="padding:6px 0; border-bottom:1px solid rgba(200,200,200,0.15); display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                   <span>${escapeHtml(e.name)}</span>
+                   <button type="button" class="ability-search-add-btn" data-index="${i}" style="padding:2px 10px; flex:none;">Add</button>
+                 </div>`,
+            )
+            .join("");
+    resultsEl.querySelectorAll<HTMLButtonElement>(".ability-search-add-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const entry = currentMatches[Number(btn.dataset.index)];
+        if (entry) onAdd(entry);
+      });
+    });
+  }
+
+  input.addEventListener("input", renderResults);
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) close();
+  });
+  document.addEventListener("keydown", onKeydown);
+  renderResults();
+  input.focus();
+}
+
+/**
+ * Real request, 2026-10-28: "auto-populate abilities based on
+ * classes, races, sub-races, and breakthroughs, with an auto-populate
+ * button." Cross-references `ABILITY_LINKS` (generated from the
+ * user's own hand-filled linking workbook -- see scripts/generate-
+ * lyrian-ability-data.mjs) against this character's CURRENT classes
+ * (by level), race, sub-race, and breakthroughs, adding every
+ * qualifying ability not already listed. Race/sub-race match by
+ * plain string equality (`{race}`/`{subRace}` hold the real name
+ * directly); a class/breakthrough matches by re-deriving the SAME
+ * variable-id shape the server importer gives it from the link's own
+ * `sourceName` (see `classVariableId`/`breakthroughVariableId` above)
+ * and checking it's actually present in `defs` -- never the reverse
+ * (id -> name), since this file never needs to know a class's real
+ * name, only whether ONE THAT MATCHES this link exists at all.
+ */
+export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
+  const catalog = await fetchAbilityCatalog(ctx.httpUrl, ctx.accountId, "lyrian-chronicles");
+  const descriptionByName = new Map(catalog.map((e) => [e.name, e.description]));
+
+  const addedThisRun = new Set<string>();
+  const newRows: string[] = [];
+  for (const link of ABILITY_LINKS) {
+    if (addedThisRun.has(link.name) || abilityAlreadyListed(ctx.pages, link.name)) continue;
+
+    let qualifies = false;
+    if (link.source === "race") {
+      qualifies = ctx.variableValues.race === link.sourceName;
+    } else if (link.source === "subRace") {
+      qualifies = ctx.variableValues.subRace === link.sourceName;
+    } else if (link.source === "class") {
+      const id = classVariableId(link.sourceName); // already prefixed, e.g. "classChronomancer" -- see this function's own id-shape doc
+      if (ctx.defs.some((d) => d.id === `${id}Tier`)) {
+        const currentLevel = asNumber(ctx.variableValues[`${id}Level`], 1);
+        qualifies = link.level === undefined || currentLevel >= link.level;
+      }
+    } else if (link.source === "breakthrough") {
+      const id = breakthroughVariableId(link.sourceName); // already prefixed, e.g. "breakthroughLightSleeper"
+      qualifies = ctx.defs.some((d) => d.id === `${id}Cost`);
+    }
+    if (!qualifies) continue;
+
+    addedThisRun.add(link.name);
+    newRows.push(abilityRowHtml(link.name, descriptionByName.get(link.name) ?? ""));
+  }
+
+  if (newRows.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: newRows.join("") }] });
+};

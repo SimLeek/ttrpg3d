@@ -1,0 +1,177 @@
+// Real request, 2026-10-28: "use a bit of cleaning when reading from
+// the lyrian-ability-links.xlsx file in the gamedev directory... We
+// should keep that so we can run a script over the list in case of
+// corrections or if the game gets updated." Run manually (`node
+// scripts/generate-lyrian-ability-data.mjs`) whenever either source
+// xlsx changes, and commit the two generated outputs -- same "run
+// once, commit the output" convention this directory's other
+// build-*.mjs scripts already follow, not a build step.
+//
+// Two SEPARATE source files, two SEPARATE outputs:
+//
+// 1. `~/gamedev/lyrian-ability-links.xlsx` (the user's own hand-filled
+//    linking workbook -- see the Abilities tab's own "Belongs To"
+//    column, built earlier this project from the real sheet's own
+//    ability/class/race/breakthrough name lists) -> cleaned into
+//    `packages/client/src/mods/lyrianAbilityLinks.generated.ts`, a
+//    small table (name/source-kind/source-name/level) the CLIENT-side
+//    auto-populate action (lyrianChronicles.ts) can cross-reference
+//    against a character's own classes/race/sub-race/breakthroughs --
+//    small enough to bundle directly (no description text, ~1000
+//    rows), same tier as that file's own hand-transcribed
+//    BREAKTHROUGH_COST_BY_ID table.
+//
+// 2. `~/gamedev/Alba T Ross - Mirane CCS v10.3.1.xlsx`'s own hidden
+//    "All Abilities" tab (the real rulebook's full ability catalog,
+//    name+description+cost+etc, confirmed too large/text-heavy to
+//    bundle into the client JS) -> `packages/server/mods/
+//    lyrian-chronicles/data/abilityCatalogSeed.json`, the DEFAULT
+//    catalog store.ts seeds a per-account copy from (server.ts's new
+//    ability-catalog endpoint) until that account's own import
+//    refreshes it with a fresher one.
+//
+// Cleaning rules for the linking workbook, confirmed directly against
+// its own real content (1171 data rows): a blank Ability Name marks a
+// row for an ability that's since been deleted from the game -- skip
+// it entirely. A (name, belongsTo) pair repeated with the SAME level
+// is a pure accidental duplicate -- keep one. The rare case where the
+// SAME (name, belongsTo) pair appears with a DIFFERENT level (found:
+// exactly 2, both null-vs-a-real-number) prefers the real, non-null
+// level -- a blank level next to an otherwise-identical row reads as
+// "accidentally left blank," not "no level requirement," given the
+// row's own sibling disagrees. A blank "Belongs To" (found: exactly 1,
+// "Elemental Mastery: Frost") means a general/unassigned ability with
+// no auto-grant source -- kept in the catalog, just never linked.
+
+import XLSX from "xlsx";
+import { writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, "..");
+const LINKS_XLSX = join(homedir(), "gamedev", "lyrian-ability-links.xlsx");
+const SHEET_XLSX = join(homedir(), "gamedev", "Alba T Ross - Mirane CCS v10.3.1.xlsx");
+const LINKS_OUTPUT = join(REPO_ROOT, "packages", "client", "src", "mods", "lyrianAbilityLinks.generated.ts");
+const CATALOG_OUTPUT = join(REPO_ROOT, "packages", "server", "mods", "lyrian-chronicles", "data", "abilityCatalogSeed.json");
+
+function sheetRows(workbookPath, sheetName) {
+  const wb = XLSX.readFile(workbookPath, { cellFormula: false });
+  const ws = wb.Sheets[sheetName];
+  if (!ws) throw new Error(`sheet "${sheetName}" not found in ${workbookPath} (have: ${wb.SheetNames.join(", ")})`);
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+}
+
+function asText(value) {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+function asNumberOrUndefined(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+// ---- 1. Ability links (cleaned) ----
+
+function buildAbilityLinks() {
+  const rows = sheetRows(LINKS_XLSX, "Abilities");
+  /** @type {Map<string, { name: string; source: string; sourceName: string; level: number | undefined }>} */
+  const byKey = new Map();
+  let skippedBlankName = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const name = asText(rows[r]?.[0]);
+    if (name === "") {
+      skippedBlankName++;
+      continue;
+    }
+    const belongsToRaw = asText(rows[r]?.[1]);
+    const level = asNumberOrUndefined(rows[r]?.[2]);
+    const match = /^(Race|Sub-Race|Class|Breakthrough):\s*(.+)$/.exec(belongsToRaw);
+    const source = match ? match[1] : "";
+    const sourceName = match ? match[2].trim() : "";
+    const key = `${name}|${source}|${sourceName}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { name, source, sourceName, level });
+    } else if (existing.level === undefined && level !== undefined) {
+      // Same (name, source) pair, this row has the real level the
+      // earlier one was missing -- prefer it (see this script's own
+      // header comment on the 2 known conflicts).
+      existing.level = level;
+    }
+  }
+  console.log(`ability links: ${rows.length - 1} raw rows, ${skippedBlankName} blank-name rows skipped, ${byKey.size} cleaned entries`);
+  return [...byKey.values()].filter((e) => e.source !== ""); // unlinked (no source) entries have nothing for auto-populate to match against
+}
+
+function writeAbilityLinksModule(links) {
+  const sourceMap = { Race: "race", "Sub-Race": "subRace", Class: "class", Breakthrough: "breakthrough" };
+  const lines = links
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name) || a.sourceName.localeCompare(b.sourceName))
+    .map((e) => `  { name: ${JSON.stringify(e.name)}, source: ${JSON.stringify(sourceMap[e.source])}, sourceName: ${JSON.stringify(e.sourceName)}${e.level !== undefined ? `, level: ${e.level}` : ""} },`);
+  const content = `// GENERATED by scripts/generate-lyrian-ability-data.mjs from
+// ~/gamedev/lyrian-ability-links.xlsx -- do not hand-edit. Re-run that
+// script against an updated workbook (corrections, or the game's own
+// rulebook changing) and commit the result instead.
+//
+// Which class/race/sub-race/breakthrough grants which ability, and at
+// what class LEVEL (undefined for race/sub-race/breakthrough sources,
+// which grant unconditionally the moment that source is present) --
+// consumed by lyrianChronicles.ts's own auto-populate-abilities action.
+// This data does NOT exist anywhere in the real character sheet or
+// its own hidden rulebook tabs (confirmed directly) -- it's the
+// user's own hand-built linking table, read once here.
+
+export type AbilitySource = "race" | "subRace" | "class" | "breakthrough";
+
+export interface AbilityLink {
+  name: string;
+  source: AbilitySource;
+  sourceName: string;
+  level?: number;
+}
+
+export const ABILITY_LINKS: readonly AbilityLink[] = [
+${lines.join("\n")}
+];
+`;
+  writeFileSync(LINKS_OUTPUT, content);
+  console.log(`wrote ${LINKS_OUTPUT} (${links.length} entries)`);
+}
+
+// ---- 2. Ability catalog seed (full descriptive data) ----
+
+function buildAbilityCatalog() {
+  const rows = sheetRows(SHEET_XLSX, "All Abilities");
+  const catalog = [];
+  for (let r = 1; r < rows.length; r++) {
+    const name = asText(rows[r]?.[0]);
+    if (name === "") continue;
+    catalog.push({
+      name,
+      keywords: asText(rows[r]?.[2]),
+      range: asText(rows[r]?.[3]),
+      description: asText(rows[r]?.[4]),
+      requirement: asText(rows[r]?.[5]),
+      cost: asText(rows[r]?.[6]),
+      apCost: asText(rows[r]?.[7]),
+      manaCost: asText(rows[r]?.[8]),
+      rpCost: asText(rows[r]?.[9]),
+      benefits: asText(rows[r]?.[10]),
+    });
+  }
+  console.log(`ability catalog: ${rows.length - 1} raw rows -> ${catalog.length} real entries`);
+  return catalog;
+}
+
+const links = buildAbilityLinks();
+writeAbilityLinksModule(links);
+
+const catalog = buildAbilityCatalog();
+writeFileSync(CATALOG_OUTPUT, JSON.stringify(catalog, null, 2));
+console.log(`wrote ${CATALOG_OUTPUT} (${catalog.length} entries)`);

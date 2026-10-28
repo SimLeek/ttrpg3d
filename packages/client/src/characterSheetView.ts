@@ -32,7 +32,7 @@ import DOMPurify from "dompurify";
 import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, findCompoundRollSegments, evaluateCharacterSheetExpression, resolveVariableValue, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey, valueExpressionFieldKey } from "./characterSheetWidgets.js";
-import type { ModActionFn } from "./modActions.js";
+import type { ModActionFn, ModActionOutcome } from "./modActions.js";
 import { colorToHex, hexToColor } from "./lobby.js";
 import { fetchAndParseWorkbook } from "./characterSheetImport.js";
 
@@ -286,30 +286,50 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     // into a mod's own page markdown (plain inline HTML -- marked/
     // DOMPurify already pass this through untouched, same as every
     // OTHER widget string this file injects before parsing). Entirely
-    // client-side and one-shot: look the function up in `modActions`,
-    // call it against the CURRENT effective values/defs, merge
-    // whatever it returns into this character's own variableValues,
-    // save -- no server round trip, no re-render of anything else on
-    // this page (every OTHER `{variableId}` ref on the page picks up
-    // the new values on its own next render, same as any other edit).
+    // client-side -- no server round trip for the ACTION itself (an
+    // action may still fetch its own read-only reference data, e.g.
+    // an ability catalog, same as any other client code can).
+    //
+    // Real generalization, 2026-10-28 (Abilities round): the action
+    // is handed an `apply` CALLBACK instead of returning a plain
+    // patch -- see modActions.ts's own header for why ("Add Ability"
+    // opens a search popup and only knows what to commit once a
+    // result is actually picked, an indeterminate time later; "Auto-
+    // Populate Abilities" needs new variable DEFS and a page-markdown
+    // edit, not just values). `apply` may run zero times (the session
+    // cancels out of a popup), once (the common case), or more than
+    // once; each call independently merges-and-re-renders, so an
+    // action never needs to batch everything into one call itself.
     previewEl.addEventListener("click", (event) => {
       const actionBtn = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-mod-action]");
       if (!actionBtn || actionBtn.disabled) return;
       const [modId, actionName] = (actionBtn.dataset.modAction ?? "").split(".");
       const action = options.modActions?.[modId]?.[actionName];
       if (!action) return;
-      const patch = action(effectiveVariableValues(), allVariableDefs());
-      character.variableValues = { ...character.variableValues, ...patch };
-      saveSheet();
-      // Re-render THIS page immediately -- unlike a plain variable
-      // edit (which only ever updates the ONE box someone's looking
-      // at), the whole POINT of a mod action is to change OTHER
-      // cells on the same page (every class/breakthrough's own Cost,
-      // Spirit Core) that this same click never directly touched.
-      // Same `innerHTML = ""` + re-invoke pattern renderPageTabContent's
-      // own `renderMode()` already uses when switching View/Edit.
-      hostEl.innerHTML = "";
-      renderViewMode(page, hostEl);
+      const apply = (outcome: ModActionOutcome): void => {
+        if (outcome.variableValues) character.variableValues = { ...character.variableValues, ...outcome.variableValues };
+        const vars = character.customSheet!.variables;
+        for (const v of outcome.variables ?? []) {
+          const idx = vars.findIndex((existing) => existing.id === v.id);
+          if (idx === -1) vars.push(v);
+          else vars[idx] = v;
+        }
+        for (const edit of outcome.pageEdits ?? []) {
+          const target = character.customSheet!.pages.find((p) => p.title === edit.pageTitle);
+          if (target) target.markdown += edit.appendMarkdown;
+        }
+        saveSheet();
+        // Re-render THIS page immediately -- unlike a plain variable
+        // edit (which only ever updates the ONE box someone's looking
+        // at), the whole POINT of a mod action is to change OTHER
+        // cells/content on the same page that this same click never
+        // directly touched. Same `innerHTML = ""` + re-invoke pattern
+        // renderPageTabContent's own `renderMode()` already uses when
+        // switching View/Edit.
+        hostEl.innerHTML = "";
+        renderViewMode(page, hostEl);
+      };
+      void action({ variableValues: effectiveVariableValues(), defs: allVariableDefs(), pages: character.customSheet!.pages, httpUrl, accountId: sheetOwnerAccountId }, apply);
     });
 
     // Real correction, 2026-10-26: a `[dice-roll-chip]` is a GENUINE

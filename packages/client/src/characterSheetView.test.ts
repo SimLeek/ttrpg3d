@@ -619,7 +619,9 @@ describe("mountCharacterSheetView", () => {
     character.customSheet!.pages = [
       { title: "Traits", markdown: 'Remaining: {totalExp}\n\n<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts">Auto-Calculate</button>', variableIds: ["totalExp"] },
     ];
-    const recalc = vi.fn((values: Record<string, number | string>) => ({ totalExp: Number(values.totalExp) - 1 }));
+    const recalc = vi.fn((ctx: { variableValues: Record<string, number | string> }, apply: (outcome: { variableValues?: Record<string, number | string> }) => void) =>
+      apply({ variableValues: { totalExp: Number(ctx.variableValues.totalExp) - 1 } }),
+    );
     mountCharacterSheetView(container, baseOptions({ modActions: { "lyrian-chronicles": { recalculateTraitsCosts: recalc } } }));
     await flush();
 
@@ -645,5 +647,47 @@ describe("mountCharacterSheetView", () => {
     expect(() => actionBtn.click()).not.toThrow();
     await flush();
     expect(saved).toEqual([]);
+  });
+
+  it("real request, 2026-10-28 (Abilities round) -- a mod action can return new variable defs AND a page-markdown edit, not just a variableValues patch, and multiple apply() calls each independently commit+re-render", async () => {
+    character.customSheet!.pages = [{ title: "Abilities", markdown: '# Abilities\n\n<button type="button" data-mod-action="lyrian-chronicles.addStuff">Go</button>', variableIds: [] }];
+    character.customSheet!.variables = [];
+    const action = vi.fn((_ctx, apply) => {
+      apply({ variables: [{ id: "newVar", label: "New Var", type: "number", default: 5 }], pageEdits: [{ pageTitle: "Abilities", appendMarkdown: "\n\nRow one" }] });
+      apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: "\n\nRow two" }] });
+    });
+    mountCharacterSheetView(container, baseOptions({ modActions: { "lyrian-chronicles": { addStuff: action } } }));
+    await flush();
+    container.querySelector<HTMLButtonElement>("[data-mod-action]")!.click();
+    await flush();
+
+    const lastSaved = saved.at(-1)!;
+    expect(lastSaved.customSheet!.variables).toEqual([{ id: "newVar", label: "New Var", type: "number", default: 5 }]);
+    expect(lastSaved.customSheet!.pages[0].markdown).toContain("Row one");
+    expect(lastSaved.customSheet!.pages[0].markdown).toContain("Row two");
+  });
+
+  it("real request, 2026-10-28 (Abilities round) -- an ability row baked directly into a page's own markdown (a literal <button class=\"chat-chip\"> + a native <details> disclosure, no {{...}} involved at all) survives DOMPurify sanitization and both interactions work: clicking the name posts the baked description, and the info disclosure toggles open/closed", async () => {
+    character.customSheet!.pages = [
+      {
+        title: "Abilities",
+        markdown: '<div class="ability-row"><button type="button" class="chat-chip" data-chip-label="Sense Magic" data-chip-value="You can detect active magical effects.">Sense Magic</button> <details><summary>ℹ</summary>You can detect active magical effects.</details></div>',
+        variableIds: [],
+      },
+    ];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+
+    const nameBtn = container.querySelector<HTMLButtonElement>('.chat-chip[data-chip-label="Sense Magic"]')!;
+    expect(nameBtn).not.toBeNull();
+    nameBtn.click();
+    expect(posted).toEqual([["Sense Magic", "You can detect active magical effects."]]);
+
+    const details = container.querySelector<HTMLDetailsElement>("details")!;
+    expect(details).not.toBeNull();
+    expect(details.open).toBe(false);
+    details.open = true; // native <details> needs no JS of its own -- just confirming DOMPurify kept the element itself (and its toggle behavior) intact
+    expect(details.open).toBe(true);
+    expect(details.textContent).toContain("You can detect active magical effects.");
   });
 });

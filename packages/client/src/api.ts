@@ -9,7 +9,7 @@
 // (pageManager.ts), not from this outer lobby. See docs/ROADMAP.md's
 // Standing Decisions for the full Game/World split.
 
-import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment, ImportedWorkbook, ExpressionSegment, ExpressionEvalResult, CompoundRollSegment, CompoundRollPart } from "@ttrpg3d/shared";
+import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment, ImportedWorkbook, ExpressionSegment, ExpressionEvalResult, CompoundRollSegment, CompoundRollPart, AbilityCatalogEntry } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -228,6 +228,12 @@ export interface CharacterSheetLibraryCatalogEntry {
 /** MVP goal item 4, round 5 -- "gotta make it so we actually know what the mod library names are." Same scope as fetchCharacterSheetTemplates. */
 export async function fetchCharacterSheetLibraries(httpUrl: string, accountId: string): Promise<CharacterSheetLibraryCatalogEntry[]> {
   const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/character-sheet-libraries`);
+  return res.json();
+}
+
+/** Real request, 2026-10-28 (Abilities round) -- the "Add Ability" search popup's own catalog, scoped to this account: refreshed by their last import that carried the real sheet's own "All Abilities" tab, falling back to the mod's own bundled default the first time this account ever asks (see store.ts's own getAbilityCatalog). */
+export async function fetchAbilityCatalog(httpUrl: string, accountId: string, modId: string): Promise<AbilityCatalogEntry[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/mods/${encodeURIComponent(modId)}/ability-catalog`);
   return res.json();
 }
 

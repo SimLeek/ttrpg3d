@@ -25,13 +25,13 @@
 // Pure, non-3D/non-physics logic -- this is exactly the kind of thing that
 // should have real unit tests (see store.test.ts), unlike the client's
 // movement/physics code which gets verified by actual playtesting instead.
-// Factored as createStore(baseDir) rather than module-level state
+// Factored as createStore(baseDir, modsDir) rather than module-level state
 // specifically so tests can point it at an isolated temp directory instead
 // of this process's real `data/`.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type CharacterSheetTemplate } from "@ttrpg3d/shared";
+import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type CharacterSheetTemplate, type AbilityCatalogEntry } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -300,12 +300,13 @@ function newId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-export function createStore(baseDir: string) {
+export function createStore(baseDir: string, modsDir: string = join(process.cwd(), "mods")) {
   const accountsFile = join(baseDir, "accounts.json");
   const gamesFile = join(baseDir, "games.json");
   const worldsFile = join(baseDir, "worlds.json");
   const charactersFile = join(baseDir, "characters.json");
   const gameCharacterLinksFile = join(baseDir, "gameCharacterLinks.json");
+  const abilityCatalogsFile = join(baseDir, "abilityCatalogs.json");
 
   function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
@@ -382,6 +383,44 @@ export function createStore(baseDir: string) {
 
   function saveGameCharacterLinks(links: GameCharacterLink[]): void {
     writeJson(gameCharacterLinksFile, links);
+  }
+
+  /**
+   * Real request, 2026-10-28 (Abilities round): one `AbilityCatalogEntry[]`
+   * per (account, modId) pair -- see shared/characterSheet.ts's own
+   * doc on `CharacterSheetImportResult.abilityCatalog` for why this is
+   * account-scoped (not per-character: it's the game's own rulebook
+   * data, not any one character's) and not mod-wide-shared (one
+   * account's own import shouldn't silently overwrite what a
+   * DIFFERENT account is seeing).
+   */
+  interface AbilityCatalogRecord {
+    accountId: string;
+    modId: string;
+    catalog: AbilityCatalogEntry[];
+  }
+
+  function loadAbilityCatalogs(): AbilityCatalogRecord[] {
+    return readJson<AbilityCatalogRecord[]>(abilityCatalogsFile, []);
+  }
+
+  function saveAbilityCatalogs(records: AbilityCatalogRecord[]): void {
+    writeJson(abilityCatalogsFile, records);
+  }
+
+  /**
+   * The mod's own BUNDLED default catalog (this project's own
+   * `scripts/generate-lyrian-ability-data.mjs`, read from disk once
+   * per call -- these files are small/rarely read compared to the
+   * account-scoped records above, no need to cache). Real sheet
+   * confirmed directly: the hidden "All Abilities" tab IS the game's
+   * single rulebook list, so a mod that doesn't ship this file simply
+   * has no default (an account that's never imported sees an empty
+   * catalog until they do, rather than a crash).
+   */
+  function loadBundledAbilityCatalogSeed(modId: string): AbilityCatalogEntry[] {
+    const seedPath = join(modsDir, modId, "data", "abilityCatalogSeed.json");
+    return readJson<AbilityCatalogEntry[]>(seedPath, []);
   }
 
   /** Deterministic, no-two-defaults-look-identical color for an auto-created default character -- real request: picking a character shouldn't be required just to see something other than a flat gray/placeholder box. Not cryptographic, just spread across the color space. */
@@ -479,6 +518,34 @@ export function createStore(baseDir: string) {
       if (!account) return;
       account.importedModIds = account.importedModIds.filter((id) => id !== modId);
       saveAccounts(accounts);
+    },
+
+    /**
+     * Real request, 2026-10-28: "gathered from their imported
+     * character sheet xlsx since that has the updated list, and then
+     * a default list if that wasn't imported." Lazily seeds from the
+     * mod's own bundled `data/abilityCatalogSeed.json` (and persists
+     * that seed immediately, so every later read is a plain lookup,
+     * not a re-seed) the first time this account asks for THIS mod's
+     * catalog with nothing stored yet.
+     */
+    getAbilityCatalog(accountId: string, modId: string): AbilityCatalogEntry[] {
+      const records = loadAbilityCatalogs();
+      const existing = records.find((r) => r.accountId === accountId && r.modId === modId);
+      if (existing) return existing.catalog;
+      const seeded = loadBundledAbilityCatalogSeed(modId);
+      records.push({ accountId, modId, catalog: seeded });
+      saveAbilityCatalogs(records);
+      return seeded;
+    },
+
+    /** Real request, 2026-10-28: refreshed wholesale by a NEW import that happens to carry the real sheet's own "All Abilities" tab (characterSheetImport.ts's own named exception to the hidden-tab skip) -- overwrites whatever this account had before, never merged, since a fresher import is always MORE current than what's already stored. */
+    setAbilityCatalog(accountId: string, modId: string, catalog: AbilityCatalogEntry[]): void {
+      const records = loadAbilityCatalogs();
+      const existing = records.find((r) => r.accountId === accountId && r.modId === modId);
+      if (existing) existing.catalog = catalog;
+      else records.push({ accountId, modId, catalog });
+      saveAbilityCatalogs(records);
     },
 
     createGame(name: string, ownerAccountId: string): GameRecord {

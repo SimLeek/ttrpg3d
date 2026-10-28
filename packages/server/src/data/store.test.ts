@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore, type Store } from "./store.js";
@@ -498,5 +498,47 @@ describe("accounts/games/worlds store (pure logic, no 3D/physics -- real unit te
       store.deleteAccount(owner.id);
       expect(store.listVisibleCharactersForGameAndAccount(game2.id, owner.id).links).toEqual([]);
     });
+  });
+});
+
+describe("getAbilityCatalog/setAbilityCatalog (real request, 2026-10-28 -- \"gathered from their imported character sheet xlsx since that has the updated list, and then a default list if that wasn't imported\")", () => {
+  let dir: string;
+  let modsDir: string;
+  let store: Store;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ttrpg3d-store-test-"));
+    modsDir = mkdtempSync(join(tmpdir(), "ttrpg3d-store-test-mods-"));
+    mkdirSync(join(modsDir, "lyrian-chronicles", "data"), { recursive: true });
+    writeFileSync(join(modsDir, "lyrian-chronicles", "data", "abilityCatalogSeed.json"), JSON.stringify([{ name: "Sense Magic", keywords: "", range: "", description: "Detect magic.", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]));
+    store = createStore(dir, modsDir);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(modsDir, { recursive: true, force: true });
+  });
+
+  it("an account with nothing stored yet gets the mod's own bundled default seed", () => {
+    expect(store.getAbilityCatalog("acct1", "lyrian-chronicles")).toEqual([{ name: "Sense Magic", keywords: "", range: "", description: "Detect magic.", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
+  });
+
+  it("a mod with no bundled seed file at all returns an empty catalog, not a crash", () => {
+    expect(store.getAbilityCatalog("acct1", "some-other-mod")).toEqual([]);
+  });
+
+  it("setAbilityCatalog overwrites wholesale (a fresher import), and that account's later reads see the new one -- a DIFFERENT account is unaffected", () => {
+    store.getAbilityCatalog("acct1", "lyrian-chronicles"); // seeds the default first, same as a session that's never imported yet
+    store.setAbilityCatalog("acct1", "lyrian-chronicles", [{ name: "New Ability", keywords: "", range: "", description: "Fresh from a new import.", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
+
+    expect(store.getAbilityCatalog("acct1", "lyrian-chronicles")).toEqual([{ name: "New Ability", keywords: "", range: "", description: "Fresh from a new import.", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
+    // A different account never imported anything -- still the bundled default, untouched by acct1's own refresh.
+    expect(store.getAbilityCatalog("acct2", "lyrian-chronicles")).toEqual([{ name: "Sense Magic", keywords: "", range: "", description: "Detect magic.", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
+  });
+
+  it("survives a reopen (reads a fresh createStore against the same baseDir)", () => {
+    store.setAbilityCatalog("acct1", "lyrian-chronicles", [{ name: "Persisted Ability", keywords: "", range: "", description: "", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
+    const reopened = createStore(dir, modsDir);
+    expect(reopened.getAbilityCatalog("acct1", "lyrian-chronicles")).toEqual([{ name: "Persisted Ability", keywords: "", range: "", description: "", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
   });
 });

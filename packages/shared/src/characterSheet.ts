@@ -139,6 +139,41 @@ export interface CharacterSheetImportResult {
    * only its VALUE), a real, confirmed architectural gap this closes.
    */
   variables?: CharacterSheetVariableDef[];
+  /**
+   * Real request, 2026-10-28 (Abilities round): "gathered from their
+   * imported character sheet xlsx since that has the updated list,
+   * and then a default list if that wasn't imported." Game-SYSTEM
+   * reference data (the real sheet's own hidden "All Abilities" tab,
+   * the game's full ability rulebook), never this character's own
+   * data -- NOT merged into `variableValues`/pages at all, instead
+   * refreshes the uploading ACCOUNT's own stored ability catalog
+   * (store.ts's `setAbilityCatalog`, scoped by account+modId, falling
+   * back to a bundled default seed until an account's own import
+   * supplies one) so every character under that account benefits,
+   * not just the one being imported right now.
+   */
+  abilityCatalog?: AbilityCatalogEntry[];
+}
+
+/**
+ * One row of the real sheet's own "All Abilities" rulebook tab --
+ * confirmed directly: that tab (and the game's own master rulebook it
+ * IMPORTRANGEs from) is the single authoritative list of every
+ * ability that exists in Lyrian Chronicles, independent of which
+ * character has which. See `CharacterSheetImportResult.abilityCatalog`
+ * above for how/when this gets captured.
+ */
+export interface AbilityCatalogEntry {
+  name: string;
+  keywords: string;
+  range: string;
+  description: string;
+  requirement: string;
+  cost: string;
+  apCost: string;
+  manaCost: string;
+  rpCost: string;
+  benefits: string;
 }
 
 /**

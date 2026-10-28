@@ -47,7 +47,17 @@ function toExportUrl(url: string): string {
  * knowledge, and keeps the uploaded payload to just the tabs an
  * importer mod could plausibly want instead of every row of a whole
  * rulebook nobody asked to import.
+ *
+ * Real request, 2026-10-28 (Abilities round): ONE narrow, explicit
+ * exception to that rule -- "All Abilities" is let through despite
+ * being hidden, since the "Add Ability" search popup's own catalog
+ * needs it ("gathered from their imported character sheet xlsx since
+ * that has the updated list"). Every OTHER hidden tab (Classes/Races/
+ * Breakthroughs) stays skipped; this is a single hand-picked name,
+ * not a reopening of the general rule above.
  */
+const ALWAYS_INCLUDED_HIDDEN_SHEETS = new Set(["All Abilities"]);
+
 export async function fetchAndParseWorkbook(rawUrl: string): Promise<ImportedWorkbook> {
   const url = toExportUrl(rawUrl);
   const res = await fetch(url);
@@ -57,7 +67,7 @@ export async function fetchAndParseWorkbook(rawUrl: string): Promise<ImportedWor
   const sheetMeta = workbook.Workbook?.Sheets ?? [];
   const result: ImportedWorkbook = {};
   workbook.SheetNames.forEach((name, i) => {
-    if (sheetMeta[i]?.Hidden) return;
+    if (sheetMeta[i]?.Hidden && !ALWAYS_INCLUDED_HIDDEN_SHEETS.has(name)) return;
     const sheet = workbook.Sheets[name];
     // header:1 -- rows as plain arrays (ImportedWorkbook's own shape),
     // not objects keyed by a first-row "header" that a scattered

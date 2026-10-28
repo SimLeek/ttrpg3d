@@ -163,7 +163,7 @@
 // by the IMPORTER itself instead (like Abilities/Inventory will be),
 // one row per non-blank crafting skill.
 
-import { type CharacterSheetTemplate, type CharacterSheetPageDef, type CharacterSheetVariableDef, type CharacterSheetImportResult, type ImportedWorkbook } from "@ttrpg3d/shared";
+import { type CharacterSheetTemplate, type CharacterSheetPageDef, type CharacterSheetVariableDef, type CharacterSheetImportResult, type ImportedWorkbook, type AbilityCatalogEntry } from "@ttrpg3d/shared";
 
 /**
  * The real sheet's own skill list (Core tab, column E, rows 9-29,
@@ -272,6 +272,41 @@ const skillsPage: CharacterSheetPageDef = {
     const id = skillVariableId(name);
     return [`${id}Bonus`, `${id}SkillPoints`, `${id}Expertise`];
   }),
+};
+
+/**
+ * Real request, 2026-10-28: "traits & abilities (2 tabs)." Starts
+ * EMPTY (unlike Skills/Core, there's nothing on the real sheet this
+ * page is imported FROM at all -- an ability gets added entirely
+ * post-import, one at a time, via its own two client-side mod
+ * actions below). A FIXED template page, not importer-generated,
+ * specifically so it already exists (with its own two buttons ready
+ * to click) the moment a character picks this template, import or
+ * not -- same "the template's own shape doesn't vary per character,
+ * only its CONTENT does" reasoning every other fixed page already
+ * follows.
+ *
+ * `addAbility`/`autoPopulateAbilities` (packages/client/src/mods/
+ * lyrianChronicles.ts) each append their own new ability rows
+ * directly onto THIS page's own markdown by title match
+ * (characterSheetView.ts's generic mod-action handler, `pageEdits`)
+ * -- there is no per-character variable involved at all (see that
+ * file's own "Abilities round" header for why a long, punctuation-
+ * heavy description can't safely be one).
+ */
+const abilitiesPage: CharacterSheetPageDef = {
+  title: "Abilities",
+  // Deliberately no "no abilities yet" placeholder text below the
+  // buttons -- `pageEdits` only ever APPENDS new rows (characterSheetView.ts's
+  // generic mod-action handler), so static placeholder text would
+  // never get cleared out once the first real ability lands.
+  markdown: [
+    "# Abilities",
+    "",
+    '<button type="button" data-mod-action="lyrian-chronicles.addAbility">Add Ability</button>',
+    '<button type="button" data-mod-action="lyrian-chronicles.autoPopulateAbilities">Auto-Populate from Traits</button>',
+  ].join("\n"),
+  variableIds: [],
 };
 
 export const characterSheetTemplate: CharacterSheetTemplate = {
@@ -446,6 +481,7 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
       ],
     },
     skillsPage,
+    abilitiesPage,
   ],
 };
 
@@ -649,6 +685,41 @@ function findBreakthroughs(workbook: ImportedWorkbook): { name: string; cost: nu
     results.push({ name: name.trim(), cost: asNumber(grid[r]?.[1], 0), description: asText(grid[r]?.[3], "") });
   }
   return results;
+}
+
+/**
+ * Real request, 2026-10-28 (Abilities round): "gathered from their
+ * imported character sheet xlsx since that has the updated list."
+ * The real sheet's own hidden "All Abilities" tab IS the game's full
+ * ability rulebook (confirmed directly) -- NEVER this character's own
+ * data, see `CharacterSheetImportResult.abilityCatalog`'s own doc for
+ * why it refreshes the uploading ACCOUNT's own stored catalog instead
+ * of this character's `variableValues`/pages. Only reachable at all
+ * when `workbook["All Abilities"]` exists -- characterSheetImport.ts's
+ * own named exception is what lets it survive the client's general
+ * "skip every hidden tab" rule in the first place.
+ */
+function findAbilityCatalog(workbook: ImportedWorkbook): AbilityCatalogEntry[] | undefined {
+  const grid = workbook["All Abilities"];
+  if (!grid) return undefined;
+  const catalog: AbilityCatalogEntry[] = [];
+  for (let r = 1; r < grid.length; r++) {
+    const name = asText(grid[r]?.[0], "");
+    if (name === "") continue;
+    catalog.push({
+      name,
+      keywords: asText(grid[r]?.[2], ""),
+      range: asText(grid[r]?.[3], ""),
+      description: asText(grid[r]?.[4], ""),
+      requirement: asText(grid[r]?.[5], ""),
+      cost: asText(grid[r]?.[6], ""),
+      apCost: asText(grid[r]?.[7], ""),
+      manaCost: asText(grid[r]?.[8], ""),
+      rpCost: asText(grid[r]?.[9], ""),
+      benefits: asText(grid[r]?.[10], ""),
+    });
+  }
+  return catalog;
 }
 
 const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
@@ -896,6 +967,7 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
     },
     pages: [craftingPage, traitsPage],
     variables: [...skillVariableOverrides, ...craftingVariables, ...classVariables, ...breakthroughVariables],
+    abilityCatalog: findAbilityCatalog(workbook),
   };
 };
 

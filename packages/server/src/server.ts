@@ -214,8 +214,23 @@ const postCharacterImportSheet = createEndpoint("/characters/:id/import-sheet", 
   const defaults = Object.fromEntries(customSheet.variables.map((v) => [v.id, v.default]));
   const variableValues = { ...defaults, ...result.variableValues };
   store.updateCharacterSheet(characterId, modId, customSheet, variableValues);
+  // Real request, 2026-10-28 (Abilities round): a workbook carrying
+  // the real sheet's own "All Abilities" tab (characterSheetImport.ts's
+  // own named exception to the hidden-tab skip) refreshes this
+  // ACCOUNT's own stored ability catalog -- see
+  // CharacterSheetImportResult.abilityCatalog's own doc for why this
+  // is account-scoped, not written onto the character record itself.
+  if (result.abilityCatalog) store.setAbilityCatalog(accountId, modId, result.abilityCatalog);
   notifyCharacterSheetChanged(characterId);
   return store.getCharacter(characterId);
+});
+
+// Real request, 2026-10-28: the "Add Ability" search popup's own
+// catalog -- this account's own stored list (refreshed by their last
+// import that carried "All Abilities," falling back to the mod's own
+// bundled default the first time this account ever asks).
+const getAccountAbilityCatalog = createEndpoint("/accounts/:id/mods/:modId/ability-catalog", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.getAbilityCatalog(ctx.params.id, ctx.params.modId);
 });
 
 // Fetches a single character by id for a viewer who doesn't necessarily
@@ -437,6 +452,7 @@ const routes = createRouter({
   deleteAccountMod,
   getAccountCharacterSheetTemplates,
   getAccountCharacterSheetLibraries,
+  getAccountAbilityCatalog,
   postUpload,
   putCharacterSheet,
   postCharacterImportSheet,
