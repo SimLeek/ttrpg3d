@@ -68,7 +68,7 @@
 import type { CharacterSheetVariableDef, CharacterSheetPageDef, AbilityCatalogEntry } from "@ttrpg3d/shared";
 import type { ModActionFn } from "../modActions.js";
 import { fetchAbilityCatalog } from "../api.js";
-import { ABILITY_LINKS, LYRIAN_CLASSES, LYRIAN_BREAKTHROUGHS } from "./lyrianAbilityLinks.generated.js";
+import { ABILITY_LINKS, LYRIAN_CLASSES, LYRIAN_BREAKTHROUGHS, type AbilityLink } from "./lyrianAbilityLinks.generated.js";
 
 /**
  * Real data, read directly off the real sheet's own hidden
@@ -534,53 +534,89 @@ function mountAbilitySearchPopup(catalog: readonly AbilityCatalogEntry[], onAdd:
 }
 
 /**
+ * One group of abilities sharing a single source (one specific race,
+ * sub-race, breakthrough, or class) -- real request, 2026-10-29
+ * (playtest): "sort by source first? So, race & sub-race first, then
+ * breakthroughs, then classes, all within those sorted by the way
+ * it's listed in the traits tab, then each of those should have its
+ * own frame... that all of the abilities underneath that are listed
+ * in... alphabetical order."
+ */
+interface AbilityGroup {
+  heading: string;
+  matches: (link: AbilityLink) => boolean;
+}
+
+/**
+ * Builds the ordered group list -- race, then sub-race, then every
+ * breakthrough the character has (in Traits-page row order), then
+ * every class (same, row order, gated by the character's CURRENT
+ * level in it). "The way it's listed in the traits tab" is exactly
+ * `findRowIds`' own iteration order over `defs` (the same order
+ * `recalculateTraitsCosts` already walks) -- a class/breakthrough's
+ * real display NAME is recovered from `LYRIAN_CLASSES`/
+ * `LYRIAN_BREAKTHROUGHS` (the full reference lists, not just
+ * `ABILITY_LINKS`) by re-deriving the same id shape, since a row id
+ * alone can't be un-slugified back into its own name.
+ */
+function buildAbilityGroups(ctx: { variableValues: Record<string, number | string>; defs: readonly CharacterSheetVariableDef[] }): AbilityGroup[] {
+  const groups: AbilityGroup[] = [];
+
+  const race = ctx.variableValues.race;
+  if (typeof race === "string" && race !== "") groups.push({ heading: race, matches: (link) => link.source === "race" && link.sourceName === race });
+
+  const subRace = ctx.variableValues.subRace;
+  if (typeof subRace === "string" && subRace !== "") groups.push({ heading: subRace, matches: (link) => link.source === "subRace" && link.sourceName === subRace });
+
+  const breakthroughNameByRowId = new Map(LYRIAN_BREAKTHROUGHS.map((b) => [breakthroughVariableId(b.name).slice("breakthrough".length), b.name]));
+  for (const rowId of findRowIds(ctx.defs, "breakthrough", "Cost")) {
+    const name = breakthroughNameByRowId.get(rowId);
+    if (name) groups.push({ heading: name, matches: (link) => link.source === "breakthrough" && link.sourceName === name });
+  }
+
+  const classNameByRowId = new Map(LYRIAN_CLASSES.map((c) => [classVariableId(c.name).slice("class".length), c.name]));
+  for (const rowId of findRowIds(ctx.defs, "class", "Tier")) {
+    const name = classNameByRowId.get(rowId);
+    if (!name) continue;
+    const currentLevel = asNumber(ctx.variableValues[`${classVariableId(name)}Level`], 1);
+    groups.push({ heading: name, matches: (link) => link.source === "class" && link.sourceName === name && (link.level === undefined || currentLevel >= link.level) });
+  }
+
+  return groups;
+}
+
+/**
  * Real request, 2026-10-28: "auto-populate abilities based on
  * classes, races, sub-races, and breakthroughs, with an auto-populate
  * button." Cross-references `ABILITY_LINKS` (generated from the
  * user's own hand-filled linking workbook -- see scripts/generate-
  * lyrian-ability-data.mjs) against this character's CURRENT classes
  * (by level), race, sub-race, and breakthroughs, adding every
- * qualifying ability not already listed. Race/sub-race match by
- * plain string equality (`{race}`/`{subRace}` hold the real name
- * directly); a class/breakthrough matches by re-deriving the SAME
- * variable-id shape the server importer gives it from the link's own
- * `sourceName` (see `classVariableId`/`breakthroughVariableId` above)
- * and checking it's actually present in `defs` -- never the reverse
- * (id -> name), since this file never needs to know a class's real
- * name, only whether ONE THAT MATCHES this link exists at all.
+ * qualifying ability not already listed, grouped by `buildAbilityGroups`
+ * above (each source gets its own `<fieldset>` "frame", abilities
+ * listed alphabetically within it).
  */
 export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
   const catalog = await fetchAbilityCatalog(ctx.httpUrl, ctx.accountId, "lyrian-chronicles");
   const catalogByName = new Map(catalog.map((e) => [e.name, e]));
 
   const addedThisRun = new Set<string>();
-  const newRows: string[] = [];
-  for (const link of ABILITY_LINKS) {
-    if (addedThisRun.has(link.name) || abilityAlreadyListed(ctx.pages, link.name)) continue;
+  const groupBlocks: string[] = [];
 
-    let qualifies = false;
-    if (link.source === "race") {
-      qualifies = ctx.variableValues.race === link.sourceName;
-    } else if (link.source === "subRace") {
-      qualifies = ctx.variableValues.subRace === link.sourceName;
-    } else if (link.source === "class") {
-      const id = classVariableId(link.sourceName); // already prefixed, e.g. "classChronomancer" -- see this function's own id-shape doc
-      if (ctx.defs.some((d) => d.id === `${id}Tier`)) {
-        const currentLevel = asNumber(ctx.variableValues[`${id}Level`], 1);
-        qualifies = link.level === undefined || currentLevel >= link.level;
-      }
-    } else if (link.source === "breakthrough") {
-      const id = breakthroughVariableId(link.sourceName); // already prefixed, e.g. "breakthroughLightSleeper"
-      qualifies = ctx.defs.some((d) => d.id === `${id}Cost`);
-    }
-    if (!qualifies) continue;
+  for (const group of buildAbilityGroups(ctx)) {
+    const matchingLinks = ABILITY_LINKS.filter((link) => group.matches(link) && !addedThisRun.has(link.name) && !abilityAlreadyListed(ctx.pages, link.name));
+    if (matchingLinks.length === 0) continue;
 
-    addedThisRun.add(link.name);
-    const entry = catalogByName.get(link.name) ?? { name: link.name, keywords: "", range: "", description: "", requirement: "", cost: "", benefits: "" };
-    newRows.push(abilityRowHtml(entry));
+    matchingLinks.sort((a, b) => a.name.localeCompare(b.name));
+    const rows = matchingLinks.map((link) => {
+      addedThisRun.add(link.name);
+      const entry = catalogByName.get(link.name) ?? { name: link.name, keywords: "", range: "", description: "", requirement: "", cost: "", benefits: "" };
+      return abilityRowHtml(entry);
+    });
+    groupBlocks.push(`\n\n<fieldset class="ability-group"><legend>${escapeHtml(group.heading)}</legend>${rows.join("")}</fieldset>`);
   }
 
-  if (newRows.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: newRows.join("") }] });
+  if (groupBlocks.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: groupBlocks.join("") }] });
 };
 
 // ---- Real request, 2026-10-28: "the classes didn't have a method to
