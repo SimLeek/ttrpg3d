@@ -689,53 +689,63 @@ function injuriesTableMarkdown(flags: Readonly<Record<string, boolean>>): string
  * mechanism yet for a literal baked widget" limitation race/sub-race's
  * own `<select>` and "Armor Equipped?" already accept).
  */
+/**
+ * Real request, 2026-10-29 (playtest): "those boxes in inventory and
+ * abilities are great, so let's clean up the core page with them
+ * since it's a bit messy, just group everything that has a title."
+ * Every one of the Core page's own `## Heading` sections becomes its
+ * own collapsible `<details>` box (the SAME `collapsibleSectionHtml`
+ * the Inventory page's own six boxes already use), instead of a bare
+ * markdown heading -- same visual "frame" treatment, same mechanism.
+ */
 function coreMarkdown(injuryFlags: Readonly<Record<string, boolean>>): string {
   return [
     "# Core",
-    "",
-    "## Vitals",
-    "",
-    "| | Current | Max |",
-    "| --- | --- | --- |",
-    "| HP | {hp} | {hp.y} |",
-    "| MP | {mp} | {mp.y} |",
-    "| RP | {rp} | {rp.y} |",
-    "",
-    "## Combat",
-    "",
-    "| {{Evasion; evasion: 7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{Dodge; dodge: 20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{Guard; guard: trunc({toughness} + {equipmentGuardValue})}} | {{Block; block: ({toughness} * 2) + {equipmentBlockValue}}} |",
-    "| --- | --- | --- | --- |",
-    "| {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{trunc({toughness} + {equipmentGuardValue})}} | {{({toughness} * 2) + {equipmentBlockValue}}} |",
-    "",
-    "| {{Initiative; initiative: 1d4 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{Save Bonus; save bonus: 2d10 + {toughness} + {bonusSaveValue}}} | {{Potency; potency: 11 + {focus}}} | {{Speed; speed: {speed}}} |",
-    "| --- | --- | --- | --- |",
-    "| {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{{toughness} + {bonusSaveValue}}} | {{11 + {focus}}} | {speed} |",
-    "",
-    "## Attacks",
-    "",
-    "- {{Light Attack; atk: 1d20 + {focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus} | damage+max: {lightDamage}:button}}",
-    "- {{Heavy Attack; atk: 1d20 + {focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus} | damage+max: {heavyDamage}:button}}",
-    "- {{Precise Attack (pinpoint); atk: 1d20 + ({focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus}) * 2 | damage+max: {lightDamage}:button}}",
-    "",
-    "| Attack Focus Bonus | Attack Power Bonus |",
-    "| --- | --- |",
-    "| {attackFocusBonus} | {attackPowerBonus} |",
-    "",
-    "## Main Stats",
-    "",
-    "| {{Agility; agility check: 1d20 + {agility}}} | {{Toughness; toughness check: 1d20 + {toughness}}} | {{Focus; focus check: 1d20 + {focus}}} | {{Power; power check: 1d20 + {power}}} |",
-    "| --- | --- | --- | --- |",
-    "| {agility} | {toughness} | {focus} | {power} |",
-    "",
-    "## Sub Stats",
-    "",
-    "| {{Fitness; fitness check: 1d20 + {fitness}}} | {{Cunning; cunning check: 1d20 + {cunning}}} | {{Reason; reason check: 1d20 + {reason}}} | {{Awareness; awareness check: 1d20 + {awareness}}} | {{Presence; presence check: 1d20 + {presence}}} |",
-    "| --- | --- | --- | --- | --- |",
-    "| {fitness} | {cunning} | {reason} | {awareness} | {presence} |",
-    "",
-    "## Injuries",
-    "",
-    injuriesTableMarkdown(injuryFlags),
+    collapsibleSectionHtml(
+      "Vitals",
+      ["| | Current | Max |", "| --- | --- | --- |", "| HP | {hp} | {hp.y} |", "| MP | {mp} | {mp.y} |", "| RP | {rp} | {rp.y} |"].join("\n"),
+    ),
+    collapsibleSectionHtml(
+      "Combat",
+      [
+        "| {{Evasion; evasion: 7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{Dodge; dodge: 20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{Guard; guard: trunc({toughness} + {equipmentGuardValue})}} | {{Block; block: ({toughness} * 2) + {equipmentBlockValue}}} |",
+        "| --- | --- | --- | --- |",
+        "| {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{trunc({toughness} + {equipmentGuardValue})}} | {{({toughness} * 2) + {equipmentBlockValue}}} |",
+        "",
+        "| {{Initiative; initiative: 1d4 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{Save Bonus; save bonus: 2d10 + {toughness} + {bonusSaveValue}}} | {{Potency; potency: 11 + {focus}}} | {{Speed; speed: {speed}}} |",
+        "| --- | --- | --- | --- |",
+        "| {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{{toughness} + {bonusSaveValue}}} | {{11 + {focus}}} | {speed} |",
+      ].join("\n"),
+    ),
+    collapsibleSectionHtml(
+      "Attacks",
+      [
+        "- {{Light Attack; atk: 1d20 + {focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus} | damage+max: {lightDamage}:button}}",
+        "- {{Heavy Attack; atk: 1d20 + {focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus} | damage+max: {heavyDamage}:button}}",
+        "- {{Precise Attack (pinpoint); atk: 1d20 + ({focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus}) * 2 | damage+max: {lightDamage}:button}}",
+        "",
+        "| Attack Focus Bonus | Attack Power Bonus |",
+        "| --- | --- |",
+        "| {attackFocusBonus} | {attackPowerBonus} |",
+      ].join("\n"),
+    ),
+    collapsibleSectionHtml(
+      "Main Stats",
+      [
+        "| {{Agility; agility check: 1d20 + {agility}}} | {{Toughness; toughness check: 1d20 + {toughness}}} | {{Focus; focus check: 1d20 + {focus}}} | {{Power; power check: 1d20 + {power}}} |",
+        "| --- | --- | --- | --- |",
+        "| {agility} | {toughness} | {focus} | {power} |",
+      ].join("\n"),
+    ),
+    collapsibleSectionHtml(
+      "Sub Stats",
+      [
+        "| {{Fitness; fitness check: 1d20 + {fitness}}} | {{Cunning; cunning check: 1d20 + {cunning}}} | {{Reason; reason check: 1d20 + {reason}}} | {{Awareness; awareness check: 1d20 + {awareness}}} | {{Presence; presence check: 1d20 + {presence}}} |",
+        "| --- | --- | --- | --- | --- |",
+        "| {fitness} | {cunning} | {reason} | {awareness} | {presence} |",
+      ].join("\n"),
+    ),
+    collapsibleSectionHtml("Injuries", injuriesTableMarkdown(injuryFlags)),
   ].join("\n");
 }
 
@@ -1394,62 +1404,74 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
     breakthroughValues[`${id}Cost`] = bt.cost;
   }
 
+  // Real request, 2026-10-29 (playtest): "those boxes in inventory
+  // and abilities are great... same with the traits page" -- same
+  // collapsibleSectionHtml boxing as the Core page above. Classes/
+  // Breakthroughs are dynamic, player-extensible lists (the "+ Add"
+  // buttons' own addClass/addBreakthrough actions insert a new row
+  // into these same boxes later -- see insertRowInCollapsibleSection,
+  // lyrianChronicles.ts, the SAME anchor-on-<summary>-text mechanism
+  // the Inventory page's own "+ Add Item" actions already use, now
+  // that there's no literal "## Classes"/"## Breakthroughs" heading
+  // left to anchor on).
   const traitsPage: CharacterSheetPageDef = {
     title: "Traits",
     markdown: [
       "# Traits",
-      "",
-      "## Identity",
-      "",
-      "| Race | Sub-Race |",
-      "| --- | --- |",
-      `| ${selectHtml("race", RACES, race)} | ${selectHtml("subRace", SUB_RACES, subRace)} |`,
-      "",
-      "## Currency",
-      "",
-      "| Total EXP Earned | Spirit Core (Remaining) |",
-      "| --- | --- |",
-      "| {totalExp} | {spiritCore} |",
-      "",
-      // Real request, 2026-10-28: "the 'Recomputes every class's own
-      // Cost' text above 'auto-calculate costs' should just be the
-      // alt text on the 'auto-calculate costs' button" -- a `title`
-      // attribute (the real "alt text" for a button -- shown on
-      // hover), not its own separate paragraph.
-      '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts" title="Recomputes every class’s own Cost (tier’s first level costs tier × 100, every level after costs 100) and every breakthrough’s own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.">Auto-Calculate Costs</button>',
-      "",
-      "## Classes",
-      "",
-      // Real request, 2026-10-28: "the classes didn't have a method to
-      // add classes or breakthroughs, which should be done from a +
-      // button to add a line and a dropdown to select the thing."
-      '<button type="button" data-mod-action="lyrian-chronicles.addClass">+ Add Class</button>',
-      "",
-      classes.length === 0
-        ? "No classes."
-        : [
-            "| Class | Tier | Level | Cost |",
-            "| --- | --- | --- | --- |",
-            ...classes.map((cls) => {
-              const id = classVariableId(cls.name);
-              return `| ${cls.name} | {${id}Tier} | {${id}Level} | {${id}Cost} |`;
-            }),
-          ].join("\n"),
-      "",
-      "## Breakthroughs",
-      "",
-      '<button type="button" data-mod-action="lyrian-chronicles.addBreakthrough">+ Add Breakthrough</button>',
-      "",
-      breakthroughs.length === 0
-        ? "No breakthroughs."
-        : [
-            "| Breakthrough | Cost | Description |",
-            "| --- | --- | --- |",
-            ...breakthroughs.map((bt) => {
-              const id = breakthroughVariableId(bt.name);
-              return `| ${bt.name} | {${id}Cost} | ${detailsHtml(bt.description)} |`;
-            }),
-          ].join("\n"),
+      collapsibleSectionHtml("Identity", ["| Race | Sub-Race |", "| --- | --- |", `| ${selectHtml("race", RACES, race)} | ${selectHtml("subRace", SUB_RACES, subRace)} |`].join("\n")),
+      collapsibleSectionHtml(
+        "Currency",
+        [
+          "| Total EXP Earned | Spirit Core (Remaining) |",
+          "| --- | --- |",
+          "| {totalExp} | {spiritCore} |",
+          "",
+          // Real request, 2026-10-28: "the 'Recomputes every class's
+          // own Cost' text above 'auto-calculate costs' should just be
+          // the alt text on the 'auto-calculate costs' button" -- a
+          // `title` attribute (the real "alt text" for a button --
+          // shown on hover), not its own separate paragraph.
+          '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts" title="Recomputes every class’s own Cost (tier’s first level costs tier × 100, every level after costs 100) and every breakthrough’s own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.">Auto-Calculate Costs</button>',
+        ].join("\n"),
+      ),
+      collapsibleSectionHtml(
+        "Classes",
+        [
+          // Real request, 2026-10-28: "the classes didn't have a
+          // method to add classes or breakthroughs, which should be
+          // done from a + button to add a line and a dropdown to
+          // select the thing."
+          '<button type="button" data-mod-action="lyrian-chronicles.addClass">+ Add Class</button>',
+          "",
+          classes.length === 0
+            ? "No classes."
+            : [
+                "| Class | Tier | Level | Cost |",
+                "| --- | --- | --- | --- |",
+                ...classes.map((cls) => {
+                  const id = classVariableId(cls.name);
+                  return `| ${cls.name} | {${id}Tier} | {${id}Level} | {${id}Cost} |`;
+                }),
+              ].join("\n"),
+        ].join("\n"),
+      ),
+      collapsibleSectionHtml(
+        "Breakthroughs",
+        [
+          '<button type="button" data-mod-action="lyrian-chronicles.addBreakthrough">+ Add Breakthrough</button>',
+          "",
+          breakthroughs.length === 0
+            ? "No breakthroughs."
+            : [
+                "| Breakthrough | Cost | Description |",
+                "| --- | --- | --- |",
+                ...breakthroughs.map((bt) => {
+                  const id = breakthroughVariableId(bt.name);
+                  return `| ${bt.name} | {${id}Cost} | ${detailsHtml(bt.description)} |`;
+                }),
+              ].join("\n"),
+        ].join("\n"),
+      ),
     ].join("\n"),
     variableIds: ["race", "subRace", "totalExp", "spiritCore", ...classVariables.map((v) => v.id), ...breakthroughVariables.map((v) => v.id)],
   };

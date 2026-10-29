@@ -404,7 +404,21 @@ function abilityRowHtml(entry: AbilityInfo): string {
   const safeName = escapeHtml(entry.name);
   const tableHtml = abilityInfoTableHtml(entry);
   const plainText = abilityInfoPlainText(entry);
-  return `\n\n<div class="ability-row"><button type="button" class="chat-chip" data-chip-label="${safeName}" data-chip-value="${escapeHtmlAttr(plainText)}" data-chip-html="${escapeHtmlAttr(tableHtml)}">${safeName}</button> <details><summary>ℹ</summary>${tableHtml}</details></div>`;
+  // Real request, 2026-10-29 (playtest): "abilities should have their
+  // ability names at the top when posted, bold and underlined." The
+  // name was only ever the chat-chip's own BUTTON text -- fine for
+  // the sheet (it sits right next to its own <details> disclosure),
+  // but the posted chat message's own `label -> value` text gets
+  // dropped entirely once `html` is present (characters.ts/chatPanel.ts
+  // both just show "sender: <html>", never the label) -- confirmed
+  // the SAME convention a compound roll's own result group already
+  // follows (`<strong>${actionLabel}</strong>` baked directly into
+  // ITS OWN html for the exact same reason), just bold AND underlined
+  // here per the user's own request. Baked into the CHAT payload
+  // only, not the <details> body below (the name is already right
+  // there as the button's own text, right next to it).
+  const chatHtml = `<strong><u>${safeName}</u></strong><br>${tableHtml}`;
+  return `\n\n<div class="ability-row"><button type="button" class="chat-chip" data-chip-label="${safeName}" data-chip-value="${escapeHtmlAttr(plainText)}" data-chip-html="${escapeHtmlAttr(chatHtml)}">${safeName}</button> <details><summary>ℹ</summary>${tableHtml}</details></div>`;
 }
 
 /** Whether `name` is already listed on the Abilities page -- checked against the page's own raw markdown (the `data-chip-label` an earlier `abilityRowHtml` call baked in), not a variable, since an added ability isn't one (see this section's own header). */
@@ -666,28 +680,6 @@ function detailsHtml(text: string): string {
   return `<details><summary>ℹ</summary>${safe}</details>`;
 }
 
-/**
- * Inserts `rowMarkdown` into an existing markdown TABLE on the Traits
- * page -- a table is a contiguous block, so a bare row APPENDED at
- * the very end of the whole page (the mechanism every other mod
- * action so far has used) would land after later sections too, and
- * wouldn't even render as part of the right table at all. If the
- * section currently shows its own `emptyPlaceholder` text (no rows
- * yet), that text is replaced by a FRESH table (header + separator +
- * this one new row) instead; otherwise the new row is inserted right
- * before the NEXT `## ` heading that follows `sectionHeading` (or at
- * the very end of the page, if this is the last section).
- */
-function insertTableRow(markdown: string, sectionHeading: string, emptyPlaceholder: string, tableHeaderLines: readonly string[], rowMarkdown: string): string {
-  if (markdown.includes(emptyPlaceholder)) {
-    return markdown.replace(emptyPlaceholder, [...tableHeaderLines, rowMarkdown].join("\n"));
-  }
-  const headingIdx = markdown.indexOf(sectionHeading);
-  if (headingIdx === -1) return `${markdown}\n${rowMarkdown}`; // the section itself is missing -- shouldn't happen given the FIXED Traits template, but never silently drop a real add
-  const nextHeadingIdx = markdown.indexOf("\n## ", headingIdx + sectionHeading.length);
-  if (nextHeadingIdx === -1) return `${markdown}\n${rowMarkdown}`;
-  return `${markdown.slice(0, nextHeadingIdx)}\n${rowMarkdown}${markdown.slice(nextHeadingIdx)}`;
-}
 
 /**
  * Same job as `insertTableRow` above, for the Inventory page's own
@@ -786,7 +778,7 @@ export const addClass: ModActionFn = (ctx, apply) => {
       const id = classVariableId(cls.name);
       const cost = cls.tier * 100;
       const rowMarkdown = `| ${escapeHtml(cls.name)} | {${id}Tier} | {${id}Level} | {${id}Cost} |`;
-      const newMarkdown = insertTableRow(traitsPage.markdown, "## Classes", "No classes.", ["| Class | Tier | Level | Cost |", "| --- | --- | --- | --- |"], rowMarkdown);
+      const newMarkdown = insertRowInCollapsibleSection(traitsPage.markdown, "Classes", "No classes.", ["| Class | Tier | Level | Cost |", "| --- | --- | --- | --- |"], rowMarkdown);
       apply({
         variables: [
           { id: `${id}Tier`, label: `${cls.name} Tier`, type: "number", default: cls.tier },
@@ -822,7 +814,7 @@ export const addBreakthrough: ModActionFn = (ctx, apply) => {
       const id = breakthroughVariableId(bt.name);
       const cost = BREAKTHROUGH_COST_BY_ID[id] ?? 0;
       const rowMarkdown = `| ${escapeHtml(bt.name)} | {${id}Cost} | ${detailsHtml(bt.description)} |`;
-      const newMarkdown = insertTableRow(traitsPage.markdown, "## Breakthroughs", "No breakthroughs.", ["| Breakthrough | Cost | Description |", "| --- | --- | --- |"], rowMarkdown);
+      const newMarkdown = insertRowInCollapsibleSection(traitsPage.markdown, "Breakthroughs", "No breakthroughs.", ["| Breakthrough | Cost | Description |", "| --- | --- | --- |"], rowMarkdown);
       apply({
         variables: [{ id: `${id}Cost`, label: `${bt.name} Cost`, type: "number", default: cost }],
         variableValues: { [`${id}Cost`]: cost },

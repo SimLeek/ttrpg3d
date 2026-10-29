@@ -173,6 +173,22 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(markdown).toContain("<details>");
   });
 
+  it("real request, 2026-10-29 (playtest): \"abilities should have their ability names at the top when posted, bold and underlined\" -- the posted CHAT html leads with the name wrapped in <strong><u>, since the plain button-text label otherwise never reaches the rendered chat message once html is present", async () => {
+    const apply = vi.fn();
+    await addAbility(baseCtx(), apply);
+
+    const input = document.body.querySelector<HTMLInputElement>("#ability-search-input")!;
+    input.value = "sense";
+    input.dispatchEvent(new Event("input"));
+    document.body.querySelector<HTMLButtonElement>(".ability-search-add-btn")!.click();
+
+    const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
+    expect(markdown).toMatch(/data-chip-html="&lt;strong&gt;&lt;u&gt;Sense Magic&lt;\/u&gt;&lt;\/strong&gt;/);
+    // The <details> disclosure body, by contrast, does NOT repeat the name -- it's already the chip button's own text right next to it.
+    const detailsIdx = markdown.indexOf("<details>");
+    expect(markdown.slice(detailsIdx, detailsIdx + 60)).not.toContain("<strong>");
+  });
+
   it("real request, 2026-10-29 (playtest): \"the test chat is too narrow... convert it to 1xn, no matter how many columns there were originally... just rows, no columns\" -- the info table is single-column (label and its value are each their OWN <tr>, never a label/value pair sharing one row), with the label still bold", async () => {
     const apply = vi.fn();
     await addAbility(baseCtx(), apply);
@@ -360,8 +376,19 @@ describe("addClass/addBreakthrough (real request, 2026-10-28 -- \"a + button to 
     document.querySelectorAll("div").forEach((el) => el.remove());
   });
 
+  // Real request, 2026-10-29 (playtest): "those boxes in inventory
+  // and abilities are great... same with the traits page" -- Classes/
+  // Breakthroughs are now collapsible <details> BOXES, not `##`
+  // headings (entry.ts's own collapsibleSectionHtml); only the
+  // `<summary>` text + the box's own `</details>` boundary matter to
+  // insertRowInCollapsibleSection, so this minimal shape (no border/
+  // style attributes) is enough to exercise it the same way.
+  function traitsBoxMarkdown(classesBody: string, breakthroughsBody: string): string {
+    return `# Traits\n\n<details><summary>Classes</summary>\n\n${classesBody}\n\n</details>\n\n<details><summary>Breakthroughs</summary>\n\n${breakthroughsBody}\n\n</details>`;
+  }
+
   it("picking a REAL class from the dropdown (confirmed directly: 'Acolyte' is Tier 1 on the real sheet) seeds Tier/Level/Cost correctly and inserts a fresh table into an otherwise-empty Classes section", () => {
-    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: "# Traits\n\n## Classes\n\nNo classes.\n\n## Breakthroughs\n\nNo breakthroughs.", variableIds: [] };
+    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: traitsBoxMarkdown("No classes.", "No breakthroughs."), variableIds: [] };
     const apply = vi.fn();
     addClass(baseCtx({ pages: [traitsPage] }), apply);
 
@@ -380,13 +407,13 @@ describe("addClass/addBreakthrough (real request, 2026-10-28 -- \"a + button to 
     expect(newMarkdown).toContain("| Class | Tier | Level | Cost |");
     expect(newMarkdown).toContain("| Acolyte | {classAcolyteTier} | {classAcolyteLevel} | {classAcolyteCost} |");
     expect(newMarkdown).not.toContain("No classes."); // the placeholder is REPLACED, not left dangling alongside the new table
-    expect(newMarkdown).toContain("## Breakthroughs"); // the section after Classes is untouched, still present
+    expect(newMarkdown).toContain("Breakthroughs</summary>"); // the section after Classes is untouched, still present
   });
 
-  it("inserts a new class row INSIDE the existing table (before the next ## heading), not appended after the whole page", () => {
+  it("inserts a new class row INSIDE the existing table (before the Breakthroughs box), not appended after the whole page", () => {
     const traitsPage: CharacterSheetPageDef = {
       title: "Traits",
-      markdown: ["# Traits", "", "## Classes", "", "| Class | Tier | Level | Cost |", "| --- | --- | --- | --- |", "| Mage | {classMageTier} | {classMageLevel} | {classMageCost} |", "", "## Breakthroughs", "", "No breakthroughs."].join("\n"),
+      markdown: traitsBoxMarkdown(["| Class | Tier | Level | Cost |", "| --- | --- | --- | --- |", "| Mage | {classMageTier} | {classMageLevel} | {classMageCost} |"].join("\n"), "No breakthroughs."),
       variableIds: [],
     };
     const apply = vi.fn();
@@ -394,16 +421,20 @@ describe("addClass/addBreakthrough (real request, 2026-10-28 -- \"a + button to 
     pick("Acolyte");
 
     const newMarkdown = apply.mock.calls[0][0].pageEdits[0].replaceMarkdown as string;
-    const classesIdx = newMarkdown.indexOf("## Classes");
-    const breakthroughsIdx = newMarkdown.indexOf("## Breakthroughs");
+    const classesIdx = newMarkdown.indexOf("Classes</summary>");
+    const breakthroughsIdx = newMarkdown.indexOf("Breakthroughs</summary>");
     const acolyteIdx = newMarkdown.indexOf("| Acolyte |");
     expect(acolyteIdx).toBeGreaterThan(classesIdx);
-    expect(acolyteIdx).toBeLessThan(breakthroughsIdx); // landed INSIDE the Classes section, not after Breakthroughs
+    expect(acolyteIdx).toBeLessThan(breakthroughsIdx); // landed INSIDE the Classes box, not after the Breakthroughs box
     expect(newMarkdown).toContain("| Mage | {classMageTier} | {classMageLevel} | {classMageCost} |"); // the existing row survives untouched
   });
 
   it("excludes a class already present on the character from the dropdown's own options", () => {
-    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: "## Classes\n\n| Class | Tier | Level | Cost |\n| --- | --- | --- | --- |\n| Acolyte | {classAcolyteTier} | {classAcolyteLevel} | {classAcolyteCost} |\n\n## Breakthroughs\n\nNo breakthroughs.", variableIds: [] };
+    const traitsPage: CharacterSheetPageDef = {
+      title: "Traits",
+      markdown: traitsBoxMarkdown(["| Class | Tier | Level | Cost |", "| --- | --- | --- | --- |", "| Acolyte | {classAcolyteTier} | {classAcolyteLevel} | {classAcolyteCost} |"].join("\n"), "No breakthroughs."),
+      variableIds: [],
+    };
     addClass(baseCtx({ pages: [traitsPage], defs: [{ id: "classAcolyteTier", label: "Acolyte Tier", type: "number", default: 1 }] }), vi.fn());
 
     const options = Array.from(document.body.querySelectorAll<HTMLOptionElement>("#dropdown-picker-select option")).map((o) => o.value);
@@ -412,7 +443,7 @@ describe("addClass/addBreakthrough (real request, 2026-10-28 -- \"a + button to 
   });
 
   it("picking a REAL breakthrough (confirmed directly: 'Bully' costs 50 on the real sheet) seeds Cost from the hardcoded rulebook table and bakes its own description into a details disclosure, never a variable", () => {
-    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: "## Classes\n\nNo classes.\n\n## Breakthroughs\n\nNo breakthroughs.", variableIds: [] };
+    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: traitsBoxMarkdown("No classes.", "No breakthroughs."), variableIds: [] };
     const apply = vi.fn();
     addBreakthrough(baseCtx({ pages: [traitsPage] }), apply);
     pick("Bully");
@@ -426,7 +457,7 @@ describe("addClass/addBreakthrough (real request, 2026-10-28 -- \"a + button to 
   });
 
   it("the ✕ button closes the popup without ever calling apply, for both addClass and addBreakthrough", () => {
-    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: "## Classes\n\nNo classes.\n\n## Breakthroughs\n\nNo breakthroughs.", variableIds: [] };
+    const traitsPage: CharacterSheetPageDef = { title: "Traits", markdown: traitsBoxMarkdown("No classes.", "No breakthroughs."), variableIds: [] };
     const apply = vi.fn();
     addClass(baseCtx({ pages: [traitsPage] }), apply);
     document.body.querySelector<HTMLButtonElement>("#dropdown-picker-close")!.click();

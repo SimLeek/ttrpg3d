@@ -137,37 +137,30 @@ function selectHtml(varKey: string, options: readonly string[], current: string)
 const AUTO_CALCULATE_TITLE =
   "Recomputes every class’s own Cost (tier’s first level costs tier × 100, every level after costs 100) and every breakthrough’s own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.";
 
+// Mirrors entry.ts's own collapsibleSectionHtml -- duplicated here
+// (not imported), same "tests stay independent of that file's own
+// internals" spirit every other mirrored helper in this file already
+// follows. Real request, 2026-10-29 (playtest): "those boxes in
+// inventory and abilities are great... let's clean up the core page
+// with them... same with the traits page" -- every Core/Traits
+// section is now one of these collapsible boxes, not a bare `##`
+// heading.
+function collapsibleSectionHtml(title: string, bodyMarkdown: string): string {
+  return `\n\n<details class="ability-group" open style="border:1px solid rgba(150,150,150,0.5); border-radius:4px; padding:4px 10px 10px; margin:8px 0;"><summary style="font-weight:bold; cursor:pointer; padding:4px 0;">${title}</summary>\n\n${bodyMarkdown}\n\n</details>`;
+}
+
 const EMPTY_TRAITS_FIELDS = { race: "", subRace: "", totalExp: 0, spiritCore: 0 };
 const EMPTY_TRAITS_PAGE = {
   title: "Traits",
   markdown: [
     "# Traits",
-    "",
-    "## Identity",
-    "",
-    "| Race | Sub-Race |",
-    "| --- | --- |",
-    `| ${selectHtml("race", RACES, "")} | ${selectHtml("subRace", SUB_RACES, "")} |`,
-    "",
-    "## Currency",
-    "",
-    "| Total EXP Earned | Spirit Core (Remaining) |",
-    "| --- | --- |",
-    "| {totalExp} | {spiritCore} |",
-    "",
-    `<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts" title="${AUTO_CALCULATE_TITLE}">Auto-Calculate Costs</button>`,
-    "",
-    "## Classes",
-    "",
-    '<button type="button" data-mod-action="lyrian-chronicles.addClass">+ Add Class</button>',
-    "",
-    "No classes.",
-    "",
-    "## Breakthroughs",
-    "",
-    '<button type="button" data-mod-action="lyrian-chronicles.addBreakthrough">+ Add Breakthrough</button>',
-    "",
-    "No breakthroughs.",
+    collapsibleSectionHtml("Identity", ["| Race | Sub-Race |", "| --- | --- |", `| ${selectHtml("race", RACES, "")} | ${selectHtml("subRace", SUB_RACES, "")} |`].join("\n")),
+    collapsibleSectionHtml(
+      "Currency",
+      ["| Total EXP Earned | Spirit Core (Remaining) |", "| --- | --- |", "| {totalExp} | {spiritCore} |", "", `<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts" title="${AUTO_CALCULATE_TITLE}">Auto-Calculate Costs</button>`].join("\n"),
+    ),
+    collapsibleSectionHtml("Classes", ['<button type="button" data-mod-action="lyrian-chronicles.addClass">+ Add Class</button>', "", "No classes."].join("\n")),
+    collapsibleSectionHtml("Breakthroughs", ['<button type="button" data-mod-action="lyrian-chronicles.addBreakthrough">+ Add Breakthrough</button>', "", "No breakthroughs."].join("\n")),
   ].join("\n"),
   variableIds: ["race", "subRace", "totalExp", "spiritCore"],
 };
