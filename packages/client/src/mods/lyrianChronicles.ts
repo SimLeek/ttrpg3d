@@ -347,15 +347,26 @@ function abilityInfoFields(entry: AbilityInfo): { label: string; value: string }
   return fields;
 }
 
-/** The HTML table every ability's info renders as, both in its own `<details>` disclosure and (escaped into an attribute) the chat post -- ONE self-contained fragment reused in both places. */
+/**
+ * Real request, 2026-10-29 (playtest): "the table works fine in the
+ * character sheet, [but] it does not work in the test chat, because
+ * the test chat is too narrow... convert it to 1xn no matter how many
+ * columns there were originally and just translate left to right then
+ * top to bottom... into just top to bottom, only rows, no columns.
+ * Honestly do that for both the chat and the character sheet itself."
+ * One cell per `<tr>` (label row, then its own value row) instead of
+ * a label/value PAIR per row -- a column can never overflow a narrow
+ * panel if there's only ever one of them.
+ */
 function abilityInfoTableHtml(entry: AbilityInfo): string {
-  const rows = abilityInfoFields(entry).map((field) => `<tr><th>${escapeHtml(field.label)}</th><td>${escapeHtml(field.value).replace(/\n/g, "<br>")}</td></tr>`);
+  const rows: string[] = [];
+  for (const field of abilityInfoFields(entry)) {
+    rows.push(`<tr><td><strong>${escapeHtml(field.label)}</strong></td></tr>`);
+    rows.push(`<tr><td>${escapeHtml(field.value).replace(/\n/g, "<br>")}</td></tr>`);
+  }
   if (!isBlankAbilityField(entry.benefits)) {
-    const items = entry.benefits
-      .split("|")
-      .map((part) => `<li>${escapeHtml(part.trim())}</li>`)
-      .join("");
-    rows.push(`<tr><th>Benefits</th><td><ul>${items}</ul></td></tr>`);
+    rows.push(`<tr><td><strong>Benefits</strong></td></tr>`);
+    for (const part of entry.benefits.split("|")) rows.push(`<tr><td>${escapeHtml(part.trim())}</td></tr>`);
   }
   return rows.length > 0 ? `<table class="ability-info-table"><tbody>${rows.join("")}</tbody></table>` : "<em>No information on file for this ability.</em>";
 }

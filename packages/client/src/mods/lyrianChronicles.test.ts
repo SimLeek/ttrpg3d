@@ -162,6 +162,22 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(markdown).toContain("<details>");
   });
 
+  it("real request, 2026-10-29 (playtest): \"the test chat is too narrow... convert it to 1xn, no matter how many columns there were originally... just rows, no columns\" -- the info table is single-column (label and its value are each their OWN <tr>, never a label/value pair sharing one row), with the label still bold", async () => {
+    const apply = vi.fn();
+    await addAbility(baseCtx(), apply);
+
+    const input = document.body.querySelector<HTMLInputElement>("#ability-search-input")!;
+    input.value = "sense";
+    input.dispatchEvent(new Event("input"));
+    document.body.querySelector<HTMLButtonElement>(".ability-search-add-btn")!.click();
+
+    const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
+    expect(markdown).not.toContain("<th"); // no two-column header cell at all
+    expect(markdown).toMatch(/<tr><td><strong>Cost<\/strong><\/td><\/tr><tr><td>1 AP<\/td><\/tr>/); // label and value are separate rows, not one row with two cells
+    const tdCountsPerRow = Array.from(markdown.matchAll(/<tr>(.*?)<\/tr>/g)).map((m) => (m[1].match(/<td>/g) ?? []).length);
+    expect(tdCountsPerRow.every((count) => count === 1)).toBe(true); // every row has exactly ONE cell -- 1xn, never 2xn
+  });
+
   it("real request, 2026-10-29 (playtest): \"The Alchemist is empty\" -- an entry whose real text lives in `benefits` (not `description`) is still rendered, as a bulleted list", async () => {
     const apply = vi.fn();
     await addAbility(baseCtx(), apply);
