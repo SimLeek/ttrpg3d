@@ -293,10 +293,10 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(apply).toHaveBeenCalledTimes(1);
     const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
 
-    const headings = Array.from(markdown.matchAll(/<details class="ability-group" open><summary>([^<]+)<\/summary>/g)).map((m) => m[1]);
+    const headings = Array.from(markdown.matchAll(/<details class="ability-group"[^>]*><summary[^>]*>([^<]+)<\/summary>/g)).map((m) => m[1]);
     expect(headings).toEqual(["Chimera", "Yuki-Onna", "Racial Flight", "Rogue", "Mage"]);
 
-    const idx = (heading: string) => markdown.indexOf(`<summary>${heading}</summary>`);
+    const idx = (heading: string) => markdown.indexOf(`>${heading}</summary>`);
     expect(markdown.slice(idx("Chimera"), idx("Yuki-Onna"))).toContain('data-chip-label="Fight or Flight"');
     expect(markdown.slice(idx("Yuki-Onna"), idx("Racial Flight"))).toContain('data-chip-label="Absorb Ice"');
     expect(markdown.slice(idx("Racial Flight"), idx("Rogue"))).toContain('data-chip-label="Flight"');

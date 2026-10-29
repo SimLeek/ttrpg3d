@@ -640,7 +640,16 @@ export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
     // `open` by default -- a freshly auto-populated group should be
     // visible immediately, collapsing is something the player opts
     // INTO afterward, not a default extra click to see anything at all.
-    groupBlocks.push(`\n\n<details class="ability-group" open><summary>${escapeHtml(group.heading)}</summary>${rows.join("")}</details>`);
+    // Real follow-up, same day: "missing the borders... which was
+    // helpful in seeing the organization" -- `<fieldset>` (the
+    // previous wrapper) gets a border for free from every browser's
+    // own default stylesheet; `<details>` does not, so it's given one
+    // inline here (this project has no project-wide CSS file at all --
+    // every other page-markdown widget already styles itself the same
+    // way, inline, rather than depending on one).
+    groupBlocks.push(
+      `\n\n<details class="ability-group" open style="border:1px solid rgba(150,150,150,0.5); border-radius:4px; padding:4px 10px 10px; margin:8px 0;"><summary style="font-weight:bold; cursor:pointer; padding:4px 0;">${escapeHtml(group.heading)}</summary>${rows.join("")}</details>`,
+    );
   }
 
   if (groupBlocks.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: groupBlocks.join("") }] });
