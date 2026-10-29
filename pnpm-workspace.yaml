@@ -19,3 +19,6 @@ allowBuilds:
 # in general) doesn't distinguish from an untrusted one. Disabled here,
 # scoped to this repo only, not globally.
 blockExoticSubdeps: false
+
+patchedDependencies:
+  '@colyseus/better-call': patches/@colyseus__better-call.patch
