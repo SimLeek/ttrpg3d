@@ -743,7 +743,7 @@ function coreMarkdown(injuryFlags: Readonly<Record<string, boolean>>): string {
 function weaponsTableMarkdown(): string {
   const rows = Array.from(
     { length: WEAPON_SLOT_COUNT },
-    (_, i) => `| {weapon${i + 1}Name} | {{focus}} | {{focus * 2}} | {weapon${i + 1}LightDamage} | {weapon${i + 1}HeavyDamage} |`,
+    (_, i) => `| {weapon${i + 1}Name} | {{{focus}}} | {{{focus} * 2}} | {weapon${i + 1}LightDamage} | {weapon${i + 1}HeavyDamage} |`,
   );
   return ["| Weapon | Light/Heavy Attack | Precise Attack | Light Damage | Heavy Damage |", "| --- | --- | --- | --- | --- |", ...rows].join("\n");
 }
@@ -821,7 +821,7 @@ function expeditionInventoryMarkdown(items: readonly { name: string; amount: num
     values[`expeditionItem${n}Amount`] = item.amount;
     values[`expeditionItem${n}Burden`] = item.burden;
     values[`expeditionItem${n}ClimCost`] = item.climCost;
-    return `| {expeditionItem${n}Name} | {expeditionItem${n}Amount} | {expeditionItem${n}Burden} | {expeditionItem${n}ClimCost} | {{expeditionItem${n}Amount * expeditionItem${n}ClimCost}} |`;
+    return `| {expeditionItem${n}Name} | {expeditionItem${n}Amount} | {expeditionItem${n}Burden} | {expeditionItem${n}ClimCost} | {{{expeditionItem${n}Amount} * {expeditionItem${n}ClimCost}}} |`;
   });
   const markdown = ["| Item | Amount | Burden | Clim Cost (Price of 1 Item) | Item Total Clim Value |", "| --- | --- | --- | --- | --- |", ...rows].join("\n");
   const burdenTotalExpression = items.map((_, i) => `{expeditionItem${i + 1}Burden}`).join(" + ");

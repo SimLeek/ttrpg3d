@@ -47,6 +47,21 @@ describe("GameRoom", () => {
     expect(message.senderName).toBe("Alice");
   });
 
+  it("real request, 2026-10-29 (chat parity round): \"the chat in the main game... should be exactly the same [as test chat]\" -- chatSend's optional html broadcasts to EVERY client, not just the sender", async () => {
+    const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
+    const sender = await colyseus.connectTo(room, { name: "Alice" });
+    const observer = await colyseus.connectTo(room, { name: "Bob" });
+
+    const received = new Promise<{ text: string; html?: string }>((resolve) => {
+      observer.onMessage("chatMessage", resolve);
+    });
+    sender.send("chatSend", { text: "evasion: 13", html: '<span class="roll-result">13</span>' });
+
+    const message = await received;
+    expect(message.text).toBe("evasion: 13");
+    expect(message.html).toBe('<span class="roll-result">13</span>');
+  });
+
   it("/roll <valid notation> broadcasts a resolved human-readable result to every client, not the raw notation", async () => {
     const room = await colyseus.createRoom<GameRoom>("game", { gameId: freshGameId() });
     const sender = await colyseus.connectTo(room, { name: "Alice" });

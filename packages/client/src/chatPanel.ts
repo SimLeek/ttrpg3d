@@ -61,6 +61,11 @@
 import type { ChatMessage, ModManifest, VisibleGameCharacterEntry } from "./api.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
 import { PERSISTENT_PANEL_Z_INDEX, SAFE_AREA_RIGHT_VAR, setSafeAreaInset } from "./panelLayout.js";
+import { appendChatLine } from "./chatMessageRendering.js";
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 640;
@@ -124,6 +129,17 @@ export interface ChatPanelController {
 
 function formatMessage(message: ChatMessage): string {
   return `${message.senderName}: ${message.text}`;
+}
+
+/**
+ * Real request, 2026-10-29: "the chat in the main game doesn't seem
+ * to allow the same tables and formatting as test chat and they
+ * should be exactly the same." The sender name is always plain text
+ * (escaped) in front of the richer `html`, same "name: rendering"
+ * shape `formatMessage` above already uses for the plain fallback.
+ */
+function formatMessageHtml(message: ChatMessage): string | undefined {
+  return message.html === undefined ? undefined : `${escapeHtml(message.senderName)}: ${message.html}`;
 }
 
 export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions): ChatPanelController {
@@ -460,15 +476,11 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   }
   applyWidth(DEFAULT_WIDTH);
 
-  function appendLine(text: string, className: string): void {
-    const line = document.createElement("div");
-    line.className = className;
-    line.textContent = text;
-    messagesEl.appendChild(line);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+  function appendLine(text: string, className: string, html?: string): void {
+    appendChatLine(messagesEl, text, className, html);
   }
 
-  for (const message of options.initialMessages) appendLine(formatMessage(message), "msg");
+  for (const message of options.initialMessages) appendLine(formatMessage(message), "msg", formatMessageHtml(message));
 
   function setFocused(focused: boolean): void {
     if (focused) requestCapture("chat");
@@ -560,7 +572,7 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
 
   return {
     addMessage(message) {
-      appendLine(formatMessage(message), "msg");
+      appendLine(formatMessage(message), "msg", formatMessageHtml(message));
     },
     showError(reason) {
       appendLine(reason, "err");

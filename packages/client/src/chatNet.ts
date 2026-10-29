@@ -18,8 +18,18 @@ export interface PresenceEntry {
 }
 
 export interface ChatConnection {
-  /** `asCharacterId` posts attributed to that character's name instead of this session's own account name -- server-validated (store.canAccountViewCharacter); silently falls back to the account name if omitted/invalid/unpermitted, never an error. */
-  send(text: string, asCharacterId?: string): void;
+  /**
+   * `asCharacterId` posts attributed to that character's name instead
+   * of this session's own account name -- server-validated
+   * (store.canAccountViewCharacter); silently falls back to the
+   * account name if omitted/invalid/unpermitted, never an error.
+   * `html` (real request, 2026-10-29) is the SAME richer rendering
+   * test chat's own `onPostToChat` already carries for a sheet click
+   * (a roll breakdown, an ability's info table) -- broadcast
+   * alongside `text` so every player in the game sees it too, not
+   * just whoever clicked.
+   */
+  send(text: string, asCharacterId?: string, html?: string): void;
   /** Subscribes to live new messages (NOT history -- fetch that via api.ts's fetchGameChat). Returns an unsubscribe function. */
   onMessage(cb: (msg: ChatMessage) => void): () => void;
   onError(cb: (reason: string) => void): () => void;
@@ -41,8 +51,8 @@ export async function connectChat(url: string, gameId: string, playerName: strin
   const room: Room = await client.joinOrCreate("game", { gameId, name: playerName, accountId, characterId: characterId ?? undefined });
 
   return {
-    send(text, asCharacterId) {
-      room.send("chatSend", { text, asCharacterId });
+    send(text, asCharacterId, html) {
+      room.send("chatSend", { text, asCharacterId, html });
     },
     onMessage(cb) {
       // room.onMessage itself already returns the unsubscribe function

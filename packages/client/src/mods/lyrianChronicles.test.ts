@@ -516,6 +516,6 @@ describe("addCombatLoadoutItem/addAdventurersKitItem/addAlchemyRigItem/addExpedi
       valueExpression: "({expeditionItem1Amount} * {expeditionItem1ClimCost})",
     });
     const newMarkdown = outcome.pageEdits![0].replaceMarkdown!;
-    expect(newMarkdown).toContain("{{expeditionItem1Amount * expeditionItem1ClimCost}}"); // the per-row live total, auto-calculated
+    expect(newMarkdown).toContain("{{{expeditionItem1Amount} * {expeditionItem1ClimCost}}}"); // the per-row live total, auto-calculated
   });
 });

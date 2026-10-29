@@ -55,6 +55,8 @@ export interface ChatMessage {
   id: number;
   senderName: string;
   text: string;
+  /** Real request, 2026-10-29: "the chat in the main game... should be exactly the same [as test chat]." Mirrors chatStorage.ts's own ChatMessage.html -- sanitized with DOMPurify before ever touching `innerHTML` (chatMessageRendering.ts), never trusted just because it arrived over the wire. */
+  html?: string;
   createdAt: number;
 }
 

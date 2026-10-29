@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./modLoader.js";
-import { evaluateCharacterSheetExpression, resolveVariableValue } from "@ttrpg3d/shared";
+import { evaluateCharacterSheetExpression, resolveVariableValue, findExpressionSegments } from "@ttrpg3d/shared";
 
 // Mirrors mods/lyrian-chronicles/entry.ts's own SKILLS list and
 // skillVariableId -- duplicated here (not imported) so these tests
@@ -631,6 +631,34 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(evaluateCharacterSheetExpression("{toughness} + {bonusSaveValue}", liveValues, false)).toEqual({ value: 11 });
     expect(evaluateCharacterSheetExpression("11 + {focus}", liveValues, false)).toEqual({ value: 14 });
     expect(evaluateCharacterSheetExpression("({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}", liveValues, false)).toEqual({ value: 5 });
+  });
+
+  it("real bugs, found live (2026-10-29, inventory round): the Inventory page's own Light/Heavy/Precise Attack and Item Total Clim Value {{}} segments are genuine `{variableId}` refs, not bare identifiers expr-eval can't resolve", async () => {
+    const realModsDir = join(process.cwd(), "mods");
+    const workbook = {
+      Core: [["Focus", 3]],
+      Inventory: [
+        ["Expedition Inventory", "Amount", "Burden", "Clim Cost (Price of 1 Item)"],
+        ["Shovel", 2, 1, 25],
+      ],
+    };
+    const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
+    const inventoryPage = result?.result.pages.find((p) => p.title === "Inventory");
+    expect(inventoryPage).toBeDefined();
+    const segments = findExpressionSegments(inventoryPage!.markdown);
+    const values = result?.result.variableValues ?? {};
+    // Every segment must resolve to a real number -- "undefined
+    // variable: focus"/"undefined variable: expeditionItem1Amount"
+    // (expr-eval's own error for a bare, un-substituted identifier) is
+    // exactly what a missing `{}` around the variable name produces.
+    for (const seg of segments) {
+      const evalResult = evaluateCharacterSheetExpression(seg.expression, values, false);
+      expect(evalResult.error).toBeUndefined();
+    }
+    // Specifically: weapon row 1's Light Attack is Focus (3), Precise is Focus*2 (6); the expedition item's own total is amount*cost (2*25=50).
+    expect(evaluateCharacterSheetExpression("{focus}", values, false)).toEqual({ value: 3 });
+    expect(evaluateCharacterSheetExpression("{focus} * 2", values, false)).toEqual({ value: 6 });
+    expect(evaluateCharacterSheetExpression("{expeditionItem1Amount} * {expeditionItem1ClimCost}", values, false)).toEqual({ value: 50 });
   });
 
   it("real request, 2026-10-26 (third pass -- skills rework) -- each skill's own governing substat (column F), Skill Points (column H), and Expertise (column I) are read by the skill's own name, one/three/four columns right respectively; Bonus becomes a LIVE valueExpression override (governing substat + skill points), not a frozen import snapshot", async () => {

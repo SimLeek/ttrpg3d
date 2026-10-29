@@ -14,20 +14,23 @@
 //
 // Real request, 2026-10-26: "Hopefully the chat supports some html
 // and alt text" -- "when moused over that special 22 should display
-// the formula behind it." This panel is the right place for it: it's
-// LOCAL-only (no other player ever sees it, unlike the real in-game
-// chat -- chatPanel.ts/GameRoom.ts -- which still only ever receives
-// plain text; giving THAT one the same tooltip/table treatment safely
-// for multiplayer is a real, separate follow-up, not done here).
-// `addMessage`'s own optional `html` is sanitized (DOMPurify) right
-// before insertion, same "ONE deliberate innerHTML-of-untrusted-
-// content spot" discipline characterSheetView.ts's own page rendering
-// already follows -- the PLAIN `text` form (used for every message
-// this panel ALREADY rendered before this feature, including the
-// compose box's own human-typed input) stays on the existing,
-// unconditionally-safe `textContent` path.
+// the formula behind it." `addMessage`'s own optional `html` is
+// sanitized (DOMPurify) right before insertion, same "ONE deliberate
+// innerHTML-of-untrusted-content spot" discipline characterSheetView.ts's
+// own page rendering already follows -- the PLAIN `text` form (used
+// for every message this panel ALREADY rendered before this feature,
+// including the compose box's own human-typed input) stays on the
+// existing, unconditionally-safe `textContent` path.
+//
+// Real correction, 2026-10-29: "the chat in the main game doesn't seem
+// to allow the same tables and formatting as test chat and they
+// should be exactly the same" -- the real in-game chat (chatPanel.ts/
+// GameRoom.ts) now carries the SAME `html` through, over the network,
+// to every player; this panel's own line-rendering (the part that
+// actually matters here) is `chatMessageRendering.ts`'s shared
+// `appendChatLine`, not a second copy of the same logic.
 
-import DOMPurify from "dompurify";
+import { appendChatLine } from "./chatMessageRendering.js";
 
 export interface TestChatPanelController {
   addMessage(text: string, html?: string): void;
@@ -67,12 +70,7 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
       messagesEl.innerHTML = "";
       hasMessages = true;
     }
-    const line = document.createElement("div");
-    line.className = "msg";
-    if (html !== undefined) line.innerHTML = DOMPurify.sanitize(html);
-    else line.textContent = text;
-    messagesEl.appendChild(line);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    appendChatLine(messagesEl, text, "msg", html);
   }
 
   function sendFromInput(): void {

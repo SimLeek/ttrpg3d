@@ -882,7 +882,7 @@ export const addExpeditionInventoryItem: ModActionFn = (ctx, apply) => {
   const n = nextItemIndex(ctx.defs, "expeditionItem", "Burden");
   const existingIndices = findRowIds(ctx.defs, "expeditionItem", "Burden").map(Number);
   const allIndices = [...existingIndices, n].sort((a, b) => a - b);
-  const rowMarkdown = `| {expeditionItem${n}Name} | {expeditionItem${n}Amount} | {expeditionItem${n}Burden} | {expeditionItem${n}ClimCost} | {{expeditionItem${n}Amount * expeditionItem${n}ClimCost}} |`;
+  const rowMarkdown = `| {expeditionItem${n}Name} | {expeditionItem${n}Amount} | {expeditionItem${n}Burden} | {expeditionItem${n}ClimCost} | {{{expeditionItem${n}Amount} * {expeditionItem${n}ClimCost}}} |`;
   const newMarkdown = insertRowInCollapsibleSection(
     inventoryPage.markdown,
     "Expedition Inventory",

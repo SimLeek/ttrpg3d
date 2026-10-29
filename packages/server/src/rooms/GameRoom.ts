@@ -52,6 +52,8 @@ interface ChatSendMessage {
   text: string;
   /** MVP goal item 4 follow-up ("characters" tab): "a player should be able to drop down and select what character they want to post as out of all the characters they have access to." Optional -- omitted/invalid/unpermitted falls back to the session's own account name, same "stale id, not a crash" spirit used everywhere else, never an error. */
   asCharacterId?: string;
+  /** Real request, 2026-10-29: "the chat in the main game doesn't seem to allow the same tables and formatting as test chat and they should be exactly the same" -- a character sheet click (a roll result, an ability's own info table) already computes this client-side; carried through verbatim (never touched/validated server-side beyond this) since every RECEIVING client sanitizes with DOMPurify before ever rendering it, the same trust boundary `text` itself already has. Never set for a typed `/roll` or `[[...]]` message -- those have no rich rendering of their own, only `text`. */
+  html?: string;
 }
 
 /**
@@ -122,13 +124,13 @@ export class GameRoom extends Room<{ state: GameStateType }> {
         return;
       }
 
-      this.persistAndBroadcast(senderName, resolveInlineRolls(text, variableValues));
+      this.persistAndBroadcast(senderName, resolveInlineRolls(text, variableValues), message.html);
     });
   }
 
-  private persistAndBroadcast(senderName: string, text: string): void {
-    const message = this.storage.append(senderName, text);
-    this.broadcast("chatMessage", message);
+  private persistAndBroadcast(senderName: string, text: string, html?: string): void {
+    const stored = this.storage.append(senderName, text, html);
+    this.broadcast("chatMessage", stored);
   }
 
   onJoin(client: Client, options?: JoinOptions) {

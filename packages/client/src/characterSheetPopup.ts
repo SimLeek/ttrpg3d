@@ -36,8 +36,8 @@ export interface CharacterSheetPopupOptions {
   httpUrl: string;
   gameId: string;
   viewerAccountId: string;
-  /** Sends through the already-open, real game chat connection (main.ts's runningChat.connection), attributed to this character. */
-  onPostToChat(characterId: string, text: string): void;
+  /** Sends through the already-open, real game chat connection (main.ts's runningChat.connection), attributed to this character. `html` (real request, 2026-10-29 -- "the chat in the main game... should be exactly the same [as test chat]") is the same richer rendering test chat's own onPostToChat already carries. */
+  onPostToChat(characterId: string, text: string, html?: string): void;
 }
 
 export interface CharacterSheetPopupController {
@@ -152,7 +152,7 @@ export function mountCharacterSheetPopup(container: HTMLElement, options: Charac
           // already-complete `value` text (characterSheetView.ts's own
           // single-part posting path) -- posted verbatim, no "-> "
           // wrapper, unlike a multi-part bundled action.
-          onPostToChat: (label, value) => options.onPostToChat(characterId, label ? `${label} -> ${value}` : value),
+          onPostToChat: (label, value, html) => options.onPostToChat(characterId, label ? `${label} -> ${value}` : value, html),
         });
       });
     },

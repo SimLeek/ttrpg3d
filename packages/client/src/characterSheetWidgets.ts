@@ -44,8 +44,20 @@ import { xOfYMaxKey, resolveVariableValue, type CharacterSheetVariableDef } from
 export type VariableValueMap = Readonly<Record<string, number | string>>;
 export type VariableDefList = readonly CharacterSheetVariableDef[];
 
+/**
+ * Real request, 2026-10-29 (inventory round): a weapon name straight
+ * off the real sheet (e.g. "Set of Missiles (One-Handed\n") can carry
+ * a literal trailing newline -- left as a raw byte inside an
+ * attribute value, it breaks the ONE-LINE markdown table row this
+ * widget usually sits in (confirmed: the whole `<input>` rendered as
+ * literal escaped text instead of a real widget). `&#10;` has no
+ * literal newline BYTE in the markdown source, so it can never do
+ * that; the browser decodes it back to a real `\n` once parsed, same
+ * entity-encoding fix the Abilities page's own chat-chip values
+ * already use for a multi-paragraph description.
+ */
 function escapeAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "&#10;");
 }
 
 function asNumber(value: number | string | undefined, fallback: number): number {

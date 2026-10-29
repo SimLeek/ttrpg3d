@@ -92,6 +92,6 @@ export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl:
     // "label: value" text with an empty `label` arg (characterSheetView.ts's
     // own single-part posting path) -- shown verbatim, no "-> " wrapper,
     // unlike a multi-part bundled action (e.g. "Light Attack -> atk: 24, damage: 12").
-    onPostToChat: (label, value) => connection.send(label ? `${label} -> ${value}` : value, characterId),
+    onPostToChat: (label, value, html) => connection.send(label ? `${label} -> ${value}` : value, characterId, html),
   });
 }

@@ -53,6 +53,16 @@ describe("per-game chat storage (node:sqlite-backed, pure logic -- real unit tes
     other.close();
   });
 
+  it("real request, 2026-10-29 (chat parity round): append()'s optional html persists and round-trips through recent()/before(), a message with none omits it entirely (never a stray null)", () => {
+    const withHtml = storage.append("A", "evasion: 13", '<span class="roll-result">13</span>');
+    expect(withHtml.html).toBe('<span class="roll-result">13</span>');
+    storage.append("A", "plain message"); // no html arg at all
+
+    const recent = storage.recent(50);
+    expect(recent[0]).toEqual({ id: recent[0].id, senderName: "A", text: "evasion: 13", html: '<span class="roll-result">13</span>', createdAt: recent[0].createdAt });
+    expect(recent[1].html).toBeUndefined();
+  });
+
   it("persists to the actual file across separate createChatStorage calls", () => {
     // Deliberately a separate open/close pair, not the shared `storage`
     // from beforeEach -- same reasoning as storage.test.ts's own

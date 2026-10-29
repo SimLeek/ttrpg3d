@@ -263,3 +263,12 @@ describe("wireVariableWidgets with an <input type=checkbox> (real request, 2026-
     expect(changed).toEqual(["armor1Equipped", 0]);
   });
 });
+
+describe("a text value with a real newline (real request, 2026-10-29 -- a weapon name straight off the real sheet, e.g. \"Set of Missiles (One-Handed\\n\", broke the whole widget into literal escaped text)", () => {
+  it("encodes a literal \\n as the &#10; entity, never a raw newline byte, so the one-line markdown table row it sits in survives intact", () => {
+    const def: CharacterSheetVariableDef = { id: "weapon2Name", label: "Weapon 2", type: "text", default: "" };
+    const html = buildVariableComponentHtml(def, { weapon2Name: "Set of Missiles (One-Handed\n" }, "x", [def]);
+    expect(html).not.toContain("\n"); // no raw newline byte anywhere in the generated HTML string
+    expect(html).toContain("&#10;");
+  });
+});

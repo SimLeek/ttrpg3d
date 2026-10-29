@@ -61,6 +61,17 @@ describe("mountChatPanel", () => {
     expect(text).toContain("Bob: second");
   });
 
+  it("real request, 2026-10-29 (chat parity round): \"the chat in the main game... should be exactly the same [as test chat]\" -- a message carrying html renders it (sanitized), prefixed with the plain sender name; one without still renders as plain text", () => {
+    const panel = mount({ initialMessages: [], onSend: vi.fn() });
+    panel.addMessage({ id: 1, senderName: "Alice", text: "evasion: 13", html: '<span class="roll-result">13</span>', createdAt: 0 });
+    panel.addMessage(msg("Bob", "plain message", 2));
+
+    const messagesEl = container.querySelector(".chat-messages")!;
+    expect(messagesEl.querySelector(".roll-result")?.textContent).toBe("13"); // the rich span survived DOMPurify
+    expect(messagesEl.textContent).toContain("Alice: "); // sender name still shown plainly in front of it
+    expect(messagesEl.textContent).toContain("Bob: plain message"); // no html -- unaffected, same as before this feature
+  });
+
   it("showError renders the reason as its own line", () => {
     const panel = mount({ initialMessages: [], onSend: vi.fn() });
     panel.showError("invalid dice notation: garbage");
