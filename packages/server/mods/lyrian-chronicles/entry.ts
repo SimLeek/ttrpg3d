@@ -286,13 +286,19 @@ const skillsPage: CharacterSheetPageDef = {
  * only its CONTENT does" reasoning every other fixed page already
  * follows.
  *
- * `addAbility`/`autoPopulateAbilities` (packages/client/src/mods/
- * lyrianChronicles.ts) each append their own new ability rows
- * directly onto THIS page's own markdown by title match
+ * `addAbility`/`addCustomAbility`/`autoPopulateAbilities` (packages/
+ * client/src/mods/lyrianChronicles.ts) each append their own new
+ * ability rows directly onto THIS page's own markdown by title match
  * (characterSheetView.ts's generic mod-action handler, `pageEdits`)
  * -- there is no per-character variable involved at all (see that
  * file's own "Abilities round" header for why a long, punctuation-
- * heavy description can't safely be one).
+ * heavy description can't safely be one). Real request, 2026-10-29:
+ * "both already existing abilities as well as custom should be able
+ * to be added" -- "Add Ability" (searches the real rulebook catalog)
+ * and "Add Custom Ability" (a blank, obviously-placeholder template,
+ * meant to be hand-edited afterward via this page's own EXISTING
+ * Edit-mode button) are two SEPARATE, equally-available buttons, not
+ * one replacing the other.
  */
 const abilitiesPage: CharacterSheetPageDef = {
   title: "Abilities",
@@ -304,6 +310,7 @@ const abilitiesPage: CharacterSheetPageDef = {
     "# Abilities",
     "",
     '<button type="button" data-mod-action="lyrian-chronicles.addAbility">Add Ability</button>',
+    '<button type="button" data-mod-action="lyrian-chronicles.addCustomAbility">Add Custom Ability</button>',
     '<button type="button" data-mod-action="lyrian-chronicles.autoPopulateAbilities">Auto-Populate from Traits</button>',
   ].join("\n"),
   variableIds: [],

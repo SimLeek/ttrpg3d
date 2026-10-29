@@ -346,6 +346,29 @@ export const addAbility: ModActionFn = async (ctx, apply) => {
   });
 };
 
+/**
+ * Real request, 2026-10-29: "let's add a similar thing like the add
+ * class/breakthrough thing to abilities so that the user can add
+ * abilities. In this case the ability should still be fixed text but
+ * they should be able to edit it using the edit button to edit the
+ * markdown itself but adding a custom ability should give a template
+ * that makes that much easier." No catalog, no popup, nothing async
+ * -- just appends ONE fresh `abilityRowHtml` template (same SHAPE
+ * every real ability already uses -- a `.chat-chip` name button + a
+ * `<details>` disclosure) with an obviously-placeholder name and
+ * description, for the session to then hand-edit via the Abilities
+ * page's own EXISTING Edit-mode button (renderEditMode's raw-markdown
+ * textarea, characterSheetView.ts -- already works for any page,
+ * nothing new needed there) into whatever homebrew/GM-given ability
+ * they actually want -- never routed through `abilityAlreadyListed`
+ * (a placeholder name isn't a REAL ability to dedupe against; a
+ * second click adds a SECOND blank template, for a second custom
+ * ability, which is the point).
+ */
+export const addCustomAbility: ModActionFn = (_ctx, apply) => {
+  apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: abilityRowHtml("New Custom Ability", "Describe what this ability does here. Edit this row directly with the page's own Edit button to replace this placeholder name and description with your own.") }] });
+};
+
 /** Self-contained search popup -- mounts/removes itself directly against `document.body`, same pattern measurementShapes.ts's own right-click context menu already uses. `onAdd` fires once per "Add" click; the popup stays open afterward (same session may want to add several abilities in a row) and only closes via its own ✕/outside-click/Escape. */
 function mountAbilitySearchPopup(catalog: readonly AbilityCatalogEntry[], onAdd: (entry: AbilityCatalogEntry) => void): void {
   const overlay = document.createElement("div");

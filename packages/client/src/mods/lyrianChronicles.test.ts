@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { recalculateTraitsCosts, addAbility, autoPopulateAbilities, addClass, addBreakthrough } from "./lyrianChronicles.js";
+import { recalculateTraitsCosts, addAbility, addCustomAbility, autoPopulateAbilities, addClass, addBreakthrough } from "./lyrianChronicles.js";
 import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
 import type { ModActionContext, ModActionOutcome } from "../modActions.js";
 
@@ -171,6 +171,28 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     document.body.querySelector<HTMLButtonElement>("#ability-search-close")!.click();
     expect(apply).not.toHaveBeenCalled();
     expect(document.body.querySelector("#ability-search-input")).toBeNull();
+  });
+
+  it("real request, 2026-10-29 -- \"both already existing abilities as well as custom should be able to be added\": addCustomAbility is synchronous (no popup, no catalog fetch at all) and appends ONE obviously-placeholder template row immediately", () => {
+    const apply = vi.fn();
+    addCustomAbility(baseCtx(), apply);
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    const outcome: ModActionOutcome = apply.mock.calls[0][0];
+    expect(outcome.variableValues).toBeUndefined();
+    expect(outcome.variables).toBeUndefined();
+    expect(outcome.pageEdits).toHaveLength(1);
+    expect(outcome.pageEdits![0].pageTitle).toBe("Abilities");
+    expect(outcome.pageEdits![0].appendMarkdown).toContain('data-chip-label="New Custom Ability"');
+    expect(outcome.pageEdits![0].appendMarkdown).toContain("Edit this row directly with the page's own Edit button");
+    expect(outcome.pageEdits![0].appendMarkdown).toContain("<details>");
+  });
+
+  it("clicking Add Custom Ability twice appends TWO independent template rows, never deduped (each is meant to become a DIFFERENT custom ability)", () => {
+    const apply = vi.fn();
+    addCustomAbility(baseCtx(), apply);
+    addCustomAbility(baseCtx(), apply);
+    expect(apply).toHaveBeenCalledTimes(2);
   });
 
   it("real request, 2026-10-28 -- autoPopulateAbilities adds every ability linked to a race/class/breakthrough the character actually has, gated by class LEVEL where the link specifies one", async () => {
