@@ -590,6 +590,88 @@ function asText(value: Cell | undefined, fallback: string): string {
   return fallback;
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * Real request, 2026-10-28: "each class should be a dropdown with the
+ * specific class selected, each breakthrough the same, same with race
+ * and sub-race" -- race/sub-race become real `<select>` dropdowns
+ * (baked directly into the Traits page's own markdown at import time,
+ * same "literal HTML a mod bakes in" precedent the Abilities page's
+ * own rows already use) instead of a free-text box, since both are
+ * fixed, known lists (confirmed directly off the real sheet's own
+ * hidden "Races" tab). `data-var-key` is the SAME attribute
+ * `wireVariableWidgets` (characterSheetWidgets.ts) already wires on
+ * any input -- generalized to also recognize a `<select>` the same
+ * way as a plain text box, so picking a new option here saves exactly
+ * like any other edit, no new mechanism needed beyond that one-line
+ * fix.
+ */
+function selectHtml(varKey: string, options: readonly string[], current: string): string {
+  const opts = options.map((o) => `<option value="${escapeHtml(o)}"${o === current ? " selected" : ""}>${escapeHtml(o)}</option>`).join("");
+  return `<select data-var-key="${varKey}">${opts}</select>`;
+}
+
+/** Real request, 2026-10-28: "the description of on the draw... should just be text only opened by an i button, since that text is not editable." A plain native disclosure -- zero JS, confirmed to survive DOMPurify sanitization live (characterSheetView.test.ts). */
+function detailsHtml(text: string): string {
+  const safe = escapeHtml(text).replace(/\n/g, "<br>");
+  return `<details><summary>ℹ</summary>${safe}</details>`;
+}
+
+/** The real sheet's own 5 races (Core tab's own "Race" dropdown source, confirmed directly off the hidden "Races" tab) -- a fixed, essentially-never-changing list, same tier as SKILLS above. */
+const RACES = ["Chimera", "Demon", "Fae", "Human", "Youkai"];
+
+/** The real sheet's own 45 sub-races/houses, same source and tier as RACES above. */
+const SUB_RACES = [
+  "Ancient Marionette",
+  "Anubis",
+  "Bearfolk",
+  "Bullfolk",
+  "Cait Sith",
+  "Catfolk",
+  "Centaur",
+  "Cowfolk",
+  "Cu Sith",
+  "Dogfolk",
+  "Dryad",
+  "Dullahan",
+  "Gnome",
+  "Harpy",
+  "High Fae",
+  "Horse-Folk",
+  "Jiangshi",
+  "Kitsune",
+  "Lamiafolk",
+  "Lizardfolk",
+  "Mothfolk",
+  "Nekomata",
+  "Nio",
+  "Oni",
+  "Phoenix",
+  "Pigfolk",
+  "Pixie",
+  "Rabbitfolk",
+  "Raijin",
+  "Ratfolk",
+  "Red Pandafolk",
+  "Ryujin",
+  "Salamander",
+  "Selkie",
+  "Sheepfolk",
+  "Slimefolk",
+  "Spiderfolk",
+  "Suryan",
+  "Sylph",
+  "Tengu",
+  "Unseelie",
+  "Willo Wisp",
+  "Wolf-folk",
+  "Yuki-Onna",
+  "VAMPIRE",
+];
+
 /**
  * The real sheet's own "Crafting Skill" table (Core tab, column M,
  * same 21-row span the fixed Skill list -- SKILLS above -- occupies
@@ -855,14 +937,23 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
     classValues[`${id}Cost`] = cls.cost;
   }
 
+  // Real request, 2026-10-28: "the description of on the draw (and
+  // every breakthrough) seems to be a text edit when it should just
+  // be text only opened by an i button, since that text is not
+  // editable." A breakthrough's own Description is reference text, a
+  // player never edits it after import -- same tier as an ability's
+  // own description (see this file's own header note on why THAT one
+  // isn't a variable either). Baked directly into the row's own
+  // markdown via `detailsHtml` below instead of a `<id>Description`
+  // variable -- no editable text box, no per-character storage for
+  // something nobody ever changes.
   const breakthroughs = findBreakthroughs(workbook);
   const breakthroughVariables: CharacterSheetVariableDef[] = [];
   const breakthroughValues: Record<string, number | string> = {};
   for (const bt of breakthroughs) {
     const id = breakthroughVariableId(bt.name);
-    breakthroughVariables.push({ id: `${id}Cost`, label: `${bt.name} Cost`, type: "number", default: 0 }, { id: `${id}Description`, label: `${bt.name} Description`, type: "text", default: "" });
+    breakthroughVariables.push({ id: `${id}Cost`, label: `${bt.name} Cost`, type: "number", default: 0 });
     breakthroughValues[`${id}Cost`] = bt.cost;
-    breakthroughValues[`${id}Description`] = bt.description;
   }
 
   const traitsPage: CharacterSheetPageDef = {
@@ -874,7 +965,7 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       "",
       "| Race | Sub-Race |",
       "| --- | --- |",
-      "| {race} | {subRace} |",
+      `| ${selectHtml("race", RACES, race)} | ${selectHtml("subRace", SUB_RACES, subRace)} |`,
       "",
       "## Currency",
       "",
@@ -882,11 +973,19 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       "| --- | --- |",
       "| {totalExp} | {spiritCore} |",
       "",
-      "Recomputes every class's own Cost (tier's first level costs tier × 100, every level after costs 100) and every breakthrough's own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.",
-      "",
-      '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts">Auto-Calculate Costs</button>',
+      // Real request, 2026-10-28: "the 'Recomputes every class's own
+      // Cost' text above 'auto-calculate costs' should just be the
+      // alt text on the 'auto-calculate costs' button" -- a `title`
+      // attribute (the real "alt text" for a button -- shown on
+      // hover), not its own separate paragraph.
+      '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts" title="Recomputes every class’s own Cost (tier’s first level costs tier × 100, every level after costs 100) and every breakthrough’s own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.">Auto-Calculate Costs</button>',
       "",
       "## Classes",
+      "",
+      // Real request, 2026-10-28: "the classes didn't have a method to
+      // add classes or breakthroughs, which should be done from a +
+      // button to add a line and a dropdown to select the thing."
+      '<button type="button" data-mod-action="lyrian-chronicles.addClass">+ Add Class</button>',
       "",
       classes.length === 0
         ? "No classes."
@@ -901,6 +1000,8 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       "",
       "## Breakthroughs",
       "",
+      '<button type="button" data-mod-action="lyrian-chronicles.addBreakthrough">+ Add Breakthrough</button>',
+      "",
       breakthroughs.length === 0
         ? "No breakthroughs."
         : [
@@ -908,7 +1009,7 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
             "| --- | --- | --- |",
             ...breakthroughs.map((bt) => {
               const id = breakthroughVariableId(bt.name);
-              return `| ${bt.name} | {${id}Cost} | {${id}Description} |`;
+              return `| ${bt.name} | {${id}Cost} | ${detailsHtml(bt.description)} |`;
             }),
           ].join("\n"),
     ].join("\n"),

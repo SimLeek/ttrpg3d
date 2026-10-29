@@ -233,3 +233,16 @@ describe("buildVariableChipHtml (round 4/5 -- {variableId:button}, one value at 
     expect(html).toContain('data-chip-value="12"');
   });
 });
+
+describe("wireVariableWidgets with a <select> (real request, 2026-10-28 -- \"each class should be a dropdown with the specific class selected, each breakthrough the same, same with race and sub-race\")", () => {
+  it("treats a <select data-var-key> the SAME as a text input -- a plain string value, never coerced toward a number (a <select>'s own .type is 'select-one', never 'text')", () => {
+    container.innerHTML = '<select data-var-key="race"><option value="Chimera">Chimera</option><option value="Human" selected>Human</option></select>';
+    let changed: [string, number | string] | undefined;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+
+    const select = container.querySelector<HTMLSelectElement>("select")!;
+    select.value = "Chimera";
+    select.dispatchEvent(new Event("change"));
+    expect(changed).toEqual(["race", "Chimera"]); // NOT 0 -- the real bug this fix targets
+  });
+});

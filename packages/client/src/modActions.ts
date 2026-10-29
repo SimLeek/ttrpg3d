@@ -37,7 +37,7 @@
 // `libraries` are already shared verbatim across every caller.
 
 import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
-import { recalculateTraitsCosts, addAbility, autoPopulateAbilities } from "./mods/lyrianChronicles.js";
+import { recalculateTraitsCosts, addAbility, autoPopulateAbilities, addClass, addBreakthrough } from "./mods/lyrianChronicles.js";
 
 /**
  * Everything an action needs to decide what to do -- a snapshot, not
@@ -59,11 +59,29 @@ export interface ModActionContext {
   accountId: string;
 }
 
-/** What an action hands back to actually commit -- merged into the character's own sheet by characterSheetView.ts's own generic handler (same merge-by-id `variables` logic server.ts's own import endpoint already uses for `pageEdits`'s sibling, just append-only for markdown instead of overwrite-by-id). */
+/**
+ * What an action hands back to actually commit -- merged into the
+ * character's own sheet by characterSheetView.ts's own generic
+ * handler (same merge-by-id `variables` logic server.ts's own import
+ * endpoint already uses).
+ *
+ * A page edit is either `appendMarkdown` (added to the END of that
+ * page's own CURRENT markdown -- fine for the Abilities page, where
+ * every new row is independent, order doesn't matter) or
+ * `replaceMarkdown` (the action's own FULL replacement for that
+ * page's markdown). Real request, 2026-10-28: "+ Add Class"/"+ Add
+ * Breakthrough" need the latter -- a new row has to land INSIDE an
+ * existing markdown TABLE (a table is a contiguous block; a bare row
+ * appended at the very end of the whole PAGE would land after later
+ * sections too, and wouldn't even render as part of the table at
+ * all), so the action itself reads the page's CURRENT markdown
+ * (`ModActionContext.pages`) and does the string surgery, handing
+ * back the complete result rather than a fragment.
+ */
 export interface ModActionOutcome {
   variableValues?: Record<string, number | string>;
   variables?: CharacterSheetVariableDef[];
-  pageEdits?: { pageTitle: string; appendMarkdown: string }[];
+  pageEdits?: { pageTitle: string; appendMarkdown?: string; replaceMarkdown?: string }[];
 }
 
 export type ModActionFn = (ctx: ModActionContext, apply: (outcome: ModActionOutcome) => void) => void | Promise<void>;
@@ -73,5 +91,7 @@ export const MOD_ACTIONS: Readonly<Record<string, Readonly<Record<string, ModAct
     recalculateTraitsCosts,
     addAbility,
     autoPopulateAbilities,
+    addClass,
+    addBreakthrough,
   },
 };

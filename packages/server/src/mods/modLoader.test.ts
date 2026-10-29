@@ -38,6 +38,65 @@ const EMPTY_CRAFTING_PAGE = { title: "Crafting", markdown: "# Crafting\n\nNo cra
 // Race/Sub-Race/Total EXP Earned/Spirit Core fields, always present
 // in variableValues regardless of whether the fixture's own workbook
 // defines them.
+// Mirrors entry.ts's own RACES/SUB_RACES/selectHtml -- duplicated
+// here (not imported), same "tests stay independent of that file's
+// own internals" spirit the SKILLS/skillVariableId mirrors above
+// already follow.
+const RACES = ["Chimera", "Demon", "Fae", "Human", "Youkai"];
+const SUB_RACES = [
+  "Ancient Marionette",
+  "Anubis",
+  "Bearfolk",
+  "Bullfolk",
+  "Cait Sith",
+  "Catfolk",
+  "Centaur",
+  "Cowfolk",
+  "Cu Sith",
+  "Dogfolk",
+  "Dryad",
+  "Dullahan",
+  "Gnome",
+  "Harpy",
+  "High Fae",
+  "Horse-Folk",
+  "Jiangshi",
+  "Kitsune",
+  "Lamiafolk",
+  "Lizardfolk",
+  "Mothfolk",
+  "Nekomata",
+  "Nio",
+  "Oni",
+  "Phoenix",
+  "Pigfolk",
+  "Pixie",
+  "Rabbitfolk",
+  "Raijin",
+  "Ratfolk",
+  "Red Pandafolk",
+  "Ryujin",
+  "Salamander",
+  "Selkie",
+  "Sheepfolk",
+  "Slimefolk",
+  "Spiderfolk",
+  "Suryan",
+  "Sylph",
+  "Tengu",
+  "Unseelie",
+  "Willo Wisp",
+  "Wolf-folk",
+  "Yuki-Onna",
+  "VAMPIRE",
+];
+function selectHtml(varKey: string, options: readonly string[], current: string): string {
+  const opts = options.map((o) => `<option value="${o}"${o === current ? " selected" : ""}>${o}</option>`).join("");
+  return `<select data-var-key="${varKey}">${opts}</select>`;
+}
+const AUTO_CALCULATE_TITLE =
+  "Recomputes every class’s own Cost (tier’s first level costs tier × 100, every level after costs 100) and every breakthrough’s own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.";
+
 const EMPTY_TRAITS_FIELDS = { race: "", subRace: "", totalExp: 0, spiritCore: 0 };
 const EMPTY_TRAITS_PAGE = {
   title: "Traits",
@@ -48,7 +107,7 @@ const EMPTY_TRAITS_PAGE = {
     "",
     "| Race | Sub-Race |",
     "| --- | --- |",
-    "| {race} | {subRace} |",
+    `| ${selectHtml("race", RACES, "")} | ${selectHtml("subRace", SUB_RACES, "")} |`,
     "",
     "## Currency",
     "",
@@ -56,15 +115,17 @@ const EMPTY_TRAITS_PAGE = {
     "| --- | --- |",
     "| {totalExp} | {spiritCore} |",
     "",
-    "Recomputes every class's own Cost (tier's first level costs tier × 100, every level after costs 100) and every breakthrough's own Cost (already-free breakthroughs stay free; every other one gets its real cost from the rulebook), then Spirit Core from those.",
-    "",
-    '<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts">Auto-Calculate Costs</button>',
+    `<button type="button" data-mod-action="lyrian-chronicles.recalculateTraitsCosts" title="${AUTO_CALCULATE_TITLE}">Auto-Calculate Costs</button>`,
     "",
     "## Classes",
+    "",
+    '<button type="button" data-mod-action="lyrian-chronicles.addClass">+ Add Class</button>',
     "",
     "No classes.",
     "",
     "## Breakthroughs",
+    "",
+    '<button type="button" data-mod-action="lyrian-chronicles.addBreakthrough">+ Add Breakthrough</button>',
     "",
     "No breakthroughs.",
   ].join("\n"),
@@ -602,7 +663,7 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(page?.markdown).toContain("| Starcaller | {classStarcallerTier} | {classStarcallerLevel} | {classStarcallerCost} |");
   });
 
-  it("real request, 2026-10-26 (traits & abilities round) -- the character's own 'Breakthrough' tab (singular -- distinct from the game's own hidden 'Breakthroughs' rulebook tab, never available to this importer) imports Cost verbatim from 'XP Spent' and Description, by name", async () => {
+  it("real request, 2026-10-26 (traits & abilities round) -- the character's own 'Breakthrough' tab (singular -- distinct from the game's own hidden 'Breakthroughs' rulebook tab, never available to this importer) imports Cost verbatim from 'XP Spent', by name", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const workbook = {
       Core: [],
@@ -616,13 +677,15 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
     const values = result?.result.variableValues ?? {};
     expect(values.breakthroughOnTheDrawCost).toBe(0);
-    expect(values.breakthroughOnTheDrawDescription).toBe("You gain +1 to your initiative.");
     expect(values.breakthroughLightSleeperCost).toBe(999);
-    expect(values.breakthroughLightSleeperDescription).toBe("When asleep, you may roll Perception rolls as if you were awake.");
 
+    // Real request, 2026-10-28: Description is NOT a variable at all
+    // (it's reference text a player never edits) -- baked directly
+    // into the row's own markdown as a plain `<details>` disclosure.
+    expect(values.breakthroughOnTheDrawDescription).toBeUndefined();
     const page = result?.result.pages.find((p) => p.title === "Traits");
-    expect(page?.markdown).toContain("| On the draw | {breakthroughOnTheDrawCost} | {breakthroughOnTheDrawDescription} |");
-    expect(page?.markdown).toContain("| Light Sleeper | {breakthroughLightSleeperCost} | {breakthroughLightSleeperDescription} |");
+    expect(page?.markdown).toContain("| On the draw | {breakthroughOnTheDrawCost} | <details><summary>ℹ</summary>You gain +1 to your initiative.</details> |");
+    expect(page?.markdown).toContain("| Light Sleeper | {breakthroughLightSleeperCost} | <details><summary>ℹ</summary>When asleep, you may roll Perception rolls as if you were awake.</details> |");
   });
 
   it("a breakthrough/class name with parentheses, apostrophes, or commas still produces a valid {variableId} (sanitized, unlike skill names which never need it)", async () => {

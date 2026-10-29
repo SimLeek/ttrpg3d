@@ -316,7 +316,9 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
         }
         for (const edit of outcome.pageEdits ?? []) {
           const target = character.customSheet!.pages.find((p) => p.title === edit.pageTitle);
-          if (target) target.markdown += edit.appendMarkdown;
+          if (!target) continue;
+          if (edit.replaceMarkdown !== undefined) target.markdown = edit.replaceMarkdown;
+          else if (edit.appendMarkdown !== undefined) target.markdown += edit.appendMarkdown;
         }
         saveSheet();
         // Re-render THIS page immediately -- unlike a plain variable
@@ -329,7 +331,21 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
         hostEl.innerHTML = "";
         renderViewMode(page, hostEl);
       };
-      void action({ variableValues: effectiveVariableValues(), defs: allVariableDefs(), pages: character.customSheet!.pages, httpUrl, accountId: sheetOwnerAccountId }, apply);
+      // Real request, 2026-10-28: "auto-populate... did nothing when
+      // clicked" -- a thrown/rejected action (e.g. its own fetch
+      // failing) used to fail completely silently, an unhandled
+      // promise rejection visible only in devtools. Surfaced directly
+      // on the button itself instead, same "Error: ..." convention a
+      // dice-roll-chip already uses, so a real failure is at least
+      // VISIBLE instead of looking identical to "nothing qualified."
+      const originalText = actionBtn.textContent;
+      Promise.resolve(action({ variableValues: effectiveVariableValues(), defs: allVariableDefs(), pages: character.customSheet!.pages, httpUrl, accountId: sheetOwnerAccountId }, apply)).catch((err: unknown) => {
+        console.error(`mod action ${modId}.${actionName} failed:`, err);
+        actionBtn.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        setTimeout(() => {
+          actionBtn.textContent = originalText;
+        }, 4000);
+      });
     });
 
     // Real correction, 2026-10-26: a `[dice-roll-chip]` is a GENUINE

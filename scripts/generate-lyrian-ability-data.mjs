@@ -44,7 +44,7 @@
 // no auto-grant source -- kept in the catalog, just never linked.
 
 import XLSX from "xlsx";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -169,9 +169,116 @@ function buildAbilityCatalog() {
   return catalog;
 }
 
+// ---- 3. Reference lists for the "+ Add Class"/"+ Add Breakthrough" dropdowns ----
+//
+// Real request, 2026-10-28: "the classes didn't have a method to add
+// classes or breakthroughs, which should be done from a + button to
+// add a line and a dropdown to select the thing." Read from the real
+// sheet's own hidden "Classes"/"Breakthroughs" tabs (the game's own
+// rulebook list, same tier as the ability catalog above) -- small
+// enough (185 + 89 names) to bundle directly into the client file
+// alongside ABILITY_LINKS.
+
+function buildClassList() {
+  const rows = sheetRows(SHEET_XLSX, "Classes");
+  const classes = [];
+  for (let r = 1; r < rows.length; r++) {
+    const name = asText(rows[r]?.[0]);
+    if (name === "") continue;
+    const tierMatch = /(\d+)/.exec(asText(rows[r]?.[1]));
+    classes.push({ name, tier: tierMatch ? Number(tierMatch[1]) : 1 });
+  }
+  console.log(`classes: ${rows.length - 1} raw rows -> ${classes.length} real entries`);
+  return classes;
+}
+
+function buildBreakthroughList() {
+  const rows = sheetRows(SHEET_XLSX, "Breakthroughs");
+  const breakthroughs = [];
+  for (let r = 1; r < rows.length; r++) {
+    const name = asText(rows[r]?.[0]);
+    if (name === "") continue;
+    breakthroughs.push({ name, description: asText(rows[r]?.[3]) });
+  }
+  console.log(`breakthroughs: ${rows.length - 1} raw rows -> ${breakthroughs.length} real entries`);
+  return breakthroughs;
+}
+
+// Real request, 2026-10-28: race/sub-race become dropdowns too, baked
+// server-side at import time (packages/server/mods/lyrian-chronicles/
+// entry.ts) -- small enough (5 + 45 names) that this script just
+// PRINTS them, same "a script helps produce it, a human pastes the
+// literal array once" precedent the original BREAKTHROUGH_COST_BY_ID
+// table used -- not worth a fragile auto-patch of entry.ts's own
+// source for a list this size that essentially never changes.
+function buildRaceLists() {
+  const rows = sheetRows(SHEET_XLSX, "Races");
+  const races = [];
+  const subRaces = [];
+  for (let r = 1; r < rows.length; r++) {
+    const race = asText(rows[r]?.[0]);
+    if (race !== "") races.push(race);
+    const subRace = asText(rows[r]?.[1]);
+    if (subRace !== "") subRaces.push(subRace);
+  }
+  return { races, subRaces };
+}
+
+function appendReferenceLists(classes, breakthroughs) {
+  const classLines = classes
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => `  { name: ${JSON.stringify(c.name)}, tier: ${c.tier} },`);
+  const breakthroughLines = breakthroughs
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((b) => `  { name: ${JSON.stringify(b.name)}, description: ${JSON.stringify(b.description)} },`);
+  const addition = `
+/**
+ * Real request, 2026-10-28: "a + button to add a line and a dropdown
+ * to select the thing" -- the FULL class/breakthrough lists (read off
+ * the real sheet's own hidden "Classes"/"Breakthroughs" tabs), for
+ * the "+ Add Class"/"+ Add Breakthrough" popups below. Tier is known
+ * per-class here too, so a newly-added class can seed its own correct
+ * Tier (and therefore Cost) immediately, the same way the real
+ * importer already does for an IMPORTED class; a breakthrough's own
+ * Description likewise, so a freshly-added one gets a real info
+ * disclosure instead of a blank one.
+ */
+export interface LyrianClass {
+  name: string;
+  tier: number;
+}
+
+export const LYRIAN_CLASSES: readonly LyrianClass[] = [
+${classLines.join("\n")}
+];
+
+export interface LyrianBreakthrough {
+  name: string;
+  description: string;
+}
+
+export const LYRIAN_BREAKTHROUGHS: readonly LyrianBreakthrough[] = [
+${breakthroughLines.join("\n")}
+];
+`;
+  writeFileSync(LINKS_OUTPUT, readFileSync(LINKS_OUTPUT, "utf-8") + addition);
+  console.log(`appended LYRIAN_CLASSES (${classes.length}) and LYRIAN_BREAKTHROUGHS (${breakthroughs.length}) to ${LINKS_OUTPUT}`);
+}
+
 const links = buildAbilityLinks();
 writeAbilityLinksModule(links);
 
 const catalog = buildAbilityCatalog();
 writeFileSync(CATALOG_OUTPUT, JSON.stringify(catalog, null, 2));
 console.log(`wrote ${CATALOG_OUTPUT} (${catalog.length} entries)`);
+
+const classes = buildClassList();
+const breakthroughList = buildBreakthroughList();
+appendReferenceLists(classes, breakthroughList);
+
+const { races, subRaces } = buildRaceLists();
+console.log("\n---- paste into packages/server/mods/lyrian-chronicles/entry.ts by hand (tiny, essentially never changes) ----");
+console.log(`const RACES = ${JSON.stringify(races)};`);
+console.log(`const SUB_RACES = ${JSON.stringify(subRaces)};`);

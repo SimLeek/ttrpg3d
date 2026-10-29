@@ -68,7 +68,7 @@
 import type { CharacterSheetVariableDef, CharacterSheetPageDef, AbilityCatalogEntry } from "@ttrpg3d/shared";
 import type { ModActionFn } from "../modActions.js";
 import { fetchAbilityCatalog } from "../api.js";
-import { ABILITY_LINKS } from "./lyrianAbilityLinks.generated.js";
+import { ABILITY_LINKS, LYRIAN_CLASSES, LYRIAN_BREAKTHROUGHS } from "./lyrianAbilityLinks.generated.js";
 
 /**
  * Real data, read directly off the real sheet's own hidden
@@ -455,4 +455,147 @@ export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
   }
 
   if (newRows.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: newRows.join("") }] });
+};
+
+// ---- Real request, 2026-10-28: "the classes didn't have a method to
+// add classes or breakthroughs, which should be done from a + button
+// to add a line and a dropdown to select the thing (each class
+// should be a dropdown with the specific class selected, each
+// breakthrough the same)." -------------------------------------------
+
+function detailsHtml(text: string): string {
+  const safe = escapeHtml(text).replace(/\n/g, "<br>");
+  return `<details><summary>ℹ</summary>${safe}</details>`;
+}
+
+/**
+ * Inserts `rowMarkdown` into an existing markdown TABLE on the Traits
+ * page -- a table is a contiguous block, so a bare row APPENDED at
+ * the very end of the whole page (the mechanism every other mod
+ * action so far has used) would land after later sections too, and
+ * wouldn't even render as part of the right table at all. If the
+ * section currently shows its own `emptyPlaceholder` text (no rows
+ * yet), that text is replaced by a FRESH table (header + separator +
+ * this one new row) instead; otherwise the new row is inserted right
+ * before the NEXT `## ` heading that follows `sectionHeading` (or at
+ * the very end of the page, if this is the last section).
+ */
+function insertTableRow(markdown: string, sectionHeading: string, emptyPlaceholder: string, tableHeaderLines: readonly string[], rowMarkdown: string): string {
+  if (markdown.includes(emptyPlaceholder)) {
+    return markdown.replace(emptyPlaceholder, [...tableHeaderLines, rowMarkdown].join("\n"));
+  }
+  const headingIdx = markdown.indexOf(sectionHeading);
+  if (headingIdx === -1) return `${markdown}\n${rowMarkdown}`; // the section itself is missing -- shouldn't happen given the FIXED Traits template, but never silently drop a real add
+  const nextHeadingIdx = markdown.indexOf("\n## ", headingIdx + sectionHeading.length);
+  if (nextHeadingIdx === -1) return `${markdown}\n${rowMarkdown}`;
+  return `${markdown.slice(0, nextHeadingIdx)}\n${rowMarkdown}${markdown.slice(nextHeadingIdx)}`;
+}
+
+/**
+ * Self-contained dropdown-picker popup -- same mount/remove pattern
+ * as `mountAbilitySearchPopup` above, just a plain `<select>` instead
+ * of a search box (real request: "a dropdown to select the thing" --
+ * 185 classes/89 breakthroughs is still a perfectly usable native
+ * `<select>`, with the browser's own type-ahead). `onPick` fires once
+ * per "Add" click; the popup closes itself immediately afterward
+ * (unlike the ability search popup, adding a class/breakthrough is a
+ * one-shot pick, not a "maybe add several in a row" flow).
+ */
+function mountDropdownPickerPopup(title: string, options: readonly string[], onPick: (chosen: string) => void): void {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000; font-family:system-ui,sans-serif;";
+  const optionsHtml = options.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join("");
+  overlay.innerHTML = `
+    <div style="background:rgba(24,24,28,0.97); border:1px solid rgba(200,200,200,0.4); border-radius:6px; padding:16px; width:min(400px,90vw); color:#eee;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
+        <strong>${escapeHtml(title)}</strong>
+        <button type="button" id="dropdown-picker-close" style="background:none; border:none; color:#eee; cursor:pointer; font-size:16px;">&#x2715;</button>
+      </div>
+      <select id="dropdown-picker-select" style="width:100%; padding:6px; margin-bottom:8px; background:#111; border:1px solid rgba(200,200,200,0.4); color:#eee; border-radius:4px;">${optionsHtml}</select>
+      <button type="button" id="dropdown-picker-add" style="width:100%; padding:6px;">Add</button>
+    </div>
+  `;
+  document.body.append(overlay);
+
+  function close(): void {
+    overlay.remove();
+  }
+  overlay.querySelector<HTMLButtonElement>("#dropdown-picker-close")!.addEventListener("click", close);
+  overlay.addEventListener("mousedown", (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.querySelector<HTMLButtonElement>("#dropdown-picker-add")!.addEventListener("click", () => {
+    const select = overlay.querySelector<HTMLSelectElement>("#dropdown-picker-select")!;
+    onPick(select.value);
+    close();
+  });
+}
+
+/**
+ * Real request, 2026-10-28: a class not already on the Traits page,
+ * picked from a dropdown of the real sheet's own 185 classes (already-
+ * added ones excluded, found by SHAPE the same way `findRowIds` does
+ * elsewhere -- no reverse id -> name mapping needed). Tier is known
+ * (`LYRIAN_CLASSES`), so Level/Cost seed correctly for a level-1 pick
+ * immediately (tier*100, the SAME first-level rule `recalculateTraitsCosts`
+ * uses), rather than landing at 0 until Auto-Calculate is clicked.
+ */
+export const addClass: ModActionFn = (ctx, apply) => {
+  const existingClassIds = new Set(findRowIds(ctx.defs, "class", "Tier").map((rowId) => `class${rowId}`));
+  const available = LYRIAN_CLASSES.filter((c) => !existingClassIds.has(classVariableId(c.name)));
+  mountDropdownPickerPopup(
+    "Add Class",
+    available.map((c) => c.name),
+    (name) => {
+      const cls = available.find((c) => c.name === name);
+      if (!cls) return;
+      const traitsPage = ctx.pages.find((p) => p.title === "Traits");
+      if (!traitsPage) return;
+      const id = classVariableId(cls.name);
+      const cost = cls.tier * 100;
+      const rowMarkdown = `| ${escapeHtml(cls.name)} | {${id}Tier} | {${id}Level} | {${id}Cost} |`;
+      const newMarkdown = insertTableRow(traitsPage.markdown, "## Classes", "No classes.", ["| Class | Tier | Level | Cost |", "| --- | --- | --- | --- |"], rowMarkdown);
+      apply({
+        variables: [
+          { id: `${id}Tier`, label: `${cls.name} Tier`, type: "number", default: cls.tier },
+          { id: `${id}Level`, label: `${cls.name} Level`, type: "number", default: 1 },
+          { id: `${id}Cost`, label: `${cls.name} Cost`, type: "number", default: cost },
+        ],
+        variableValues: { [`${id}Tier`]: cls.tier, [`${id}Level`]: 1, [`${id}Cost`]: cost },
+        pageEdits: [{ pageTitle: "Traits", replaceMarkdown: newMarkdown }],
+      });
+    },
+  );
+};
+
+/**
+ * Same shape as `addClass` above, for the real sheet's own 89
+ * breakthroughs. A newly-added breakthrough isn't one of the one-time
+ * 300exp character-creation picks, so its Cost seeds at the real
+ * rulebook price immediately (`BREAKTHROUGH_COST_BY_ID`), not 0 --
+ * unlike an IMPORTED breakthrough, there's no "XP Spent" cell to read
+ * "0 means starting" from here.
+ */
+export const addBreakthrough: ModActionFn = (ctx, apply) => {
+  const existingBreakthroughIds = new Set(findRowIds(ctx.defs, "breakthrough", "Cost").map((rowId) => `breakthrough${rowId}`));
+  const available = LYRIAN_BREAKTHROUGHS.filter((b) => !existingBreakthroughIds.has(breakthroughVariableId(b.name)));
+  mountDropdownPickerPopup(
+    "Add Breakthrough",
+    available.map((b) => b.name),
+    (name) => {
+      const bt = available.find((b) => b.name === name);
+      if (!bt) return;
+      const traitsPage = ctx.pages.find((p) => p.title === "Traits");
+      if (!traitsPage) return;
+      const id = breakthroughVariableId(bt.name);
+      const cost = BREAKTHROUGH_COST_BY_ID[id] ?? 0;
+      const rowMarkdown = `| ${escapeHtml(bt.name)} | {${id}Cost} | ${detailsHtml(bt.description)} |`;
+      const newMarkdown = insertTableRow(traitsPage.markdown, "## Breakthroughs", "No breakthroughs.", ["| Breakthrough | Cost | Description |", "| --- | --- | --- |"], rowMarkdown);
+      apply({
+        variables: [{ id: `${id}Cost`, label: `${bt.name} Cost`, type: "number", default: cost }],
+        variableValues: { [`${id}Cost`]: cost },
+        pageEdits: [{ pageTitle: "Traits", replaceMarkdown: newMarkdown }],
+      });
+    },
+  );
 };

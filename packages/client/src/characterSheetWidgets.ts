@@ -204,10 +204,23 @@ export function buildVariableChipHtml(def: CharacterSheetVariableDef, values: Va
  * `xOfYMaxKey` for the max half), not just "the variable changed" --
  * callers merge that one key into their own `variableValues` map.
  */
+/**
+ * Real request, 2026-10-28: "each class should be a dropdown with
+ * the specific class selected, each breakthrough the same, same with
+ * race and sub-race" -- a `<select data-var-key="...">`, baked
+ * directly into a mod's own page markdown (same "literal HTML a mod
+ * bakes in" precedent the Abilities page's own rows already use,
+ * e.g. packages/server/mods/lyrian-chronicles/entry.ts's own
+ * `selectHtml`), needs the SAME text-not-number treatment a plain
+ * `<input type="text">` already gets -- a `<select>` element's own
+ * `.type` is never `"text"` (it's `"select-one"`/`"select-multiple"`),
+ * so without this it would fall into the number-coercion branch and
+ * turn a race/class NAME into `0`.
+ */
 export function wireVariableWidgets(root: ParentNode, onChange: (key: string, next: number | string) => void): void {
-  root.querySelectorAll<HTMLInputElement>("[data-var-key]").forEach((input) => {
+  root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-var-key]").forEach((input) => {
     const key = input.dataset.varKey!;
-    if (input.type === "text") {
+    if (input.tagName === "SELECT" || input.type === "text") {
       input.addEventListener("change", () => onChange(key, input.value));
     } else {
       input.addEventListener("change", () => onChange(key, Number(input.value) || 0));
