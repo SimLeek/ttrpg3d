@@ -316,6 +316,73 @@ const abilitiesPage: CharacterSheetPageDef = {
   variableIds: [],
 };
 
+// Real request, 2026-10-29 (playtest, inventory round): "the weapons
+// table on the core page from A-36 to E-42, the armor table from
+// F-36 to L-42... adding the injuries table to the core page." Both
+// weapons and armor are a FIXED 6-slot table on the real sheet
+// (confirmed directly: rows 37-42, always exactly 6, never a variable
+// count the way a class/breakthrough row is), so -- unlike Classes/
+// Breakthroughs -- these get a fixed, known id scheme declared
+// directly here, no per-character override array needed. These SIX
+// consts (not the rest of this round's own helper FUNCTIONS, which
+// stay below, near where they're used -- see `sumIfArmorEquipped`,
+// `findEquipmentTableRows`, etc.) have to live here, textually BEFORE
+// `characterSheetTemplate`, specifically because the template object
+// below references them directly while it's being constructed
+// (`...weaponVariables`, `valueExpression: sumIfArmorEquipped(...)`);
+// a plain `const` is only safely readable AFTER its own declaration
+// line has executed (unlike a `function`, which is fully hoisted) --
+// confirmed the hard way: moving these below the template (next to
+// their own sibling helpers, which felt more natural) threw
+// "Cannot access 'ARMOR_SLOT_COUNT' before initialization" the moment
+// any character sheet loaded.
+const WEAPON_SLOT_COUNT = 6;
+const ARMOR_SLOT_COUNT = 6;
+const weaponVariables: CharacterSheetVariableDef[] = Array.from({ length: WEAPON_SLOT_COUNT }, (_, i) => i + 1).flatMap(weaponVariableDefs);
+const armorVariables: CharacterSheetVariableDef[] = Array.from({ length: ARMOR_SLOT_COUNT }, (_, i) => i + 1).flatMap(armorVariableDefs);
+const INJURY_LABELS = ["Main Hand", "Muscle", "Spirit Circuit", "Off Hand", "Leg", "Head", "Wound", "Eye", "Laceration", "Foot"];
+const injuryVariables: CharacterSheetVariableDef[] = INJURY_LABELS.map((label) => ({ id: injuryVariableId(label), label, type: "number", default: 0 }));
+/** A brand-new (non-imported) character has no injuries yet -- every checkbox starts unchecked, same "blank default" tier as every other variable's own `default: 0`. */
+const DEFAULT_INJURY_FLAGS: Record<string, boolean> = Object.fromEntries(INJURY_LABELS.map((label) => [injuryVariableId(label), false]));
+
+/**
+ * Real request, same day: "the inventory page would also have the
+ * combat burden total and burden total at the top using the same
+ * calculations in the inventory tab." These five are plain flat
+ * numbers (default 0, matching "nothing carried yet" for a blank
+ * character) in the STATIC template; the importer overwrites each
+ * with a real `valueExpression` summing however many real rows that
+ * ONE character's own Inventory tab actually has (see
+ * `burdenListVariables` below) -- a per-character-LENGTH formula, so
+ * it has to be built at import time, never a fixed string here.
+ */
+const inventoryTotalVariables: CharacterSheetVariableDef[] = [
+  { id: "burdenTotal", label: "Burden Total", type: "number", default: 0 },
+  { id: "combatBurdenTotal", label: "Combat Burden Total", type: "number", default: 0 },
+  { id: "inventoryClimValue", label: "Inventory Clim Value", type: "number", default: 0 },
+  { id: "adventurersKitBurdenTotal", label: "Adventurer's Kit Burden Total", type: "number", default: 0 },
+  { id: "alchemyRigBurdenTotal", label: "Alchemy Rig Burden Total", type: "number", default: 0 },
+];
+
+/** Every weapon/armor slot's own `{variableId}` reference -- same fixed shape whether a character imports or not, so (unlike the four freeform Inventory-tab lists below) this needs no per-character override; only "Armor Equipped?"'s own baked `checked` state differs (`DEFAULT_ARMOR_EQUIPPED` below: every slot starts unequipped, same "blank default" reasoning as `DEFAULT_INJURY_FLAGS`). */
+const DEFAULT_ARMOR_EQUIPPED: readonly boolean[] = Array.from({ length: ARMOR_SLOT_COUNT }, () => false);
+
+/**
+ * Real request, same day: "the inventory page would also have the
+ * combat burden total and burden total at the top... then the combat
+ * loadout, adventurer's kit, and alchemy rig, and below all of that
+ * the expedition inventory itself." Fixed page (same tier as
+ * Abilities above -- always exists, import or not); the four
+ * freeform lists start as empty "No items yet." placeholders here,
+ * same "importer overrides with real rows" shape Traits/Crafting
+ * already use for their own dynamic content.
+ */
+const inventoryPage: CharacterSheetPageDef = {
+  title: "Inventory",
+  markdown: inventoryMarkdown(DEFAULT_ARMOR_EQUIPPED, "No items yet.", "No items yet.", "No items yet.", "No items yet."),
+  variableIds: [...weaponVariables.map((v) => v.id), ...armorVariables.map((v) => v.id), ...inventoryTotalVariables.map((v) => v.id)],
+};
+
 export const characterSheetTemplate: CharacterSheetTemplate = {
   name: "Lyrian Chronicles",
   variables: [
@@ -340,13 +407,13 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "hpBonus", label: "HP Bonus", type: "number", default: 0 },
     { id: "manaAdjustments", label: "Mana Adjustments", type: "number", default: 0 },
     { id: "evasionBonus", label: "Evasion Bonus", type: "number", default: 0 },
-    { id: "evasionEquipmentBonus", label: "Evasion Equipment Bonus", type: "number", default: 0 },
+    { id: "evasionEquipmentBonus", label: "Evasion Equipment Bonus", type: "number", default: 0, valueExpression: sumIfArmorEquipped("Evasion") },
     { id: "dodgeBonus", label: "Dodge Bonus", type: "number", default: 0 },
-    { id: "dodgeEquipmentBonus", label: "Dodge Equipment Bonus", type: "number", default: 0 },
-    { id: "equipmentGuardValue", label: "Equipment Guard Value", type: "number", default: 0 },
-    { id: "equipmentBlockValue", label: "Equipment Block Value", type: "number", default: 0 },
+    { id: "dodgeEquipmentBonus", label: "Dodge Equipment Bonus", type: "number", default: 0, valueExpression: sumIfArmorEquipped("Dodge") },
+    { id: "equipmentGuardValue", label: "Equipment Guard Value", type: "number", default: 0, valueExpression: sumIfArmorEquipped("Guard") },
+    { id: "equipmentBlockValue", label: "Equipment Block Value", type: "number", default: 0, valueExpression: sumIfArmorEquipped("Block") },
     { id: "initiativeAdjustment", label: "Initiative Adjustment", type: "number", default: 0 },
-    { id: "initiativeEquipmentPenalty", label: "Initiative Equipment Penalty", type: "number", default: 0 },
+    { id: "initiativeEquipmentPenalty", label: "Initiative Equipment Penalty", type: "number", default: 0, valueExpression: sumIfArmorEquipped("InitiativePenalty") },
     { id: "bonusSaveValue", label: "Bonus Save Value", type: "number", default: 0 },
     { id: "speed", label: "Speed", type: "number", default: 0 },
     { id: "rpAdjustment", label: "RP Adjustment", type: "number", default: 0 },
@@ -361,6 +428,18 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     // in case of any general modifiers." A plain, manually-edited
     // number, same tier as HP Bonus/Evasion Bonus.
     { id: "attackBonus", label: "Attack Bonus", type: "number", default: 0 },
+    // Real request, 2026-10-29 (inventory round): "under attacks on
+    // the core page, after the light/heavy/precise buttons, add
+    // spinboxes default to zero for adding to focus or power for the
+    // attacks. There are mods that do that for different weapons ppl
+    // switch between." The real to-hit roll itself stays Focus-only
+    // (confirmed directly: the real sheet's own formula, `=B9`, never
+    // adds Power) -- these are two MORE flat manual modifiers on top
+    // of `attackBonus` above, not a second Power-based roll; switching
+    // between a Focus weapon and a Power-keyed one (post-weapon-table)
+    // is just zeroing out whichever of the two doesn't apply.
+    { id: "attackFocusBonus", label: "Attack Focus Bonus", type: "number", default: 0 },
+    { id: "attackPowerBonus", label: "Attack Power Bonus", type: "number", default: 0 },
     // Real request, 2026-10-26 (traits & abilities round): "traits
     // will be character race... sub-race, character taken classes,
     // breakthroughs, and 'spirit core'." Race/Sub-Race are plain,
@@ -378,6 +457,10 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
     { id: "totalExp", label: "Total EXP Earned", type: "number", default: 0 },
     { id: "spiritCore", label: "Spirit Core (Remaining)", type: "number", default: 0 },
     ...skillVariables,
+    ...weaponVariables,
+    ...armorVariables,
+    ...injuryVariables,
+    ...inventoryTotalVariables,
   ],
   // Order is top-to-bottom on the 3D token's own billboard (characterToken.ts's
   // `barSlots[i]` <-> `bars[i]`) -- real request: "make HP green and
@@ -416,45 +499,7 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
       // value row underneath is UNCHANGED. The old separate "## Rolls"
       // table is gone entirely (Initiative/Save Bonus roll from their
       // own header cell now, same as everything else).
-      markdown: [
-        "# Core",
-        "",
-        "## Vitals",
-        "",
-        "| | Current | Max |",
-        "| --- | --- | --- |",
-        "| HP | {hp} | {hp.y} |",
-        "| MP | {mp} | {mp.y} |",
-        "| RP | {rp} | {rp.y} |",
-        "",
-        "## Combat",
-        "",
-        "| {{Evasion; evasion: 7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{Dodge; dodge: 20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{Guard; guard: trunc({toughness} + {equipmentGuardValue})}} | {{Block; block: ({toughness} * 2) + {equipmentBlockValue}}} |",
-        "| --- | --- | --- | --- |",
-        "| {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{trunc({toughness} + {equipmentGuardValue})}} | {{({toughness} * 2) + {equipmentBlockValue}}} |",
-        "",
-        "| {{Initiative; initiative: 1d4 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{Save Bonus; save bonus: 2d10 + {toughness} + {bonusSaveValue}}} | {{Potency; potency: 11 + {focus}}} | {{Speed; speed: {speed}}} |",
-        "| --- | --- | --- | --- |",
-        "| {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{{toughness} + {bonusSaveValue}}} | {{11 + {focus}}} | {speed} |",
-        "",
-        "## Attacks",
-        "",
-        "- {{Light Attack; atk: 1d20 + {focus} + {attackBonus} | damage+max: {lightDamage}:button}}",
-        "- {{Heavy Attack; atk: 1d20 + {focus} + {attackBonus} | damage+max: {heavyDamage}:button}}",
-        "- {{Precise Attack (pinpoint); atk: 1d20 + ({focus} + {attackBonus}) * 2 | damage+max: {lightDamage}:button}}",
-        "",
-        "## Main Stats",
-        "",
-        "| {{Agility; agility check: 1d20 + {agility}}} | {{Toughness; toughness check: 1d20 + {toughness}}} | {{Focus; focus check: 1d20 + {focus}}} | {{Power; power check: 1d20 + {power}}} |",
-        "| --- | --- | --- | --- |",
-        "| {agility} | {toughness} | {focus} | {power} |",
-        "",
-        "## Sub Stats",
-        "",
-        "| {{Fitness; fitness check: 1d20 + {fitness}}} | {{Cunning; cunning check: 1d20 + {cunning}}} | {{Reason; reason check: 1d20 + {reason}}} | {{Awareness; awareness check: 1d20 + {awareness}}} | {{Presence; presence check: 1d20 + {presence}}} |",
-        "| --- | --- | --- | --- | --- |",
-        "| {fitness} | {cunning} | {reason} | {awareness} | {presence} |",
-      ].join("\n"),
+      markdown: coreMarkdown(DEFAULT_INJURY_FLAGS),
       variableIds: [
         "hp",
         "mp",
@@ -485,10 +530,14 @@ export const characterSheetTemplate: CharacterSheetTemplate = {
         "lightDamage",
         "heavyDamage",
         "attackBonus",
+        "attackFocusBonus",
+        "attackPowerBonus",
+        ...injuryVariables.map((v) => v.id),
       ],
     },
     skillsPage,
     abilitiesPage,
+    inventoryPage,
   ],
 };
 
@@ -550,40 +599,6 @@ function findLabelValue(grid: Cell[][], label: string): Cell | undefined {
   return findLabelValueAt(grid, label, 0, 1);
 }
 
-/**
- * The real sheet's own weapon/armor table (Core tab, rows 36-42):
- * a header row naming each column, then one row per equipment slot,
- * with a boolean "Armor Equipped?" column gating whether that row's
- * own bonus columns count at all -- exactly what the sheet's own
- * Evasion/Dodge/Guard/Block/Initiative formulas each run a `SUMIF`
- * over. Found by header text, not a fixed row/column, same spirit as
- * `findLabelValueAt` above: locates the EXACT "Armor Equipped?" header
- * cell for the gating column, then the FIRST header cell in that same
- * row whose text CONTAINS `valueColumnContains` (case-insensitive --
- * the real header text for Evasion/Dodge's own columns has an
- * embedded newline, e.g. "Dodge\n- for negative", so an exact match
- * would never hit) for the value column. Stops at the first row below
- * the header whose own "Armor Equipped?" cell ISN'T a real boolean --
- * the real sheet always fills every equipment slot's own checkbox
- * with true/false, never leaves it blank, so this is a safe end-of-
- * table signal rather than a fixed row count.
- */
-function sumIfEquipped(grid: Cell[][], valueColumnContains: string): number {
-  const target = valueColumnContains.trim().toLowerCase();
-  for (let row = 0; row < grid.length; row++) {
-    const eqCol = grid[row].findIndex((cell) => typeof cell === "string" && cell.trim().toLowerCase() === "armor equipped?");
-    if (eqCol === -1) continue;
-    const valCol = grid[row].findIndex((cell) => typeof cell === "string" && cell.trim().toLowerCase().includes(target));
-    if (valCol === -1) continue;
-    let total = 0;
-    for (let r = row + 1; typeof grid[r]?.[eqCol] === "boolean"; r++) {
-      if (grid[r][eqCol] === true) total += asNumber(grid[r][valCol] as Cell | undefined, 0);
-    }
-    return total;
-  }
-  return 0;
-}
-
 function asNumber(value: Cell | undefined, fallback: number): number {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) return Number(value);
@@ -625,6 +640,219 @@ function selectHtml(varKey: string, options: readonly string[], current: string)
 function detailsHtml(text: string): string {
   const safe = escapeHtml(text).replace(/\n/g, "<br>");
   return `<details><summary>ℹ</summary>${safe}</details>`;
+}
+
+/**
+ * Real request, 2026-10-29 (inventory round): "Armor Equipped?"/each
+ * injury flag is a genuine checkbox on the real sheet, not a number
+ * -- same "literal HTML widget baked into the page's own markdown"
+ * precedent `selectHtml` above already set for race/sub-race, just a
+ * checkbox instead of a dropdown (`wireVariableWidgets`, characterSheetWidgets.ts,
+ * generalized the same way to recognize `input[type=checkbox]`).
+ */
+function checkboxHtml(varKey: string, checked: boolean): string {
+  return `<input type="checkbox" data-var-key="${varKey}"${checked ? " checked" : ""}>`;
+}
+
+/** A collapsible, bordered "frame" around one Inventory-page section -- same `<details>` mechanism (and the SAME inline border style, duplicated rather than imported: this file is SERVER code, `packages/client/src/mods/lyrianChronicles.ts`'s own `.ability-group` styling is CLIENT-only) the Abilities page's own auto-populated groups already use, real request 2026-10-29: "add a collapse button... that collapses the entire class, race, or breakthrough" -- extended here to every Inventory section, open by default. */
+function collapsibleSectionHtml(title: string, bodyMarkdown: string): string {
+  return `\n\n<details class="ability-group" open style="border:1px solid rgba(150,150,150,0.5); border-radius:4px; padding:4px 10px 10px; margin:8px 0;"><summary style="font-weight:bold; cursor:pointer; padding:4px 0;">${escapeHtml(title)}</summary>\n\n${bodyMarkdown}\n\n</details>`;
+}
+
+/** The real sheet's own "Injuries" block, rendered as its real 2-column (M/N, O/P) layout -- `INJURY_LABELS`' own fixed order, paired left/right exactly as the real sheet pairs them (confirmed directly: M38/O38, M39/O39, ... each SAME row). */
+function injuriesTableMarkdown(flags: Readonly<Record<string, boolean>>): string {
+  const pairs: [string, string][] = [
+    ["Main Hand", "Head"],
+    ["Muscle", "Wound"],
+    ["Spirit Circuit", "Eye"],
+    ["Off Hand", "Laceration"],
+    ["Leg", "Foot"],
+  ];
+  return [
+    "| | | | |",
+    "| --- | --- | --- | --- |",
+    ...pairs.map(([left, right]) => {
+      const leftId = injuryVariableId(left);
+      const rightId = injuryVariableId(right);
+      return `| ${left} | ${checkboxHtml(leftId, flags[leftId] ?? false)} | ${right} | ${checkboxHtml(rightId, flags[rightId] ?? false)} |`;
+    }),
+  ].join("\n");
+}
+
+/**
+ * The Core page's own markdown, factored into one function so BOTH
+ * the static template (a blank/non-imported character, every injury
+ * unchecked -- `DEFAULT_INJURY_FLAGS`) and the importer (a REAL
+ * character's own current injury state, read off the sheet by
+ * `findInjuryFlags`) produce the exact same page shape, just with
+ * different starting checkbox states baked in (same "no live toggle
+ * mechanism yet for a literal baked widget" limitation race/sub-race's
+ * own `<select>` and "Armor Equipped?" already accept).
+ */
+function coreMarkdown(injuryFlags: Readonly<Record<string, boolean>>): string {
+  return [
+    "# Core",
+    "",
+    "## Vitals",
+    "",
+    "| | Current | Max |",
+    "| --- | --- | --- |",
+    "| HP | {hp} | {hp.y} |",
+    "| MP | {mp} | {mp.y} |",
+    "| RP | {rp} | {rp.y} |",
+    "",
+    "## Combat",
+    "",
+    "| {{Evasion; evasion: 7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{Dodge; dodge: 20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{Guard; guard: trunc({toughness} + {equipmentGuardValue})}} | {{Block; block: ({toughness} * 2) + {equipmentBlockValue}}} |",
+    "| --- | --- | --- | --- |",
+    "| {{7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}}} | {{20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}}} | {{trunc({toughness} + {equipmentGuardValue})}} | {{({toughness} * 2) + {equipmentBlockValue}}} |",
+    "",
+    "| {{Initiative; initiative: 1d4 + {agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{Save Bonus; save bonus: 2d10 + {toughness} + {bonusSaveValue}}} | {{Potency; potency: 11 + {focus}}} | {{Speed; speed: {speed}}} |",
+    "| --- | --- | --- | --- |",
+    "| {{{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}}} | {{{toughness} + {bonusSaveValue}}} | {{11 + {focus}}} | {speed} |",
+    "",
+    "## Attacks",
+    "",
+    "- {{Light Attack; atk: 1d20 + {focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus} | damage+max: {lightDamage}:button}}",
+    "- {{Heavy Attack; atk: 1d20 + {focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus} | damage+max: {heavyDamage}:button}}",
+    "- {{Precise Attack (pinpoint); atk: 1d20 + ({focus} + {attackFocusBonus} + {attackPowerBonus} + {attackBonus}) * 2 | damage+max: {lightDamage}:button}}",
+    "",
+    "| Attack Focus Bonus | Attack Power Bonus |",
+    "| --- | --- |",
+    "| {attackFocusBonus} | {attackPowerBonus} |",
+    "",
+    "## Main Stats",
+    "",
+    "| {{Agility; agility check: 1d20 + {agility}}} | {{Toughness; toughness check: 1d20 + {toughness}}} | {{Focus; focus check: 1d20 + {focus}}} | {{Power; power check: 1d20 + {power}}} |",
+    "| --- | --- | --- | --- |",
+    "| {agility} | {toughness} | {focus} | {power} |",
+    "",
+    "## Sub Stats",
+    "",
+    "| {{Fitness; fitness check: 1d20 + {fitness}}} | {{Cunning; cunning check: 1d20 + {cunning}}} | {{Reason; reason check: 1d20 + {reason}}} | {{Awareness; awareness check: 1d20 + {awareness}}} | {{Presence; presence check: 1d20 + {presence}}} |",
+    "| --- | --- | --- | --- | --- |",
+    "| {fitness} | {cunning} | {reason} | {awareness} | {presence} |",
+    "",
+    "## Injuries",
+    "",
+    injuriesTableMarkdown(injuryFlags),
+  ].join("\n");
+}
+
+/** Every one of the 6 fixed weapon slots' own row -- same shared `{{focus}}`/`{{focus * 2}}` live expression in EVERY row for Light/Heavy/Precise Attack (see `weaponVariableDefs`'s own header comment for why there's no per-row variable for these three columns at all). */
+function weaponsTableMarkdown(): string {
+  const rows = Array.from(
+    { length: WEAPON_SLOT_COUNT },
+    (_, i) => `| {weapon${i + 1}Name} | {{focus}} | {{focus * 2}} | {weapon${i + 1}LightDamage} | {weapon${i + 1}HeavyDamage} |`,
+  );
+  return ["| Weapon | Light/Heavy Attack | Precise Attack | Light Damage | Heavy Damage |", "| --- | --- | --- | --- | --- |", ...rows].join("\n");
+}
+
+/** Every one of the 6 fixed armor slots' own row -- "Equipped?" is the one column that's a baked checkbox (see `checkboxHtml`'s own header comment) rather than a plain `{variableId}` ref, since there's no genuine boolean widget type in this project. */
+function armorTableMarkdown(equippedByIndex: readonly boolean[]): string {
+  const rows = Array.from({ length: ARMOR_SLOT_COUNT }, (_, i) => {
+    const n = i + 1;
+    return `| {armor${n}Equipment} | {armor${n}Guard} | {armor${n}Evasion} | {armor${n}Dodge} | {armor${n}Block} | {armor${n}InitiativePenalty} | ${checkboxHtml(`armor${n}Equipped`, equippedByIndex[i] ?? false)} |`;
+  });
+  return ["| Equipment | Guard Bonus | Evasion Bonus | Dodge Bonus | Block Bonus | Initiative Penalty | Equipped? |", "| --- | --- | --- | --- | --- | --- | --- |", ...rows].join("\n");
+}
+
+/**
+ * Real request, same day: "then the combat loadout, adventurer's
+ * kit, and alchemy rig" -- all three are the SAME shape on the real
+ * sheet (a plain Name+Burden list, real data confirmed directly:
+ * Combat Loadout G6:H31, Adventurer's Kit G34:H38, Alchemy Rig
+ * G45:H49), so ONE function builds all three. `idPrefix` + a plain
+ * 1-based index is the per-character variable id (never the item's
+ * own NAME -- confirmed directly: "healing potion" appears TWICE in
+ * the real Alchemy Rig, which would collide under a name-derived id
+ * the way `classVariableId` safely uses for classes/breakthroughs,
+ * since THOSE names are drawn from a fixed catalog with no real
+ * duplicates). Returns the table markdown, the per-item variable
+ * DEFS (brand new, per-character-sized -- same `CharacterSheetImportResult.variables`
+ * mechanism `craftingVariables` already uses), their own VALUES, and
+ * the live sum expression for this list's own running Burden Total
+ * (built from exactly as many terms as there are real rows -- an
+ * empty list's own total is a bare `"0"`, never a dangling `+`).
+ */
+function burdenListMarkdown(idPrefix: string, items: readonly { name: string; burden: number }[]): { markdown: string; variables: CharacterSheetVariableDef[]; values: Record<string, number | string>; totalExpression: string } {
+  if (items.length === 0) return { markdown: "No items yet.", variables: [], values: {}, totalExpression: "0" };
+  const variables: CharacterSheetVariableDef[] = [];
+  const values: Record<string, number | string> = {};
+  const rows = items.map((item, i) => {
+    const n = i + 1;
+    variables.push({ id: `${idPrefix}${n}Name`, label: `${idPrefix} ${n} Name`, type: "text", default: "" }, { id: `${idPrefix}${n}Burden`, label: `${idPrefix} ${n} Burden`, type: "number", default: 0 });
+    values[`${idPrefix}${n}Name`] = item.name;
+    values[`${idPrefix}${n}Burden`] = item.burden;
+    return `| {${idPrefix}${n}Name} | {${idPrefix}${n}Burden} |`;
+  });
+  const markdown = ["| Item | Burden |", "| --- | --- |", ...rows].join("\n");
+  const totalExpression = items.map((_, i) => `{${idPrefix}${i + 1}Burden}`).join(" + ");
+  return { markdown, variables, values, totalExpression };
+}
+
+/**
+ * Real request, same day: "below all of that the expedition
+ * inventory itself, with the amount, burden, clim cost, and item
+ * total clim value there, with the total clim value auto calculated."
+ * Same per-item id/variables/values shape as `burdenListMarkdown`
+ * above, but FOUR fields per item (never a name-derived id, same
+ * duplicate-name reasoning) plus a live PER-ROW `{{amount * cost}}`
+ * expression for its own "Item Total Clim Value" column (no stored
+ * variable for that one at all -- same "derived, not a value anyone
+ * types in" reasoning a skill's own live Bonus already uses) and the
+ * overall running "Inventory Clim Value" sum expression (real sheet's
+ * own `SUMPRODUCT` over amount*cost, confirmed directly) for the
+ * page's own top-of-page total.
+ */
+function expeditionInventoryMarkdown(items: readonly { name: string; amount: number; burden: number; climCost: number }[]): { markdown: string; variables: CharacterSheetVariableDef[]; values: Record<string, number | string>; burdenTotalExpression: string; climValueExpression: string } {
+  if (items.length === 0) return { markdown: "No items yet.", variables: [], values: {}, burdenTotalExpression: "0", climValueExpression: "0" };
+  const variables: CharacterSheetVariableDef[] = [];
+  const values: Record<string, number | string> = {};
+  const rows = items.map((item, i) => {
+    const n = i + 1;
+    variables.push(
+      { id: `expeditionItem${n}Name`, label: `Expedition Item ${n} Name`, type: "text", default: "" },
+      { id: `expeditionItem${n}Amount`, label: `Expedition Item ${n} Amount`, type: "number", default: 1 },
+      { id: `expeditionItem${n}Burden`, label: `Expedition Item ${n} Burden`, type: "number", default: 0 },
+      { id: `expeditionItem${n}ClimCost`, label: `Expedition Item ${n} Clim Cost`, type: "number", default: 0 },
+    );
+    values[`expeditionItem${n}Name`] = item.name;
+    values[`expeditionItem${n}Amount`] = item.amount;
+    values[`expeditionItem${n}Burden`] = item.burden;
+    values[`expeditionItem${n}ClimCost`] = item.climCost;
+    return `| {expeditionItem${n}Name} | {expeditionItem${n}Amount} | {expeditionItem${n}Burden} | {expeditionItem${n}ClimCost} | {{expeditionItem${n}Amount * expeditionItem${n}ClimCost}} |`;
+  });
+  const markdown = ["| Item | Amount | Burden | Clim Cost (Price of 1 Item) | Item Total Clim Value |", "| --- | --- | --- | --- | --- |", ...rows].join("\n");
+  const burdenTotalExpression = items.map((_, i) => `{expeditionItem${i + 1}Burden}`).join(" + ");
+  const climValueExpression = items.map((_, i) => `({expeditionItem${i + 1}Amount} * {expeditionItem${i + 1}ClimCost})`).join(" + ");
+  return { markdown, variables, values, burdenTotalExpression, climValueExpression };
+}
+
+/**
+ * Assembles the whole Inventory page from its six collapsible
+ * sections -- real request, same day: "the inventory tab should thus
+ * have similar boxes from the ability table that can be collapsed,
+ * and those boxes are: weapons, armor, combat loadout, adventurer's
+ * kit, alchemy rig, and expedition inventory." Takes the ALREADY-BUILT
+ * markdown for the four freeform lists (since only the IMPORTER knows
+ * how many real rows each one has -- the static/blank-character
+ * version below just passes "No items yet." for each).
+ */
+function inventoryMarkdown(armorEquippedByIndex: readonly boolean[], combatLoadoutMarkdown: string, adventurersKitMarkdown: string, alchemyRigMarkdown: string, expeditionInventoryMd: string): string {
+  return [
+    "# Inventory",
+    "",
+    "| Burden Total | Combat Burden Total |",
+    "| --- | --- |",
+    "| {burdenTotal} | {combatBurdenTotal} |",
+    collapsibleSectionHtml("Weapons", weaponsTableMarkdown()),
+    collapsibleSectionHtml("Armor", armorTableMarkdown(armorEquippedByIndex)),
+    collapsibleSectionHtml("Combat Loadout", combatLoadoutMarkdown),
+    collapsibleSectionHtml("Adventurer's Kit", `${adventurersKitMarkdown}\n\n**Total Burden Carried:** {adventurersKitBurdenTotal}`),
+    collapsibleSectionHtml("Alchemy Rig", `${alchemyRigMarkdown}\n\n**Burden Total:** {alchemyRigBurdenTotal}`),
+    collapsibleSectionHtml("Expedition Inventory", `${expeditionInventoryMd}\n\n**Inventory Clim Value:** {inventoryClimValue}`),
+  ].join("\n");
 }
 
 /** The real sheet's own 5 races (Core tab's own "Race" dropdown source, confirmed directly off the hidden "Races" tab) -- a fixed, essentially-never-changing list, same tier as SKILLS above. */
@@ -678,6 +906,200 @@ const SUB_RACES = [
   "Yuki-Onna",
   "VAMPIRE",
 ];
+
+// ---- Real request, 2026-10-29 (playtest, inventory round): weapon/
+// armor/injury helper FUNCTIONS -- the six supporting CONSTS these
+// reference (`WEAPON_SLOT_COUNT`, `ARMOR_SLOT_COUNT`, `weaponVariables`,
+// `armorVariables`, `INJURY_LABELS`, `injuryVariables`) live earlier
+// in this file, directly above `characterSheetTemplate`'s own
+// declaration -- see that spot's own comment for why. -----------------
+
+/** Light/Heavy/Precise Attack are NOT per-weapon on the real sheet at all -- confirmed directly: every one of the 6 rows' own "Light/Heavy Attack"/"Precise Attack" columns is the IDENTICAL formula (`=B9`/`=B9*2`, i.e. just Focus/Focus*2), never varying per row. No per-row variable is stored for them; the Inventory page's own weapons table just repeats this same live expression in every row. */
+function weaponVariableDefs(n: number): CharacterSheetVariableDef[] {
+  return [
+    { id: `weapon${n}Name`, label: `Weapon ${n}`, type: "text", default: "" },
+    { id: `weapon${n}LightDamage`, label: `Weapon ${n} Light Damage`, type: "text", default: "" },
+    { id: `weapon${n}HeavyDamage`, label: `Weapon ${n} Heavy Damage`, type: "text", default: "" },
+  ];
+}
+
+/** "Armor Equipped?" has no genuine boolean type in this project's variable system (`CharacterSheetVariableType` is only `"number" | "xOfY" | "text"`) -- stored as a plain 0/1 number, same tier as `oldArmorCalc` above, but rendered as a REAL `<input type="checkbox">` baked directly into the Inventory page's own markdown (same "literal HTML widget overriding the generic numeric render" precedent the Traits page's own race/sub-race `<select>` already set) rather than forcing a true/false toggle through a number box. */
+function armorVariableDefs(n: number): CharacterSheetVariableDef[] {
+  return [
+    { id: `armor${n}Equipment`, label: `Armor ${n} Equipment`, type: "number", default: 0 },
+    { id: `armor${n}Guard`, label: `Armor ${n} Guard Bonus`, type: "number", default: 0 },
+    { id: `armor${n}Evasion`, label: `Armor ${n} Evasion Bonus`, type: "number", default: 0 },
+    { id: `armor${n}Dodge`, label: `Armor ${n} Dodge Bonus`, type: "number", default: 0 },
+    { id: `armor${n}Block`, label: `Armor ${n} Block Bonus`, type: "number", default: 0 },
+    { id: `armor${n}InitiativePenalty`, label: `Armor ${n} Initiative Penalty`, type: "number", default: 0 },
+    { id: `armor${n}Equipped`, label: `Armor ${n} Equipped?`, type: "number", default: 0 },
+  ];
+}
+
+/**
+ * Real request, same day: Evasion/Dodge/Guard/Block/Initiative's own
+ * equipment contribution used to be a FLAT number frozen at import
+ * time -- confirmed directly, the real sheet's own formula (e.g.
+ * Evasion: `7+Agility+EvasionBonus+SUMIF($L$37:$L$42,TRUE,$H$37:$H$42)`)
+ * is genuinely LIVE, re-summing the armor table on every recalc. Now
+ * that the armor table is a real, visible, player-editable part of
+ * the Inventory page (not just an import-time rollup), the SAME five
+ * variables (`evasionEquipmentBonus` etc., already referenced by the
+ * Core page's own Combat-table formulas and RP's own `maxExpression`
+ * -- see the template's `variables` array below) get a live
+ * `valueExpression` instead of a flat default, so toggling a slot's
+ * own "Equipped?" checkbox actually changes Evasion/Dodge/Guard/
+ * Block/Initiative immediately, with NO other formula text needing to
+ * change at all.
+ */
+function sumIfArmorEquipped(field: "Guard" | "Evasion" | "Dodge" | "Block" | "InitiativePenalty"): string {
+  return Array.from({ length: ARMOR_SLOT_COUNT }, (_, i) => `({armor${i + 1}Equipped} ? {armor${i + 1}${field}} : 0)`).join(" + ");
+}
+
+/**
+ * The real sheet's own "Injuries" block (Core tab, M35:P42) -- ten
+ * fixed checkboxes (confirmed directly: same ten labels, same M/N
+ * left-pair + O/P right-pair layout, on every character using this
+ * template), gated to the Core page per the user's own correction
+ * ("Injuries is not part of that [the Inventory page's box list]
+ * since it would be on the core page at the bottom"). Exhaustively
+ * searched the whole workbook (every sheet, every formula) for any
+ * reference to these ten cells (`N38:N42`/`P38:P42`) -- confirmed
+ * NONE exists; nothing else on the real sheet reacts to an injury
+ * being checked, so these are plain, independent toggles, same
+ * "literal `<input type=checkbox>`, stored as 0/1" treatment as
+ * "Armor Equipped?" above, never a live SUMIF target of their own.
+ */
+function injuryVariableId(label: string): string {
+  const base = slugify(label);
+  return `injury${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+/**
+ * The real sheet's own weapon/armor table (Core tab, rows 36-42) --
+ * same header-anchor technique `findCraftingSkills`/`findClasses`
+ * already use (found by text, not a fixed row/column), extended to
+ * read EVERY column across both the weapons (A-E) and armor (F-L)
+ * halves of the SAME row range in one pass, since they share one
+ * header row and one "Armor Equipped?"-gated end-of-table signal.
+ * Always returns up to `WEAPON_SLOT_COUNT`/`ARMOR_SLOT_COUNT` entries
+ * (padding with blanks never happens here -- the caller does that),
+ * since the real sheet's own table is fixed-length, never longer.
+ */
+function findEquipmentTableRows(grid: Cell[][]): { weaponName: string; lightDamage: string; heavyDamage: string; armorEquipment: number; guard: number; evasion: number; dodge: number; block: number; initiativePenalty: number; armorEquipped: boolean }[] {
+  const containsCol = (row: Cell[], text: string) => row.findIndex((cell) => typeof cell === "string" && cell.trim().toLowerCase().includes(text));
+  const exactCol = (row: Cell[], text: string) => row.findIndex((cell) => typeof cell === "string" && cell.trim().toLowerCase() === text);
+  for (let row = 0; row < grid.length; row++) {
+    const weaponCol = exactCol(grid[row], "weapon");
+    const eqCol = exactCol(grid[row], "armor equipped?");
+    if (weaponCol === -1 || eqCol === -1) continue;
+    const lightCol = exactCol(grid[row], "light damage");
+    const heavyCol = exactCol(grid[row], "heavy damage");
+    const equipCol = exactCol(grid[row], "equipment");
+    const guardCol = containsCol(grid[row], "guard");
+    const evasionCol = containsCol(grid[row], "evasion");
+    const dodgeCol = containsCol(grid[row], "dodge");
+    const blockCol = containsCol(grid[row], "block");
+    const initCol = containsCol(grid[row], "initiative");
+    const results: ReturnType<typeof findEquipmentTableRows> = [];
+    for (let r = row + 1; typeof grid[r]?.[eqCol] === "boolean"; r++) {
+      results.push({
+        weaponName: asText(grid[r][weaponCol], ""),
+        lightDamage: asText(grid[r][lightCol], ""),
+        heavyDamage: asText(grid[r][heavyCol], ""),
+        armorEquipment: asNumber(grid[r][equipCol], 0),
+        guard: asNumber(grid[r][guardCol], 0),
+        evasion: asNumber(grid[r][evasionCol], 0),
+        dodge: asNumber(grid[r][dodgeCol], 0),
+        block: asNumber(grid[r][blockCol], 0),
+        initiativePenalty: asNumber(grid[r][initCol], 0),
+        armorEquipped: grid[r][eqCol] === true,
+      });
+    }
+    return results;
+  }
+  return [];
+}
+
+/**
+ * The real sheet's own "Injuries" block -- ten fixed label cells
+ * (`INJURY_LABELS`), each immediately followed by its own checkbox
+ * one column right (same `findLabelValue` shape every other Core
+ * cell this file reads already uses).
+ */
+function findInjuryFlags(grid: Cell[][]): Record<string, boolean> {
+  const flags: Record<string, boolean> = {};
+  for (const label of INJURY_LABELS) {
+    flags[injuryVariableId(label)] = findLabelValue(grid, label) === true;
+  }
+  return flags;
+}
+
+/**
+ * The real sheet's own "Inventory" tab -- Expedition Inventory (A1:G1
+ * header row, A2:E137 the item list itself, columns F/G unused by
+ * this character's own real data -- see this function's own caller
+ * for why Description (F) is skipped), Combat Loadout/Adventurer's
+ * Kit/Alchemy Rig (three smaller Name+Burden lists further right, G/H
+ * columns), plus the sheet's own two running totals ("Burden Total" --
+ * G1 label, G2 value one row below; "Combat Burden Total" -- G32
+ * label, H32 value one column right; same "label/value offset varies
+ * per cell" lesson `findLabelValueAt`'s own header comment already
+ * documents). Each list is bounded to its own real max span (same
+ * "found by header text, fixed row cap" technique `findClasses`
+ * already uses for Classes) so a later, UNRELATED total/note row
+ * (e.g. "Adventurer's Kit Total Burden Carried") is never mistaken
+ * for a real item.
+ */
+function findExpeditionInventoryItems(grid: Cell[][]): { name: string; amount: number; burden: number; climCost: number }[] {
+  const header = grid.findIndex((row) => typeof row[0] === "string" && row[0].trim().toLowerCase() === "expedition inventory");
+  if (header === -1) return [];
+  const results: { name: string; amount: number; burden: number; climCost: number }[] = [];
+  for (let r = header + 1; r < grid.length; r++) {
+    const name = grid[r]?.[0];
+    if (typeof name !== "string" || name.trim() === "") continue;
+    results.push({ name: name.trim(), amount: asNumber(grid[r][1], 1), burden: asNumber(grid[r][2], 0), climCost: asNumber(grid[r][3], 0) });
+  }
+  return results;
+}
+
+function findBurdenList(grid: Cell[][], headerText: string, maxRows: number): { name: string; burden: number }[] {
+  for (let row = 0; row < grid.length; row++) {
+    if (!(typeof grid[row][6] === "string" && grid[row][6].trim().toLowerCase() === headerText.toLowerCase())) continue;
+    // Real bug, found live against the real Alba sheet: Combat
+    // Loadout genuinely carries an ITEM literally named "Adventurer's
+    // Kit" (and another named "alchemy rig") -- a plain text match on
+    // column G alone latches onto THAT item instead of the real
+    // section header further down, reading the wrong rows entirely.
+    // The real header row's own "Burden" column label (H, confirmed
+    // on every one of these three sections) is what actually
+    // disambiguates a genuine header from a same-named item.
+    if (!(typeof grid[row][7] === "string" && grid[row][7].trim().toLowerCase() === "burden")) continue;
+    const results: { name: string; burden: number }[] = [];
+    for (let r = row + 1; r <= row + maxRows && r < grid.length; r++) {
+      const name = grid[r]?.[6];
+      if (typeof name !== "string" || name.trim() === "") continue;
+      results.push({ name: name.trim(), burden: asNumber(grid[r][7], 0) });
+    }
+    return results;
+  }
+  return [];
+}
+
+/** Confirmed a 26-row span (Core Burden Total's own range, G6:H31, before row 32's own "Combat Burden Total" sum). */
+function findCombatLoadoutItems(grid: Cell[][]): { name: string; burden: number }[] {
+  return findBurdenList(grid, "Combat Loadout", 26);
+}
+
+/** Confirmed a 5-row span (G34:H38, before row 39's own "Adventurer's Kit Total Burden Carried" sum). */
+function findAdventurersKitItems(grid: Cell[][]): { name: string; burden: number }[] {
+  return findBurdenList(grid, "Adventurer's Kit", 5);
+}
+
+/** Confirmed a 5-row span (G45:H49, before row 50's own "Alchemy Rig Burden Total" sum). */
+function findAlchemyRigItems(grid: Cell[][]): { name: string; burden: number }[] {
+  return findBurdenList(grid, "Alchemy Rig", 5);
+}
 
 /**
  * The real sheet's own "Crafting Skill" table (Core tab, column M,
@@ -828,19 +1250,23 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   const manaAdjustments = asNumber(findLabelValueAt(core, "Mana Adjustments", 2, 0), 0);
   const evasionBonus = asNumber(findLabelValueAt(core, "Evasion Bonus", 1, 0), 0);
   const dodgeBonus = asNumber(findLabelValueAt(core, "Dodge Bonus", 1, 0), 0);
-  const equipmentGuardValue = asNumber(findLabelValueAt(core, "Equipment Guard Value", 0, 2), 0);
-  const equipmentBlockValue = asNumber(findLabelValueAt(core, "Equipment Block Value", 0, 2), 0);
-  // "Equipment Penalty" is the real sheet's own pre-computed duplicate
-  // of Evasion's equipment SUMIF (confirmed directly: identical
-  // formula, same cell range) -- reused rather than re-summed; RP's
-  // own formula references this SAME cell too. Dodge's and
-  // Initiative's own equipment terms have no such duplicate anywhere
-  // else on the tab, so they're computed directly from the weapon/
-  // armor table.
-  const evasionEquipmentBonus = asNumber(findLabelValueAt(core, "Equipment Penalty", 0, 2), 0);
-  const dodgeEquipmentBonus = sumIfEquipped(core, "dodge");
+  // Real request, 2026-10-29 (inventory round): Evasion/Dodge/Guard/
+  // Block/Initiative's own equipment contribution used to be read
+  // HERE, once, as a flat frozen number (`sumIfEquipped`/"Equipment
+  // Penalty"/"Equipment Guard Value"/"Equipment Block Value" label
+  // scans) -- gone now that the armor table is a real, visible,
+  // player-editable part of the Inventory page: `evasionEquipmentBonus`
+  // etc. get a LIVE `valueExpression` instead (see the template's own
+  // `variables` array, `sumIfArmorEquipped`), computed from the SAME
+  // `armorNEquipped`/`armorNGuard`/etc. variables `equipmentRows`
+  // below seeds. The only PLACE this file still needs the raw SUMMED
+  // number directly (rather than letting the live formula handle it)
+  // is RP's own CURRENT value, seeded once below same as HP/MP already
+  // are.
+  const equipmentRows = findEquipmentTableRows(core);
+  const sumIfArmorEquippedAtImport = (field: "guard" | "evasion" | "dodge" | "block" | "initiativePenalty"): number =>
+    equipmentRows.reduce((total, row) => total + (row.armorEquipped ? row[field] : 0), 0);
   const initiativeAdjustment = asNumber(findLabelValueAt(core, "Initiative Adjustment (Positive)", 1, 0), 0);
-  const initiativeEquipmentPenalty = sumIfEquipped(core, "initiative penalty");
   const bonusSaveValue = asNumber(findLabelValueAt(core, "Bonus Save Value", 2, 0), 0);
   const speed = num("Speed");
   const rpAdjustment = asNumber(findLabelValueAt(core, "RP Adjustment (Negative)", 1, 0), 0);
@@ -1023,6 +1449,120 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
     variableIds: ["race", "subRace", "totalExp", "spiritCore", ...classVariables.map((v) => v.id), ...breakthroughVariables.map((v) => v.id)],
   };
 
+  // Real request, 2026-10-29 (inventory round): "the weapons table on
+  // the core page from A-36 to E-42, the armor table from F-36 to
+  // L-42... adding the injuries table to the core page." `equipmentRows`
+  // (read above, needed earlier for RP's own current value) already
+  // has every weapon/armor slot's real data -- just flatten it into
+  // this character's own `weaponNName`/`armorNGuard`/etc. values here,
+  // padding any slot the real sheet left blank with the SAME defaults
+  // `weaponVariableDefs`/`armorVariableDefs` already declare.
+  const weaponArmorValues: Record<string, number | string> = {};
+  for (let i = 0; i < WEAPON_SLOT_COUNT; i++) {
+    const n = i + 1;
+    const row = equipmentRows[i];
+    weaponArmorValues[`weapon${n}Name`] = row?.weaponName ?? "";
+    weaponArmorValues[`weapon${n}LightDamage`] = row?.lightDamage ?? "";
+    weaponArmorValues[`weapon${n}HeavyDamage`] = row?.heavyDamage ?? "";
+  }
+  const armorEquippedByIndex: boolean[] = [];
+  for (let i = 0; i < ARMOR_SLOT_COUNT; i++) {
+    const n = i + 1;
+    const row = equipmentRows[i];
+    weaponArmorValues[`armor${n}Equipment`] = row?.armorEquipment ?? 0;
+    weaponArmorValues[`armor${n}Guard`] = row?.guard ?? 0;
+    weaponArmorValues[`armor${n}Evasion`] = row?.evasion ?? 0;
+    weaponArmorValues[`armor${n}Dodge`] = row?.dodge ?? 0;
+    weaponArmorValues[`armor${n}Block`] = row?.block ?? 0;
+    weaponArmorValues[`armor${n}InitiativePenalty`] = row?.initiativePenalty ?? 0;
+    weaponArmorValues[`armor${n}Equipped`] = row?.armorEquipped ? 1 : 0;
+    armorEquippedByIndex.push(row?.armorEquipped ?? false);
+  }
+
+  // Real request, same day: "Injuries is not part of that [the
+  // Inventory page's box list] since it would be on the core page at
+  // the bottom" -- read here (alongside everything else the Core page
+  // override below needs), never on the Inventory page.
+  const injuryFlags = findInjuryFlags(core);
+  const injuryValues: Record<string, number | string> = {};
+  for (const label of INJURY_LABELS) {
+    const id = injuryVariableId(label);
+    injuryValues[id] = injuryFlags[id] ? 1 : 0;
+  }
+
+  const corePage: CharacterSheetPageDef = {
+    title: "Core",
+    markdown: coreMarkdown(injuryFlags),
+    variableIds: [
+      "hp",
+      "mp",
+      "rp",
+      "agility",
+      "toughness",
+      "focus",
+      "power",
+      "fitness",
+      "cunning",
+      "reason",
+      "awareness",
+      "presence",
+      "hpBonus",
+      "manaAdjustments",
+      "evasionBonus",
+      "evasionEquipmentBonus",
+      "dodgeBonus",
+      "dodgeEquipmentBonus",
+      "equipmentGuardValue",
+      "equipmentBlockValue",
+      "initiativeAdjustment",
+      "initiativeEquipmentPenalty",
+      "bonusSaveValue",
+      "speed",
+      "rpAdjustment",
+      "oldArmorCalc",
+      "lightDamage",
+      "heavyDamage",
+      "attackBonus",
+      "attackFocusBonus",
+      "attackPowerBonus",
+      ...injuryVariables.map((v) => v.id),
+    ],
+  };
+
+  // Real request, same day: "the inventory page would also have the
+  // combat burden total and burden total at the top... then the
+  // combat loadout, adventurer's kit, and alchemy rig, and below all
+  // of that the expedition inventory itself." The real sheet's own
+  // "Inventory" tab (a DIFFERENT sheet than "Core" -- these four lists
+  // live nowhere near the weapon/armor table).
+  const inventorySheet = workbook["Inventory"] ?? [];
+  const combatLoadout = burdenListMarkdown("combatLoadout", findCombatLoadoutItems(inventorySheet));
+  const adventurersKit = burdenListMarkdown("adventurersKit", findAdventurersKitItems(inventorySheet));
+  const alchemyRig = burdenListMarkdown("alchemyRig", findAlchemyRigItems(inventorySheet));
+  const expeditionInventory = expeditionInventoryMarkdown(findExpeditionInventoryItems(inventorySheet));
+
+  const inventoryTotalOverrides: CharacterSheetVariableDef[] = [
+    { id: "burdenTotal", label: "Burden Total", type: "number", default: 0, valueExpression: expeditionInventory.burdenTotalExpression },
+    { id: "combatBurdenTotal", label: "Combat Burden Total", type: "number", default: 0, valueExpression: combatLoadout.totalExpression },
+    { id: "inventoryClimValue", label: "Inventory Clim Value", type: "number", default: 0, valueExpression: expeditionInventory.climValueExpression },
+    { id: "adventurersKitBurdenTotal", label: "Adventurer's Kit Burden Total", type: "number", default: 0, valueExpression: adventurersKit.totalExpression },
+    { id: "alchemyRigBurdenTotal", label: "Alchemy Rig Burden Total", type: "number", default: 0, valueExpression: alchemyRig.totalExpression },
+  ];
+
+  const inventoryPageOverride: CharacterSheetPageDef = {
+    title: "Inventory",
+    markdown: inventoryMarkdown(armorEquippedByIndex, combatLoadout.markdown, adventurersKit.markdown, alchemyRig.markdown, expeditionInventory.markdown),
+    variableIds: [
+      ...weaponVariables.map((v) => v.id),
+      ...armorVariables.map((v) => v.id),
+      ...inventoryTotalOverrides.map((v) => v.id),
+      ...combatLoadout.variables.map((v) => v.id),
+      ...adventurersKit.variables.map((v) => v.id),
+      ...alchemyRig.variables.map((v) => v.id),
+      ...expeditionInventory.variables.map((v) => v.id),
+    ],
+  };
+
   // HP/MP/RP's own MAX is live now (the template's own maxExpression,
   // resolved fresh every render -- see this file's own header
   // comment), so only the CURRENT value needs seeding here, computed
@@ -1032,7 +1572,7 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
   // its own to import for any of the three).
   const hp = 20 + 10 * toughness + hpBonus;
   const mp = Math.trunc(6 + power + manaAdjustments);
-  const rp = (oldArmorCalc ? 2 + (agility - evasionEquipmentBonus) : 2 + agility) - rpAdjustment;
+  const rp = (oldArmorCalc ? 2 + (agility - sumIfArmorEquippedAtImport("evasion")) : 2 + agility) - rpAdjustment;
 
   return {
     variableValues: {
@@ -1051,13 +1591,8 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       hpBonus,
       manaAdjustments,
       evasionBonus,
-      evasionEquipmentBonus,
       dodgeBonus,
-      dodgeEquipmentBonus,
-      equipmentGuardValue,
-      equipmentBlockValue,
       initiativeAdjustment,
-      initiativeEquipmentPenalty,
       bonusSaveValue,
       speed,
       rpAdjustment,
@@ -1072,9 +1607,25 @@ const importer = (workbook: ImportedWorkbook): CharacterSheetImportResult => {
       ...craftingValues,
       ...classValues,
       ...breakthroughValues,
+      ...weaponArmorValues,
+      ...injuryValues,
+      ...combatLoadout.values,
+      ...adventurersKit.values,
+      ...alchemyRig.values,
+      ...expeditionInventory.values,
     },
-    pages: [craftingPage, traitsPage],
-    variables: [...skillVariableOverrides, ...craftingVariables, ...classVariables, ...breakthroughVariables],
+    pages: [craftingPage, traitsPage, corePage, inventoryPageOverride],
+    variables: [
+      ...skillVariableOverrides,
+      ...craftingVariables,
+      ...classVariables,
+      ...breakthroughVariables,
+      ...inventoryTotalOverrides,
+      ...combatLoadout.variables,
+      ...adventurersKit.variables,
+      ...alchemyRig.variables,
+      ...expeditionInventory.variables,
+    ],
     abilityCatalog: findAbilityCatalog(workbook),
   };
 };

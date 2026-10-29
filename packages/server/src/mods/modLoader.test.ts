@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { listAvailableMods, createModLoader, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./modLoader.js";
-import { evaluateCharacterSheetExpression } from "@ttrpg3d/shared";
+import { evaluateCharacterSheetExpression, resolveVariableValue } from "@ttrpg3d/shared";
 
 // Mirrors mods/lyrian-chronicles/entry.ts's own SKILLS list and
 // skillVariableId -- duplicated here (not imported) so these tests
@@ -34,6 +34,46 @@ function emptyLyrianSkillFields(): Record<string, number | string> {
   return result;
 }
 const EMPTY_CRAFTING_PAGE = { title: "Crafting", markdown: "# Crafting\n\nNo crafting skills.", variableIds: [] };
+
+// Real request, 2026-10-29 (inventory round): mirrors entry.ts's own
+// WEAPON_SLOT_COUNT/ARMOR_SLOT_COUNT/INJURY_LABELS/injuryVariableId --
+// duplicated here, same "tests stay independent of that file's own
+// internals" spirit as LYRIAN_SKILLS/RACES above. Every one of these
+// now ALSO lands in `variableValues` (weapon/armor/injury state is
+// read every import, never conditionally), so the fixtures below need
+// their own blank-default expectation for all three, same tier as
+// `emptyLyrianSkillFields` above.
+const WEAPON_SLOT_COUNT = 6;
+const ARMOR_SLOT_COUNT = 6;
+const INJURY_LABELS = ["Main Hand", "Muscle", "Spirit Circuit", "Off Hand", "Leg", "Head", "Wound", "Eye", "Laceration", "Foot"];
+function injuryVariableId(label: string): string {
+  const base = label
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .trim()
+    .split(/\s+/)
+    .map((word, i) => (i === 0 ? word.charAt(0).toLowerCase() + word.slice(1) : word.charAt(0).toUpperCase() + word.slice(1)))
+    .join("");
+  return `injury${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+function emptyWeaponArmorInjuryFields(): Record<string, number | string> {
+  const result: Record<string, number | string> = {};
+  for (let n = 1; n <= WEAPON_SLOT_COUNT; n++) {
+    result[`weapon${n}Name`] = "";
+    result[`weapon${n}LightDamage`] = "";
+    result[`weapon${n}HeavyDamage`] = "";
+  }
+  for (let n = 1; n <= ARMOR_SLOT_COUNT; n++) {
+    result[`armor${n}Equipment`] = 0;
+    result[`armor${n}Guard`] = 0;
+    result[`armor${n}Evasion`] = 0;
+    result[`armor${n}Dodge`] = 0;
+    result[`armor${n}Block`] = 0;
+    result[`armor${n}InitiativePenalty`] = 0;
+    result[`armor${n}Equipped`] = 0;
+  }
+  for (const label of INJURY_LABELS) result[injuryVariableId(label)] = 0;
+  return result;
+}
 // Real request, 2026-10-26 (traits & abilities round): the fixed
 // Race/Sub-Race/Total EXP Earned/Spirit Core fields, always present
 // in variableValues regardless of whether the fixture's own workbook
@@ -415,13 +455,8 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       hpBonus: 0,
       manaAdjustments: 0,
       evasionBonus: 0,
-      evasionEquipmentBonus: 0,
       dodgeBonus: 0,
-      dodgeEquipmentBonus: 0,
-      equipmentGuardValue: 0,
-      equipmentBlockValue: 0,
       initiativeAdjustment: 0,
-      initiativeEquipmentPenalty: 0,
       bonusSaveValue: 0,
       speed: 0,
       rpAdjustment: 0,
@@ -430,8 +465,18 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       heavyDamage: "",
       ...EMPTY_TRAITS_FIELDS,
       ...emptyLyrianSkillFields(),
+      ...emptyWeaponArmorInjuryFields(),
     });
-    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE, EMPTY_TRAITS_PAGE]);
+    // Real request, 2026-10-29 (inventory round): "Core"/"Inventory"
+    // are now ALSO importer-generated pages (per-character injury/
+    // weapon/armor state) -- checking Crafting/Traits by their own
+    // title keeps this test's own original intent (verifying THOSE
+    // two unaffected) without duplicating Core/Inventory's own much
+    // bigger markdown here too (dedicated tests for those two exist
+    // separately, below).
+    expect(result?.result.pages).toHaveLength(4);
+    expect(result?.result.pages.find((p) => p.title === "Crafting")).toEqual(EMPTY_CRAFTING_PAGE);
+    expect(result?.result.pages.find((p) => p.title === "Traits")).toEqual(EMPTY_TRAITS_PAGE);
   });
 
   it("the real lyrian-chronicles fixture falls back to each variable's own default when its label isn't found at all", async () => {
@@ -458,13 +503,8 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       hpBonus: 0,
       manaAdjustments: 0,
       evasionBonus: 0,
-      evasionEquipmentBonus: 0,
       dodgeBonus: 0,
-      dodgeEquipmentBonus: 0,
-      equipmentGuardValue: 0,
-      equipmentBlockValue: 0,
       initiativeAdjustment: 0,
-      initiativeEquipmentPenalty: 0,
       bonusSaveValue: 0,
       speed: 0,
       rpAdjustment: 0,
@@ -473,10 +513,11 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       heavyDamage: "",
       ...EMPTY_TRAITS_FIELDS,
       ...emptyLyrianSkillFields(),
+      ...emptyWeaponArmorInjuryFields(),
     });
   });
 
-  it("real request, 2026-10-25/26 -- MP/Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP's own inputs are read from the sheet's real, quirkier layouts (a bonus cell one or two rows BELOW its own label, an equipment-value cell TWO columns right, and a weapon/armor table's own equipped-rows SUMIF), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
+  it("real request, 2026-10-25/26 -- MP/Evasion/Dodge/Guard/Block/Initiative/Save Bonus/Potency/RP's own inputs are read from the sheet's real, quirkier layouts (a bonus cell one or two rows BELOW its own label), and the resulting {{expression}} formulas compute the same number the real sheet does", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const workbook = {
       Core: [
@@ -485,9 +526,6 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
         [3],
         ["Dodge Bonus"],
         [2],
-        ["Equipment Guard Value", null, 4],
-        ["Equipment Block Value", null, 1],
-        ["Equipment Penalty", null, 2],
         ["Mana Adjustments"],
         [], // a stray row in between (same spirit as the real sheet's own "Add - for Negative" row) -- the real value sits 2 rows below the label, not 1
         [4],
@@ -501,29 +539,51 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
         ["Check Box if Old Armor Calc"],
         [true],
         ["Light Damage", "2d4+5", "", "Heavy Damage", "4d6+10"],
-        ["Weapon", "Dodge\n- for negative", "Initiative Penalty", "Armor Equipped?"],
-        ["Sword", 5, 7, false], // not equipped -- excluded from both SUMIFs
-        ["Shield", 3, 1, true], // equipped -- counted in both
+        // Real request, 2026-10-29 (inventory round): Evasion/Dodge/
+        // Guard/Block/Initiative's own equipment contribution is no
+        // longer a flat import-time snapshot -- it's a LIVE formula
+        // (`sumIfArmorEquipped`, the template's own `variables` array)
+        // reading these SAME per-row armor fields, so row 1 (unequipped)
+        // must be excluded and row 2 (equipped) counted, same spirit
+        // the old SUMIF-based test already verified, just via the
+        // table's own full column set now (Guard/Evasion/Block were
+        // previously read from separate duplicate cells elsewhere on
+        // the sheet -- gone now that the real table has its own).
+        ["Weapon", "Light Damage", "Heavy Damage", "Equipment", "Guard (Passive) Bonus", "Evasion\n- for negative", "Dodge\n- for negative", "Block (Active) Bonus", "Initiative Penalty", "Armor Equipped?"],
+        ["Sword", "1d6", "2d6", 1, 10, 10, 10, 10, 10, false], // not equipped -- excluded from every SUMIF
+        ["", "", "", 2, 4, 2, 3, 1, 1, true], // equipped -- counted in every SUMIF
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
     const values = result?.result.variableValues ?? {};
     expect(values.evasionBonus).toBe(3);
     expect(values.dodgeBonus).toBe(2);
-    expect(values.equipmentGuardValue).toBe(4);
-    expect(values.equipmentBlockValue).toBe(1);
-    expect(values.evasionEquipmentBonus).toBe(2); // reused directly from "Equipment Penalty"
-    expect(values.dodgeEquipmentBonus).toBe(3); // summed from the table's own equipped row only
     expect(values.manaAdjustments).toBe(4);
     expect(values.bonusSaveValue).toBe(6);
     expect(values.initiativeAdjustment).toBe(2);
-    expect(values.initiativeEquipmentPenalty).toBe(1);
     expect(values.rpAdjustment).toBe(1);
     expect(values.oldArmorCalc).toBe(1);
     expect(values.mp).toBe(15); // seeded at import time from the SAME formula: trunc(6+5+4)
-    expect(values.rp).toBe(5); // (1 ? (2+(6-2)) : (2+6)) - 1
+    expect(values.rp).toBe(5); // (1 ? (2+(6-2)) : (2+6)) - 1 -- the equipped row's own Evasion (2)
     expect(values.lightDamage).toBe("2d4+5");
     expect(values.heavyDamage).toBe("4d6+10");
+    // The weapon/armor table's own per-row values, read straight into
+    // this character's own `weaponNName`/`armorNGuard`/etc. fields.
+    expect(values.weapon1Name).toBe("Sword");
+    expect(values.weapon1LightDamage).toBe("1d6");
+    expect(values.weapon1HeavyDamage).toBe("2d6");
+    expect(values.armor1Equipped).toBe(0);
+    expect(values.armor2Equipment).toBe(2);
+    expect(values.armor2Guard).toBe(4);
+    expect(values.armor2Evasion).toBe(2);
+    expect(values.armor2Dodge).toBe(3);
+    expect(values.armor2Block).toBe(1);
+    expect(values.armor2InitiativePenalty).toBe(1);
+    expect(values.armor2Equipped).toBe(1);
+    // Rows the real sheet didn't fill in at all (3-6) fall back to the
+    // same blank defaults a brand-new character gets.
+    expect(values.weapon3Name).toBe("");
+    expect(values.armor3Equipped).toBe(0);
 
     // Real request, 2026-10-26 -- the Core page's own "Rolls" table
     // reads these as a BARE reference (a complete dice-notation
@@ -531,17 +591,46 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
     expect(evaluateCharacterSheetExpression("{lightDamage}", values, true)).toEqual({ needsRoll: true });
     expect(evaluateCharacterSheetExpression("{heavyDamage}", values, true)).toEqual({ needsRoll: true });
 
+    // Real request, 2026-10-29 (inventory round): evasionEquipmentBonus
+    // etc. are now LIVE (`valueExpression`, the template's own static
+    // `variables` array) rather than flat `variableValues` entries --
+    // resolved here the SAME way the real app's own `effectiveVariableValues`
+    // does, against the template's own defs (these five never get a
+    // per-character override; only the `armorNEquipped`/etc. leaf
+    // values they read vary per character).
+    const defs = result?.template.variables ?? [];
+    const evasionEquipmentBonus = resolveVariableValue("evasionEquipmentBonus", "x", defs, values);
+    const dodgeEquipmentBonus = resolveVariableValue("dodgeEquipmentBonus", "x", defs, values);
+    const equipmentGuardValue = resolveVariableValue("equipmentGuardValue", "x", defs, values);
+    const equipmentBlockValue = resolveVariableValue("equipmentBlockValue", "x", defs, values);
+    const initiativeEquipmentPenalty = resolveVariableValue("initiativeEquipmentPenalty", "x", defs, values);
+    expect(evasionEquipmentBonus).toBe(2); // only the equipped row's own Evasion (2) -- the unequipped row's 10 is excluded
+    expect(dodgeEquipmentBonus).toBe(3);
+    expect(equipmentGuardValue).toBe(4);
+    expect(equipmentBlockValue).toBe(1);
+    expect(initiativeEquipmentPenalty).toBe(1);
+
     // Same numbers the Core page's own {{expression}} formulas would
-    // show live, given these exact variableValues.
-    expect(evaluateCharacterSheetExpression("trunc(6 + {power} + {manaAdjustments})", values, false)).toEqual({ value: 15 });
-    expect(evaluateCharacterSheetExpression("7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}", values, false)).toEqual({ value: 18 });
-    expect(evaluateCharacterSheetExpression("20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}", values, false)).toEqual({ value: 31 });
-    expect(evaluateCharacterSheetExpression("trunc({toughness} + {equipmentGuardValue})", values, false)).toEqual({ value: 9 });
-    expect(evaluateCharacterSheetExpression("({toughness} * 2) + {equipmentBlockValue}", values, false)).toEqual({ value: 11 });
-    expect(evaluateCharacterSheetExpression("{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}", values, false)).toEqual({ value: 7 });
-    expect(evaluateCharacterSheetExpression("{toughness} + {bonusSaveValue}", values, false)).toEqual({ value: 11 });
-    expect(evaluateCharacterSheetExpression("11 + {focus}", values, false)).toEqual({ value: 14 });
-    expect(evaluateCharacterSheetExpression("({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}", values, false)).toEqual({ value: 5 });
+    // show live, given these exact variableValues (merged with the
+    // five live-resolved equipment bonuses above, same as a real
+    // render would see via `effectiveVariableValues`).
+    const liveValues = {
+      ...values,
+      evasionEquipmentBonus: evasionEquipmentBonus ?? 0,
+      dodgeEquipmentBonus: dodgeEquipmentBonus ?? 0,
+      equipmentGuardValue: equipmentGuardValue ?? 0,
+      equipmentBlockValue: equipmentBlockValue ?? 0,
+      initiativeEquipmentPenalty: initiativeEquipmentPenalty ?? 0,
+    };
+    expect(evaluateCharacterSheetExpression("trunc(6 + {power} + {manaAdjustments})", liveValues, false)).toEqual({ value: 15 });
+    expect(evaluateCharacterSheetExpression("7 + {agility} + {evasionBonus} + {evasionEquipmentBonus}", liveValues, false)).toEqual({ value: 18 });
+    expect(evaluateCharacterSheetExpression("20 + {agility} + {dodgeBonus} + {dodgeEquipmentBonus}", liveValues, false)).toEqual({ value: 31 });
+    expect(evaluateCharacterSheetExpression("trunc({toughness} + {equipmentGuardValue})", liveValues, false)).toEqual({ value: 9 });
+    expect(evaluateCharacterSheetExpression("({toughness} * 2) + {equipmentBlockValue}", liveValues, false)).toEqual({ value: 11 });
+    expect(evaluateCharacterSheetExpression("{agility} + {initiativeAdjustment} - {initiativeEquipmentPenalty}", liveValues, false)).toEqual({ value: 7 });
+    expect(evaluateCharacterSheetExpression("{toughness} + {bonusSaveValue}", liveValues, false)).toEqual({ value: 11 });
+    expect(evaluateCharacterSheetExpression("11 + {focus}", liveValues, false)).toEqual({ value: 14 });
+    expect(evaluateCharacterSheetExpression("({oldArmorCalc} ? (2 + ({agility} - {evasionEquipmentBonus})) : (2 + {agility})) - {rpAdjustment}", liveValues, false)).toEqual({ value: 5 });
   });
 
   it("real request, 2026-10-26 (third pass -- skills rework) -- each skill's own governing substat (column F), Skill Points (column H), and Expertise (column I) are read by the skill's own name, one/three/four columns right respectively; Bonus becomes a LIVE valueExpression override (governing substat + skill points), not a frozen import snapshot", async () => {
@@ -593,21 +682,25 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
       ],
     };
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", workbook);
-    expect(result?.result.pages).toEqual([
-      {
-        title: "Crafting",
-        markdown: [
-          "# Crafting",
-          "",
-          "| Skill | Bonus | Skill Points | Expertise |",
-          "| --- | --- | --- | --- |",
-          "| {{Alchemy; roll: 1d20 + {craftingAlchemyBonus} | expertise: {craftingAlchemyExpertise}}} | {craftingAlchemyBonus} | {craftingAlchemySkillPoints} | {craftingAlchemyExpertise} |",
-          "| {{Cooking; roll: 1d20 + {craftingCookingBonus} | expertise: {craftingCookingExpertise}}} | {craftingCookingBonus} | {craftingCookingSkillPoints} | {craftingCookingExpertise} |",
-        ].join("\n"),
-        variableIds: ["craftingAlchemyBonus", "craftingAlchemySkillPoints", "craftingAlchemyExpertise", "craftingCookingBonus", "craftingCookingSkillPoints", "craftingCookingExpertise"],
-      },
-      EMPTY_TRAITS_PAGE,
-    ]);
+    // Real request, 2026-10-29 (inventory round): checking Crafting/
+    // Traits by their own title (not full-array equality) keeps this
+    // test's own intent without duplicating Core/Inventory's own much
+    // bigger markdown here too -- see this file's own header note on
+    // the first fixture test above.
+    expect(result?.result.pages).toHaveLength(4);
+    expect(result?.result.pages.find((p) => p.title === "Crafting")).toEqual({
+      title: "Crafting",
+      markdown: [
+        "# Crafting",
+        "",
+        "| Skill | Bonus | Skill Points | Expertise |",
+        "| --- | --- | --- | --- |",
+        "| {{Alchemy; roll: 1d20 + {craftingAlchemyBonus} | expertise: {craftingAlchemyExpertise}}} | {craftingAlchemyBonus} | {craftingAlchemySkillPoints} | {craftingAlchemyExpertise} |",
+        "| {{Cooking; roll: 1d20 + {craftingCookingBonus} | expertise: {craftingCookingExpertise}}} | {craftingCookingBonus} | {craftingCookingSkillPoints} | {craftingCookingExpertise} |",
+      ].join("\n"),
+      variableIds: ["craftingAlchemyBonus", "craftingAlchemySkillPoints", "craftingAlchemyExpertise", "craftingCookingBonus", "craftingCookingSkillPoints", "craftingCookingExpertise"],
+    });
+    expect(result?.result.pages.find((p) => p.title === "Traits")).toEqual(EMPTY_TRAITS_PAGE);
 
     const variables = result?.result.variables ?? [];
     expect(variables.find((v) => v.id === "craftingAlchemyBonus")?.valueExpression).toBe("5 + {craftingAlchemySkillPoints}");
@@ -619,7 +712,9 @@ describe("importCharacterSheet (docs/CHARACTER_SHEET_IMPORT.md, part 1 -- un-def
   it("no crafting skills at all (every 'Crafting Skill' row blank) still returns a real page, not an empty/missing one", async () => {
     const realModsDir = join(process.cwd(), "mods");
     const result = await importCharacterSheet(realModsDir, "lyrian-chronicles", { Core: [["nothing", "relevant", "here"]] });
-    expect(result?.result.pages).toEqual([EMPTY_CRAFTING_PAGE, EMPTY_TRAITS_PAGE]);
+    expect(result?.result.pages).toHaveLength(4);
+    expect(result?.result.pages.find((p) => p.title === "Crafting")).toEqual(EMPTY_CRAFTING_PAGE);
+    expect(result?.result.pages.find((p) => p.title === "Traits")).toEqual(EMPTY_TRAITS_PAGE);
   });
 
   it("real request, 2026-10-26 (traits & abilities round) -- Race/Sub-Race/Spirit Core import as plain label-scans off Core, Total EXP Earned imports as a single snapshot off the DIFFERENT 'EXP & Transactions' tab's own running total", async () => {

@@ -246,3 +246,20 @@ describe("wireVariableWidgets with a <select> (real request, 2026-10-28 -- \"eac
     expect(changed).toEqual(["race", "Chimera"]); // NOT 0 -- the real bug this fix targets
   });
 });
+
+describe("wireVariableWidgets with an <input type=checkbox> (real request, 2026-10-29 -- \"Armor Equipped?\"/injury flags, no boolean variable type)", () => {
+  it("reads .checked (not .value, which is always the literal string 'on'), writing 1/0", () => {
+    container.innerHTML = '<input type="checkbox" data-var-key="armor1Equipped">';
+    let changed: [string, number | string] | undefined;
+    wireVariableWidgets(container, (key, value) => (changed = [key, value]));
+
+    const checkbox = container.querySelector<HTMLInputElement>("input")!;
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(changed).toEqual(["armor1Equipped", 1]);
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+    expect(changed).toEqual(["armor1Equipped", 0]);
+  });
+});

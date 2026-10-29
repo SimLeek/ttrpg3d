@@ -222,6 +222,15 @@ export function wireVariableWidgets(root: ParentNode, onChange: (key: string, ne
     const key = input.dataset.varKey!;
     if (input.tagName === "SELECT" || input.type === "text") {
       input.addEventListener("change", () => onChange(key, input.value));
+    } else if (input.type === "checkbox") {
+      // Real request, 2026-10-29 (inventory round): "Armor Equipped?"/
+      // each injury flag is a genuine checkbox baked directly into a
+      // page's own markdown (mods/lyrian-chronicles/entry.ts's own
+      // `checkboxHtml`) -- there's no boolean variable type (same
+      // "stored as 0/1" tier `oldArmorCalc` already uses), so a
+      // checkbox's OWN `.checked` state (not `.value`, which is
+      // always the literal string "on") is what this needs to read.
+      input.addEventListener("change", () => onChange(key, (input as HTMLInputElement).checked ? 1 : 0));
     } else {
       input.addEventListener("change", () => onChange(key, Number(input.value) || 0));
     }

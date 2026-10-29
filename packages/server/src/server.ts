@@ -197,7 +197,19 @@ const postCharacterImportSheet = createEndpoint("/characters/:id/import-sheet", 
   // the import's own real values overlaid afterward instead of
   // starting (and staying) at the template's own defaults.
   const customSheet = structuredClone(template);
-  customSheet.pages = [...customSheet.pages, ...result.pages];
+  // Real request, 2026-10-29 (inventory round): a page title ALREADY
+  // on the static template (e.g. "Core"/"Inventory," both of which now
+  // need PER-CHARACTER content -- injury checkboxes, the real weapon/
+  // armor table) is OVERRIDDEN in place here, same id-based
+  // find-replace-or-push shape `result.variables`' own merge already
+  // uses just below -- plain concatenation (the ONLY thing this did
+  // until now) silently duplicated the tab instead, confirmed the hard
+  // way the moment "Core" needed to be one of these.
+  for (const p of result.pages) {
+    const idx = customSheet.pages.findIndex((existing) => existing.title === p.title);
+    if (idx === -1) customSheet.pages.push(p);
+    else customSheet.pages[idx] = p;
+  }
   // Real request/architecture fix, 2026-10-26 (skills rework): merge
   // the importer's own `variables` by id -- an id ALREADY on the
   // template (e.g. a fixed skill's own `<id>Bonus`) is OVERRIDDEN in
