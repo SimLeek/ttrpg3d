@@ -175,7 +175,7 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
          index.html's html/body overflow:hidden would otherwise make any
          chat longer than one screen simply unreachable). */
       .chat-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
-      .chat-messages .msg { margin-bottom: 4px; }
+      .chat-messages .msg { margin-bottom: 4px; white-space: pre-wrap; }
       .chat-messages .err { margin-bottom: 4px; color: #e66; font-style: italic; }
       .chat-input-row { flex: none; padding: 8px; border-top: 1px solid rgba(200,200,200,0.3); }
       .chat-input-row input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }

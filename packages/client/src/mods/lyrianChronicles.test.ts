@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { marked } from "marked";
 import { recalculateTraitsCosts, addAbility, addCustomAbility, autoPopulateAbilities, addClass, addBreakthrough } from "./lyrianChronicles.js";
 import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
 import type { ModActionContext, ModActionOutcome } from "../modActions.js";
@@ -107,8 +108,12 @@ function baseCtx(overrides: Partial<ModActionContext> = {}): ModActionContext {
 }
 
 const catalogFixture = [
-  { name: "Sense Magic", keywords: "", range: "", description: "You can detect active magical effects.", requirement: "", cost: "1 AP", apCost: "1 AP", manaCost: "", rpCost: "", benefits: "" },
-  { name: "Absorb Ice", keywords: "", range: "", description: "You gain Absorb Ice.", requirement: "", cost: "1 RP", apCost: "", manaCost: "", rpCost: "1 RP", benefits: "" },
+  { name: "Sense Magic", keywords: "", range: "30ft", description: "You can detect active magical effects.", requirement: "", cost: "1 AP", apCost: "1 AP", manaCost: "", rpCost: "", benefits: "" },
+  { name: "Absorb Ice", keywords: "", range: "Self", description: "You gain Absorb Ice.", requirement: "", cost: "1 RP", apCost: "", manaCost: "", rpCost: "1 RP", benefits: "" },
+  // Real request, 2026-10-29 (playtest): "The Alchemist is empty... just like Transfusion" -- a "key ability" row shape whose real text lives in `benefits`, not `description`, which the old two-string signature had no way to show at all.
+  { name: "The Alchemist", keywords: "", range: "", description: "", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "You gain Alchemist Core Crafting Abilities.|You can craft using non-advanced materials." },
+  // Real clue, 2026-10-29 (playtest): "Arcane Barrier... do[es] not show up even though [it's] in the edit md stuff" -- a genuinely multi-PARAGRAPH description (a real blank line in the middle), the exact shape that corrupted the old raw-newline-in-attribute HTML.
+  { name: "Arcane Barrier", keywords: "Shield, Spell, Safe", range: "Self", description: "You create a Magical Barrier that absorbs damage until it breaks.\n\nThis spell does not provoke attacks of opportunity.", requirement: "You're about to take damage.", cost: "1 MP, 1 RP", apCost: "", manaCost: "1 MP", rpCost: "1 RP", benefits: "" },
 ];
 
 describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an added ability isn't its own variable... baked as literal HTML\")", () => {
@@ -131,7 +136,7 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(document.body.querySelector("#ability-search-input")).not.toBeNull();
   });
 
-  it("typing a query and clicking its own 'Add' button applies a pageEdit with the picked ability's own name+description baked into the Abilities page, and never touches variableValues/variables", async () => {
+  it("typing a query and clicking its own 'Add' button applies a pageEdit with the picked ability's own FULL info (range/cost/description, not just description) baked into the Abilities page, and never touches variableValues/variables", async () => {
     const apply = vi.fn();
     await addAbility(baseCtx(), apply);
 
@@ -147,9 +152,49 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(outcome.variables).toBeUndefined();
     expect(outcome.pageEdits).toHaveLength(1);
     expect(outcome.pageEdits![0].pageTitle).toBe("Abilities");
-    expect(outcome.pageEdits![0].appendMarkdown).toContain('data-chip-label="Sense Magic"');
-    expect(outcome.pageEdits![0].appendMarkdown).toContain('data-chip-value="You can detect active magical effects."');
-    expect(outcome.pageEdits![0].appendMarkdown).toContain("<details>");
+    const markdown = outcome.pageEdits![0].appendMarkdown!;
+    expect(markdown).toContain('data-chip-label="Sense Magic"');
+    // Real request, 2026-10-29 (playtest): "Throw potion is missing the range and other stuff (should say 30ft range for example)" -- range/cost must appear, not just description, both in the posted chat text AND the info disclosure.
+    expect(markdown).toContain("Range: 30ft");
+    expect(markdown).toContain("Cost: 1 AP");
+    expect(markdown).toContain("You can detect active magical effects.");
+    expect(markdown).toMatch(/data-chip-value="[^"]*Range: 30ft/);
+    expect(markdown).toContain("<details>");
+  });
+
+  it("real request, 2026-10-29 (playtest): \"The Alchemist is empty\" -- an entry whose real text lives in `benefits` (not `description`) is still rendered, as a bulleted list", async () => {
+    const apply = vi.fn();
+    await addAbility(baseCtx(), apply);
+
+    const input = document.body.querySelector<HTMLInputElement>("#ability-search-input")!;
+    input.value = "alchemist";
+    input.dispatchEvent(new Event("input"));
+    document.body.querySelector<HTMLButtonElement>(".ability-search-add-btn")!.click();
+
+    const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
+    expect(markdown).toContain("Benefits:");
+    expect(markdown).toContain("You gain Alchemist Core Crafting Abilities.");
+    expect(markdown).toContain("You can craft using non-advanced materials.");
+  });
+
+  it("real clue, 2026-10-29 (playtest): \"Arcane Barrier do[es] not show up even though [it's] in the edit md stuff\" -- a multi-PARAGRAPH description (a real blank line inside it) must survive marked.js's own markdown pass intact, not get truncated/corrupted into a stray <p>", async () => {
+    const apply = vi.fn();
+    await addAbility(baseCtx(), apply);
+
+    const input = document.body.querySelector<HTMLInputElement>("#ability-search-input")!;
+    input.value = "arcane";
+    input.dispatchEvent(new Event("input"));
+    document.body.querySelector<HTMLButtonElement>(".ability-search-add-btn")!.click();
+
+    const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
+    // The raw page markdown itself must never contain a literal blank line inside the chat-chip's own attributes -- that's exactly what let marked.js's CommonMark HTML-block rule treat the attribute as ending early.
+    expect(markdown).not.toMatch(/data-chip-(value|html)="[^"]*\n\n/);
+
+    const rendered = marked.parse(`# Abilities\n${markdown}`) as string;
+    expect(rendered).not.toContain("<p>"); // a stray <p> is exactly what the old bug produced when markdown re-parsed a corrupted attribute as a new paragraph
+    expect(rendered).toContain("</div>"); // the row's own closing tag must survive, not get swallowed by a mis-parsed earlier attribute
+    expect(rendered).toContain("<table");
+    expect(rendered).toContain("</button>");
   });
 
   it("picking an ability already listed on the Abilities page is a no-op, not a duplicate row", async () => {

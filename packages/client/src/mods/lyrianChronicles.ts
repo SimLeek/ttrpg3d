@@ -312,12 +312,88 @@ function breakthroughVariableId(name: string): string {
   return `breakthrough${base.charAt(0).toUpperCase()}${base.slice(1)}`;
 }
 
+/**
+ * Real request, 2026-10-29 (playtest): "Transfusion has no information
+ * and posts nothing... Throw potion is missing the range and other
+ * stuff (should say 30ft range for example)... Basically every ability
+ * is missing a lot of information." Root cause: this function used to
+ * take just `(name, description)`, silently dropping every OTHER field
+ * `AbilityCatalogEntry` actually carries (range/cost/keywords/
+ * requirement/benefits) -- confirmed directly against the real catalog
+ * data (e.g. "Throw Potion" really does have `range: "30ft"`,
+ * `cost: "1 AP"`; "The Alchemist" has an EMPTY `description` with its
+ * real text living in `benefits` instead, a "key ability" row shape
+ * the old two-string signature couldn't represent at all). Now takes
+ * the whole entry and renders every non-blank field as a table (real
+ * follow-up request, same day: "in a table format so that the html is
+ * encapsulated"), both into the info disclosure AND the posted chat
+ * text (previously chat-posted description alone).
+ */
+type AbilityInfo = Pick<AbilityCatalogEntry, "name" | "keywords" | "range" | "description" | "requirement" | "cost" | "benefits">;
+
+/** The sheet's own "no value" placeholder for a blank cell (confirmed in the real catalog data), treated the same as an actually-empty string. */
+function isBlankAbilityField(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "" || trimmed === "-" || trimmed === "'-";
+}
+
+function abilityInfoFields(entry: AbilityInfo): { label: string; value: string }[] {
+  const fields: { label: string; value: string }[] = [];
+  if (!isBlankAbilityField(entry.cost)) fields.push({ label: "Cost", value: entry.cost });
+  if (!isBlankAbilityField(entry.keywords)) fields.push({ label: "Keywords", value: entry.keywords });
+  if (!isBlankAbilityField(entry.range)) fields.push({ label: "Range", value: entry.range });
+  if (!isBlankAbilityField(entry.requirement)) fields.push({ label: "Requirement", value: entry.requirement });
+  if (!isBlankAbilityField(entry.description)) fields.push({ label: "Description", value: entry.description });
+  return fields;
+}
+
+/** The HTML table every ability's info renders as, both in its own `<details>` disclosure and (escaped into an attribute) the chat post -- ONE self-contained fragment reused in both places. */
+function abilityInfoTableHtml(entry: AbilityInfo): string {
+  const rows = abilityInfoFields(entry).map((field) => `<tr><th>${escapeHtml(field.label)}</th><td>${escapeHtml(field.value).replace(/\n/g, "<br>")}</td></tr>`);
+  if (!isBlankAbilityField(entry.benefits)) {
+    const items = entry.benefits
+      .split("|")
+      .map((part) => `<li>${escapeHtml(part.trim())}</li>`)
+      .join("");
+    rows.push(`<tr><th>Benefits</th><td><ul>${items}</ul></td></tr>`);
+  }
+  return rows.length > 0 ? `<table class="ability-info-table"><tbody>${rows.join("")}</tbody></table>` : "<em>No information on file for this ability.</em>";
+}
+
+function abilityInfoPlainText(entry: AbilityInfo): string {
+  const lines = abilityInfoFields(entry).map((field) => `${field.label}: ${field.value}`);
+  if (!isBlankAbilityField(entry.benefits)) {
+    lines.push("Benefits:");
+    for (const part of entry.benefits.split("|")) lines.push(`- ${part.trim()}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : "(no information on file for this ability)";
+}
+
+/**
+ * Real clue, 2026-10-29 (playtest): "Alchemist's core crafting and
+ * arcane barrier both do not show up even though they're in the edit
+ * md stuff, so it may have generated bad markdown/html." Confirmed
+ * directly against marked.js: a raw HTML attribute value (like the
+ * old `data-chip-value="..."`) that spans a BLANK line -- which every
+ * genuinely multi-paragraph description does -- gets treated by
+ * CommonMark's own HTML-block rule as the block's END; everything
+ * after the blank line is re-parsed as a plain paragraph and HTML-
+ * escaped, corrupting the tag (truncated/garbage attribute, stray
+ * `<p>`) badly enough DOMPurify drops the whole row. `&#10;` has no
+ * literal newline BYTE in the markdown source -- the scanner never
+ * sees a blank line -- and the browser decodes it back to a real `\n`
+ * once parsed, same as any other HTML entity in an attribute.
+ */
+function escapeHtmlAttr(s: string): string {
+  return escapeHtml(s).replace(/\n/g, "&#10;");
+}
+
 /** The HTML an added ability's own row becomes -- plain `<div>` (not a markdown list item) specifically so marked.js never has to reconcile block-level HTML against list-item indentation rules. */
-function abilityRowHtml(name: string, description: string): string {
-  const safeName = escapeHtml(name);
-  const safeDescAttr = escapeHtml(description); // HTML-escaping also covers attribute-safety here (the one extra thing an attribute needs beyond text content, a literal `"`, is already escaped to `&quot;`)
-  const safeDescHtml = safeDescAttr.replace(/\n/g, "<br>");
-  return `\n\n<div class="ability-row"><button type="button" class="chat-chip" data-chip-label="${safeName}" data-chip-value="${safeDescAttr}">${safeName}</button> <details><summary>ℹ</summary>${safeDescHtml}</details></div>`;
+function abilityRowHtml(entry: AbilityInfo): string {
+  const safeName = escapeHtml(entry.name);
+  const tableHtml = abilityInfoTableHtml(entry);
+  const plainText = abilityInfoPlainText(entry);
+  return `\n\n<div class="ability-row"><button type="button" class="chat-chip" data-chip-label="${safeName}" data-chip-value="${escapeHtmlAttr(plainText)}" data-chip-html="${escapeHtmlAttr(tableHtml)}">${safeName}</button> <details><summary>ℹ</summary>${tableHtml}</details></div>`;
 }
 
 /** Whether `name` is already listed on the Abilities page -- checked against the page's own raw markdown (the `data-chip-label` an earlier `abilityRowHtml` call baked in), not a variable, since an added ability isn't one (see this section's own header). */
@@ -342,7 +418,7 @@ export const addAbility: ModActionFn = async (ctx, apply) => {
   const catalog = await fetchAbilityCatalog(ctx.httpUrl, ctx.accountId, "lyrian-chronicles");
   mountAbilitySearchPopup(catalog, (entry) => {
     if (abilityAlreadyListed(ctx.pages, entry.name)) return; // already have it -- a no-op, not a duplicate row
-    apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: abilityRowHtml(entry.name, entry.description) }] });
+    apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: abilityRowHtml(entry) }] });
   });
 };
 
@@ -366,7 +442,22 @@ export const addAbility: ModActionFn = async (ctx, apply) => {
  * ability, which is the point).
  */
 export const addCustomAbility: ModActionFn = (_ctx, apply) => {
-  apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: abilityRowHtml("New Custom Ability", "Describe what this ability does here. Edit this row directly with the page's own Edit button to replace this placeholder name and description with your own.") }] });
+  apply({
+    pageEdits: [
+      {
+        pageTitle: "Abilities",
+        appendMarkdown: abilityRowHtml({
+          name: "New Custom Ability",
+          keywords: "",
+          range: "",
+          description: "Describe what this ability does here. Edit this row directly with the page's own Edit button to replace this placeholder name and description with your own.",
+          requirement: "",
+          cost: "",
+          benefits: "",
+        }),
+      },
+    ],
+  });
 };
 
 /** Self-contained search popup -- mounts/removes itself directly against `document.body`, same pattern measurementShapes.ts's own right-click context menu already uses. `onAdd` fires once per "Add" click; the popup stays open afterward (same session may want to add several abilities in a row) and only closes via its own ✕/outside-click/Escape. */
@@ -449,7 +540,7 @@ function mountAbilitySearchPopup(catalog: readonly AbilityCatalogEntry[], onAdd:
  */
 export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
   const catalog = await fetchAbilityCatalog(ctx.httpUrl, ctx.accountId, "lyrian-chronicles");
-  const descriptionByName = new Map(catalog.map((e) => [e.name, e.description]));
+  const catalogByName = new Map(catalog.map((e) => [e.name, e]));
 
   const addedThisRun = new Set<string>();
   const newRows: string[] = [];
@@ -474,7 +565,8 @@ export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
     if (!qualifies) continue;
 
     addedThisRun.add(link.name);
-    newRows.push(abilityRowHtml(link.name, descriptionByName.get(link.name) ?? ""));
+    const entry = catalogByName.get(link.name) ?? { name: link.name, keywords: "", range: "", description: "", requirement: "", cost: "", benefits: "" };
+    newRows.push(abilityRowHtml(entry));
   }
 
   if (newRows.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: newRows.join("") }] });

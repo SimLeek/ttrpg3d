@@ -278,7 +278,7 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
     previewEl.addEventListener("click", (event) => {
       const chip = (event.target as HTMLElement).closest<HTMLButtonElement>(".chat-chip");
       if (!chip) return;
-      options.onPostToChat(chip.dataset.chipLabel ?? "", chip.dataset.chipValue ?? "");
+      options.onPostToChat(chip.dataset.chipLabel ?? "", chip.dataset.chipValue ?? "", chip.dataset.chipHtml);
     });
 
     // Real request, 2026-10-26 (traits & abilities round): a literal

@@ -39,7 +39,7 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
       .test-chat-panel { display: flex; flex-direction: column; height: 100%; background: rgba(20,20,24,0.85); border: 1px solid rgba(200,200,200,0.3); border-radius: 6px; font-family: system-ui, sans-serif; color: #eee; }
       .test-chat-panel h3 { margin: 0; padding: 8px 10px; font-size: 0.9rem; font-weight: normal; color: #999; border-bottom: 1px solid rgba(200,200,200,0.3); flex: none; }
       .test-chat-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
-      .test-chat-messages .msg { margin-bottom: 4px; }
+      .test-chat-messages .msg { margin-bottom: 4px; white-space: pre-wrap; }
       .test-chat-messages .empty { color: #777; font-style: italic; }
       .test-chat-messages .roll-result { font-weight: bold; text-decoration: underline dotted; cursor: help; }
       .test-chat-messages .roll-result-group { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 6px 8px; margin: 2px 0; }
