@@ -839,6 +839,11 @@ function expeditionInventoryMarkdown(items: readonly { name: string; amount: num
  * how many real rows each one has -- the static/blank-character
  * version below just passes "No items yet." for each).
  */
+/** Real request, 2026-10-29 (follow-up): "Add Item" for the four FREEFORM lists (never a fixed-count slot the way Weapons/Armor are) -- same literal `<button data-mod-action="...">` precedent "+ Add Class"/"+ Add Breakthrough" already set on the Traits page. */
+function addItemButtonHtml(actionName: string): string {
+  return `<button type="button" data-mod-action="lyrian-chronicles.${actionName}">+ Add Item</button>`;
+}
+
 function inventoryMarkdown(armorEquippedByIndex: readonly boolean[], combatLoadoutMarkdown: string, adventurersKitMarkdown: string, alchemyRigMarkdown: string, expeditionInventoryMd: string): string {
   return [
     "# Inventory",
@@ -848,10 +853,10 @@ function inventoryMarkdown(armorEquippedByIndex: readonly boolean[], combatLoado
     "| {burdenTotal} | {combatBurdenTotal} |",
     collapsibleSectionHtml("Weapons", weaponsTableMarkdown()),
     collapsibleSectionHtml("Armor", armorTableMarkdown(armorEquippedByIndex)),
-    collapsibleSectionHtml("Combat Loadout", combatLoadoutMarkdown),
-    collapsibleSectionHtml("Adventurer's Kit", `${adventurersKitMarkdown}\n\n**Total Burden Carried:** {adventurersKitBurdenTotal}`),
-    collapsibleSectionHtml("Alchemy Rig", `${alchemyRigMarkdown}\n\n**Burden Total:** {alchemyRigBurdenTotal}`),
-    collapsibleSectionHtml("Expedition Inventory", `${expeditionInventoryMd}\n\n**Inventory Clim Value:** {inventoryClimValue}`),
+    collapsibleSectionHtml("Combat Loadout", `${addItemButtonHtml("addCombatLoadoutItem")}\n\n${combatLoadoutMarkdown}`),
+    collapsibleSectionHtml("Adventurer's Kit", `${addItemButtonHtml("addAdventurersKitItem")}\n\n${adventurersKitMarkdown}\n\n**Total Burden Carried:** {adventurersKitBurdenTotal}`),
+    collapsibleSectionHtml("Alchemy Rig", `${addItemButtonHtml("addAlchemyRigItem")}\n\n${alchemyRigMarkdown}\n\n**Burden Total:** {alchemyRigBurdenTotal}`),
+    collapsibleSectionHtml("Expedition Inventory", `${addItemButtonHtml("addExpeditionInventoryItem")}\n\n${expeditionInventoryMd}\n\n**Inventory Clim Value:** {inventoryClimValue}`),
   ].join("\n");
 }
 

@@ -1,6 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { marked } from "marked";
-import { recalculateTraitsCosts, addAbility, addCustomAbility, autoPopulateAbilities, addClass, addBreakthrough } from "./lyrianChronicles.js";
+import {
+  recalculateTraitsCosts,
+  addAbility,
+  addCustomAbility,
+  autoPopulateAbilities,
+  addClass,
+  addBreakthrough,
+  addCombatLoadoutItem,
+  addAdventurersKitItem,
+  addAlchemyRigItem,
+  addExpeditionInventoryItem,
+} from "./lyrianChronicles.js";
 import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
 import type { ModActionContext, ModActionOutcome } from "../modActions.js";
 
@@ -421,5 +432,90 @@ describe("addClass/addBreakthrough (real request, 2026-10-28 -- \"a + button to 
     document.body.querySelector<HTMLButtonElement>("#dropdown-picker-close")!.click();
     expect(apply).not.toHaveBeenCalled();
     expect(document.body.querySelector("#dropdown-picker-select")).toBeNull();
+  });
+});
+
+describe("addCombatLoadoutItem/addAdventurersKitItem/addAlchemyRigItem/addExpeditionInventoryItem (real request, 2026-10-29 -- \"+ Add Item\" for the four freeform Inventory lists, synchronous, no popup, same tier as Add Custom Ability)", () => {
+  function emptyBoxMarkdown(summary: string, actionName: string, trailingLine?: string): string {
+    return `<details class="ability-group" open><summary>${summary}</summary>\n\n<button type="button" data-mod-action="lyrian-chronicles.${actionName}">+ Add Item</button>\n\nNo items yet.${trailingLine ? `\n\n${trailingLine}` : ""}\n\n</details>`;
+  }
+
+  it("adding to an EMPTY Combat Loadout list replaces the placeholder with a fresh table + row 1, seeding blank defaults", () => {
+    const inventoryPage: CharacterSheetPageDef = { title: "Inventory", markdown: emptyBoxMarkdown("Combat Loadout", "addCombatLoadoutItem"), variableIds: [] };
+    const apply = vi.fn();
+    addCombatLoadoutItem(baseCtx({ pages: [inventoryPage], defs: [] }), apply);
+
+    expect(apply).toHaveBeenCalledTimes(1);
+    const outcome: ModActionOutcome = apply.mock.calls[0][0];
+    expect(outcome.variableValues).toEqual({ combatLoadout1Name: "", combatLoadout1Burden: 0 });
+    expect(outcome.variables).toEqual([
+      { id: "combatLoadout1Name", label: "combatLoadout 1 Name", type: "text", default: "" },
+      { id: "combatLoadout1Burden", label: "combatLoadout 1 Burden", type: "number", default: 0 },
+      { id: "combatBurdenTotal", label: "Combat Burden Total", type: "number", default: 0, valueExpression: "{combatLoadout1Burden}" },
+    ]);
+    const newMarkdown = outcome.pageEdits![0].replaceMarkdown!;
+    expect(newMarkdown).not.toContain("No items yet.");
+    expect(newMarkdown).toContain("| Item | Burden |");
+    expect(newMarkdown).toContain("| {combatLoadout1Name} | {combatLoadout1Burden} |");
+  });
+
+  it("adding to a NON-EMPTY Adventurer's Kit list inserts the new row BEFORE the trailing total marker (never after it), and rebuilds the total's own valueExpression to include both rows", () => {
+    const existingRow = "| {adventurersKit1Name} | {adventurersKit1Burden} |";
+    const inventoryPage: CharacterSheetPageDef = {
+      title: "Inventory",
+      markdown: `<details class="ability-group" open><summary>Adventurer's Kit</summary>\n\n<button type="button" data-mod-action="lyrian-chronicles.addAdventurersKitItem">+ Add Item</button>\n\n| Item | Burden |\n| --- | --- |\n${existingRow}\n\n**Total Burden Carried:** {adventurersKitBurdenTotal}\n\n</details>`,
+      variableIds: [],
+    };
+    const apply = vi.fn();
+    const defs: CharacterSheetVariableDef[] = [
+      { id: "adventurersKit1Name", label: "x", type: "text", default: "" },
+      { id: "adventurersKit1Burden", label: "x", type: "number", default: 0 },
+    ];
+    addAdventurersKitItem(baseCtx({ pages: [inventoryPage], defs }), apply);
+
+    const outcome: ModActionOutcome = apply.mock.calls[0][0];
+    expect(outcome.variables).toContainEqual({
+      id: "adventurersKitBurdenTotal",
+      label: "Adventurer's Kit Burden Total",
+      type: "number",
+      default: 0,
+      valueExpression: "{adventurersKit1Burden} + {adventurersKit2Burden}", // BOTH rows, not just the new one
+    });
+    const newMarkdown = outcome.pageEdits![0].replaceMarkdown!;
+    const totalIdx = newMarkdown.indexOf("**Total Burden Carried:**");
+    const newRowIdx = newMarkdown.indexOf("{adventurersKit2Name}");
+    expect(newRowIdx).toBeGreaterThan(-1);
+    expect(newRowIdx).toBeLessThan(totalIdx); // the new row landed INSIDE the table, before the total line, not after it
+  });
+
+  it("addAlchemyRigItem works the same way (shared addBurdenListItem helper)", () => {
+    const inventoryPage: CharacterSheetPageDef = { title: "Inventory", markdown: emptyBoxMarkdown("Alchemy Rig", "addAlchemyRigItem", "**Burden Total:** {alchemyRigBurdenTotal}"), variableIds: [] };
+    const apply = vi.fn();
+    addAlchemyRigItem(baseCtx({ pages: [inventoryPage], defs: [] }), apply);
+    const outcome: ModActionOutcome = apply.mock.calls[0][0];
+    expect(outcome.variableValues).toEqual({ alchemyRig1Name: "", alchemyRig1Burden: 0 });
+  });
+
+  it("addExpeditionInventoryItem rebuilds BOTH running totals (Burden Total AND Inventory Clim Value), each a live per-row expression", () => {
+    const inventoryPage: CharacterSheetPageDef = {
+      title: "Inventory",
+      markdown: emptyBoxMarkdown("Expedition Inventory", "addExpeditionInventoryItem", "**Inventory Clim Value:** {inventoryClimValue}"),
+      variableIds: [],
+    };
+    const apply = vi.fn();
+    addExpeditionInventoryItem(baseCtx({ pages: [inventoryPage], defs: [] }), apply);
+
+    const outcome: ModActionOutcome = apply.mock.calls[0][0];
+    expect(outcome.variableValues).toEqual({ expeditionItem1Name: "", expeditionItem1Amount: 1, expeditionItem1Burden: 0, expeditionItem1ClimCost: 0 });
+    expect(outcome.variables).toContainEqual({ id: "burdenTotal", label: "Burden Total", type: "number", default: 0, valueExpression: "{expeditionItem1Burden}" });
+    expect(outcome.variables).toContainEqual({
+      id: "inventoryClimValue",
+      label: "Inventory Clim Value",
+      type: "number",
+      default: 0,
+      valueExpression: "({expeditionItem1Amount} * {expeditionItem1ClimCost})",
+    });
+    const newMarkdown = outcome.pageEdits![0].replaceMarkdown!;
+    expect(newMarkdown).toContain("{{expeditionItem1Amount * expeditionItem1ClimCost}}"); // the per-row live total, auto-calculated
   });
 });

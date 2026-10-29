@@ -690,6 +690,40 @@ function insertTableRow(markdown: string, sectionHeading: string, emptyPlacehold
 }
 
 /**
+ * Same job as `insertTableRow` above, for the Inventory page's own
+ * collapsible `<details>` boxes -- there's no `## heading` to anchor
+ * the "end of this section" search on here (real request, 2026-10-29:
+ * "the inventory tab should... have similar boxes from the ability
+ * table that can be collapsed" -- a box, not a markdown section), so
+ * the section's own closing `</details>` tag is the boundary instead.
+ * A new row goes right before the first trailing `**...**` total line
+ * inside that SAME box (if one exists -- Adventurer's Kit/Alchemy
+ * Rig/Expedition Inventory each have one, Combat Loadout doesn't), so
+ * it lands inside the table, never after the total.
+ */
+function insertRowInCollapsibleSection(markdown: string, summaryText: string, emptyPlaceholder: string, tableHeaderLines: readonly string[], rowMarkdown: string): string {
+  const summaryIdx = markdown.indexOf(`>${summaryText}</summary>`);
+  if (summaryIdx === -1) return `${markdown}\n${rowMarkdown}`; // the box itself is missing -- shouldn't happen given the FIXED Inventory template, but never silently drop a real add
+  const detailsEndIdx = markdown.indexOf("</details>", summaryIdx);
+  const sectionEndIdx = detailsEndIdx === -1 ? markdown.length : detailsEndIdx;
+  const section = markdown.slice(summaryIdx, sectionEndIdx);
+  if (section.includes(emptyPlaceholder)) {
+    const replaced = section.replace(emptyPlaceholder, [...tableHeaderLines, rowMarkdown].join("\n"));
+    return markdown.slice(0, summaryIdx) + replaced + markdown.slice(sectionEndIdx);
+  }
+  const totalMarkerIdx = section.search(/\n\*\*/);
+  const insertAt = totalMarkerIdx === -1 ? section.length : totalMarkerIdx;
+  const newSection = `${section.slice(0, insertAt)}\n${rowMarkdown}${section.slice(insertAt)}`;
+  return markdown.slice(0, summaryIdx) + newSection + markdown.slice(sectionEndIdx);
+}
+
+/** The next free 1-based index for `idPrefix` among this character's own dynamic Inventory rows -- same "discover by id SHAPE, no fixed list" technique `findRowIds` already uses for Classes/Breakthroughs, since a combat-loadout/expedition item's own count varies per character and has no catalog to pick from. */
+function nextItemIndex(defs: readonly CharacterSheetVariableDef[], idPrefix: string, suffix: string): number {
+  const existing = findRowIds(defs, idPrefix, suffix).map(Number);
+  return existing.length === 0 ? 1 : Math.max(...existing) + 1;
+}
+
+/**
  * Self-contained dropdown-picker popup -- same mount/remove pattern
  * as `mountAbilitySearchPopup` above, just a plain `<select>` instead
  * of a search box (real request: "a dropdown to select the thing" --
@@ -796,4 +830,76 @@ export const addBreakthrough: ModActionFn = (ctx, apply) => {
       });
     },
   );
+};
+
+/**
+ * Real request, 2026-10-29 (follow-up, same day): "+ Add Item" for
+ * the Inventory page's three Name+Burden lists (Combat Loadout,
+ * Adventurer's Kit, Alchemy Rig) -- never a dropdown pick (unlike
+ * Classes/Breakthroughs, there's no fixed catalog of possible items;
+ * these are freeform, same tier Add Custom Ability's own blank
+ * template is), so this is synchronous, no popup, same shape
+ * `addCustomAbility` already uses. Also rebuilds the list's own
+ * running Burden Total `valueExpression` to include the new row --
+ * otherwise a freshly-added item's own burden would silently never
+ * count toward the total, since that sum is baked per-character-
+ * LENGTH at import/last-edit time, not re-derived from "however many
+ * rows currently exist" on every render.
+ */
+function addBurdenListItem(ctx: Parameters<ModActionFn>[0], apply: Parameters<ModActionFn>[1], idPrefix: string, summaryText: string, totalVariableId: string, totalLabel: string): void {
+  const inventoryPage = ctx.pages.find((p) => p.title === "Inventory");
+  if (!inventoryPage) return;
+  const n = nextItemIndex(ctx.defs, idPrefix, "Burden");
+  const existingIndices = findRowIds(ctx.defs, idPrefix, "Burden").map(Number);
+  const allIndices = [...existingIndices, n].sort((a, b) => a - b);
+  const rowMarkdown = `| {${idPrefix}${n}Name} | {${idPrefix}${n}Burden} |`;
+  const newMarkdown = insertRowInCollapsibleSection(inventoryPage.markdown, summaryText, "No items yet.", ["| Item | Burden |", "| --- | --- |"], rowMarkdown);
+  apply({
+    variables: [
+      { id: `${idPrefix}${n}Name`, label: `${idPrefix} ${n} Name`, type: "text", default: "" },
+      { id: `${idPrefix}${n}Burden`, label: `${idPrefix} ${n} Burden`, type: "number", default: 0 },
+      { id: totalVariableId, label: totalLabel, type: "number", default: 0, valueExpression: allIndices.map((i) => `{${idPrefix}${i}Burden}`).join(" + ") },
+    ],
+    variableValues: { [`${idPrefix}${n}Name`]: "", [`${idPrefix}${n}Burden`]: 0 },
+    pageEdits: [{ pageTitle: "Inventory", replaceMarkdown: newMarkdown }],
+  });
+}
+
+export const addCombatLoadoutItem: ModActionFn = (ctx, apply) => addBurdenListItem(ctx, apply, "combatLoadout", "Combat Loadout", "combatBurdenTotal", "Combat Burden Total");
+export const addAdventurersKitItem: ModActionFn = (ctx, apply) => addBurdenListItem(ctx, apply, "adventurersKit", "Adventurer's Kit", "adventurersKitBurdenTotal", "Adventurer's Kit Burden Total");
+export const addAlchemyRigItem: ModActionFn = (ctx, apply) => addBurdenListItem(ctx, apply, "alchemyRig", "Alchemy Rig", "alchemyRigBurdenTotal", "Alchemy Rig Burden Total");
+
+/**
+ * Same job as `addBurdenListItem` above, for Expedition Inventory's
+ * own four-field rows (Name/Amount/Burden/Clim Cost) -- rebuilds BOTH
+ * running totals this list feeds (Burden Total AND Inventory Clim
+ * Value, same "amount * cost" live per-row expression the import-time
+ * table already uses).
+ */
+export const addExpeditionInventoryItem: ModActionFn = (ctx, apply) => {
+  const inventoryPage = ctx.pages.find((p) => p.title === "Inventory");
+  if (!inventoryPage) return;
+  const n = nextItemIndex(ctx.defs, "expeditionItem", "Burden");
+  const existingIndices = findRowIds(ctx.defs, "expeditionItem", "Burden").map(Number);
+  const allIndices = [...existingIndices, n].sort((a, b) => a - b);
+  const rowMarkdown = `| {expeditionItem${n}Name} | {expeditionItem${n}Amount} | {expeditionItem${n}Burden} | {expeditionItem${n}ClimCost} | {{expeditionItem${n}Amount * expeditionItem${n}ClimCost}} |`;
+  const newMarkdown = insertRowInCollapsibleSection(
+    inventoryPage.markdown,
+    "Expedition Inventory",
+    "No items yet.",
+    ["| Item | Amount | Burden | Clim Cost (Price of 1 Item) | Item Total Clim Value |", "| --- | --- | --- | --- | --- |"],
+    rowMarkdown,
+  );
+  apply({
+    variables: [
+      { id: `expeditionItem${n}Name`, label: `Expedition Item ${n} Name`, type: "text", default: "" },
+      { id: `expeditionItem${n}Amount`, label: `Expedition Item ${n} Amount`, type: "number", default: 1 },
+      { id: `expeditionItem${n}Burden`, label: `Expedition Item ${n} Burden`, type: "number", default: 0 },
+      { id: `expeditionItem${n}ClimCost`, label: `Expedition Item ${n} Clim Cost`, type: "number", default: 0 },
+      { id: "burdenTotal", label: "Burden Total", type: "number", default: 0, valueExpression: allIndices.map((i) => `{expeditionItem${i}Burden}`).join(" + ") },
+      { id: "inventoryClimValue", label: "Inventory Clim Value", type: "number", default: 0, valueExpression: allIndices.map((i) => `({expeditionItem${i}Amount} * {expeditionItem${i}ClimCost})`).join(" + ") },
+    ],
+    variableValues: { [`expeditionItem${n}Name`]: "", [`expeditionItem${n}Amount`]: 1, [`expeditionItem${n}Burden`]: 0, [`expeditionItem${n}ClimCost`]: 0 },
+    pageEdits: [{ pageTitle: "Inventory", replaceMarkdown: newMarkdown }],
+  });
 };

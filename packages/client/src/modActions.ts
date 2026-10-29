@@ -37,7 +37,18 @@
 // `libraries` are already shared verbatim across every caller.
 
 import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
-import { recalculateTraitsCosts, addAbility, addCustomAbility, autoPopulateAbilities, addClass, addBreakthrough } from "./mods/lyrianChronicles.js";
+import {
+  recalculateTraitsCosts,
+  addAbility,
+  addCustomAbility,
+  autoPopulateAbilities,
+  addClass,
+  addBreakthrough,
+  addCombatLoadoutItem,
+  addAdventurersKitItem,
+  addAlchemyRigItem,
+  addExpeditionInventoryItem,
+} from "./mods/lyrianChronicles.js";
 
 /**
  * Everything an action needs to decide what to do -- a snapshot, not
@@ -94,5 +105,9 @@ export const MOD_ACTIONS: Readonly<Record<string, Readonly<Record<string, ModAct
     autoPopulateAbilities,
     addClass,
     addBreakthrough,
+    addCombatLoadoutItem,
+    addAdventurersKitItem,
+    addAlchemyRigItem,
+    addExpeditionInventoryItem,
   },
 };
