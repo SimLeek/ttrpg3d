@@ -283,7 +283,7 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(atMarkdown).toContain('data-chip-label="Accelerando"');
   });
 
-  it("real request, 2026-10-29 (playtest): \"sort by source first -- race & sub-race first, then breakthroughs, then classes, all within those sorted by the way it's listed in the traits tab... each of those should have its own frame\" -- groups are ordered race, sub-race, then breakthroughs/classes in defs/Traits-tab order, each its own <fieldset> frame", async () => {
+  it("real request, 2026-10-29 (playtest): \"sort by source first -- race & sub-race first, then breakthroughs, then classes, all within those sorted by the way it's listed in the traits tab... each of those should have its own frame\" -- groups are ordered race, sub-race, then breakthroughs/classes in defs/Traits-tab order, each its own collapsible <details> frame", async () => {
     // Real data: race Chimera -> "Fight or Flight"; sub-race Yuki-Onna -> "Absorb Ice"; breakthrough "Racial Flight" -> "Flight"; Rogue (level 1) -> "Feint"; Mage (level 2) -> "Decipher Magic".
     const defs = [...breakthroughDefs("RacialFlight"), ...classDefs("Rogue"), ...classDefs("Mage")];
     const variableValues = { race: "Chimera", subRace: "Yuki-Onna", classRogueLevel: 1, classMageLevel: 2 };
@@ -293,10 +293,10 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(apply).toHaveBeenCalledTimes(1);
     const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
 
-    const legends = Array.from(markdown.matchAll(/<legend>([^<]+)<\/legend>/g)).map((m) => m[1]);
-    expect(legends).toEqual(["Chimera", "Yuki-Onna", "Racial Flight", "Rogue", "Mage"]);
+    const headings = Array.from(markdown.matchAll(/<details class="ability-group" open><summary>([^<]+)<\/summary>/g)).map((m) => m[1]);
+    expect(headings).toEqual(["Chimera", "Yuki-Onna", "Racial Flight", "Rogue", "Mage"]);
 
-    const idx = (heading: string) => markdown.indexOf(`<legend>${heading}</legend>`);
+    const idx = (heading: string) => markdown.indexOf(`<summary>${heading}</summary>`);
     expect(markdown.slice(idx("Chimera"), idx("Yuki-Onna"))).toContain('data-chip-label="Fight or Flight"');
     expect(markdown.slice(idx("Yuki-Onna"), idx("Racial Flight"))).toContain('data-chip-label="Absorb Ice"');
     expect(markdown.slice(idx("Racial Flight"), idx("Rogue"))).toContain('data-chip-label="Flight"');
@@ -304,7 +304,7 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(markdown.slice(idx("Mage"))).toContain('data-chip-label="Decipher Magic"');
   });
 
-  it("real example from the request, 2026-10-29 -- a level-4 Starcaller's own group lists its qualifying abilities alphabetically (Celestial Artillery, Comet, Corona Burst, Starfall -- NOT catalog/level order)", async () => {
+  it("real example from the request, 2026-10-29 -- a level-4 Starcaller's own group lists its qualifying abilities by LEVEL first (Celestial Artillery/Comet at 1, Starfall at 2, Corona Burst at 4), alphabetical only within the same level", async () => {
     const defs = classDefs("Starcaller");
     const apply = vi.fn();
     await autoPopulateAbilities(baseCtx({ variableValues: { classStarcallerLevel: 4 }, defs }), apply);
@@ -312,14 +312,23 @@ describe("addAbility/autoPopulateAbilities (real request, 2026-10-28 -- \"an add
     expect(apply).toHaveBeenCalledTimes(1);
     const markdown = (apply.mock.calls[0][0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
     const labelsInOrder = Array.from(markdown.matchAll(/data-chip-label="([^"]+)"/g)).map((m) => m[1]);
-    expect(labelsInOrder).toEqual(["Celestial Artillery", "Comet", "Corona Burst", "Starfall"]);
+    expect(labelsInOrder).toEqual(["Celestial Artillery", "Comet", "Starfall", "Corona Burst"]);
   });
 
-  it("a source with no qualifying abilities (or none at all, e.g. no classes/breakthroughs) produces no fieldset for it, and calling with nothing at all never calls apply", async () => {
+  it("real request, 2026-10-29 (playtest): \"sort alphabetically if... there are no listed levels like racial abilities\" -- a race group (no level on any of its links) sorts purely alphabetically", async () => {
+    // Real data: race "Demon" has two real links -- "Divine Release" and "Demonblood Regeneration" -- alphabetically Demonblood comes first.
+    const apply = vi.fn();
+    await autoPopulateAbilities(baseCtx({ variableValues: { race: "Demon" }, defs: [] }), apply);
+    const markdown = (apply.mock.calls[0]![0] as ModActionOutcome).pageEdits![0].appendMarkdown!;
+    const labelsInOrder = Array.from(markdown.matchAll(/data-chip-label="([^"]+)"/g)).map((m) => m[1]);
+    expect(labelsInOrder).toEqual(["Demonblood Regeneration", "Divine Release"]);
+  });
+
+  it("a source with no qualifying abilities (or none at all, e.g. no classes/breakthroughs) produces no group for it, and calling with nothing at all never calls apply", async () => {
     const apply = vi.fn();
     await autoPopulateAbilities(baseCtx({ variableValues: { race: "Human" }, defs: [] }), apply); // "Human" has real links -- just confirming an unrelated class/breakthrough group never appears when there are none
     const markdown = (apply.mock.calls[0]?.[0] as ModActionOutcome | undefined)?.pageEdits?.[0]?.appendMarkdown ?? "";
-    expect(markdown.match(/<fieldset/g)?.length).toBe(1); // only the one real group (Human), nothing else
+    expect(markdown.match(/<details class="ability-group"/g)?.length).toBe(1); // only the one real group (Human), nothing else
   });
 
   it("never re-adds an ability already listed on the Abilities page, and never calls apply at all when nothing qualifies", async () => {

@@ -593,9 +593,28 @@ function buildAbilityGroups(ctx: { variableValues: Record<string, number | strin
  * lyrian-ability-data.mjs) against this character's CURRENT classes
  * (by level), race, sub-race, and breakthroughs, adding every
  * qualifying ability not already listed, grouped by `buildAbilityGroups`
- * above (each source gets its own `<fieldset>` "frame", abilities
- * listed alphabetically within it).
+ * above (each source gets its own collapsible `<details>` "frame",
+ * abilities inside sorted by level then name -- see
+ * `compareAbilityLinks` below).
  */
+/**
+ * Real request, 2026-10-29 (playtest): "sort by level preferentially
+ * for class abilities, and then sort alphabetically if 2 abilities
+ * have the same level or if there are no listed levels like racial
+ * abilities." A link with no level at all (every race/sub-race/
+ * breakthrough link, plus a handful of class links that grant
+ * unconditionally) sorts as level 0 -- alongside/before a class's
+ * OWN earliest level-1 abilities, which is the same "available from
+ * the start" tier conceptually. Ties (same level, or both level-less)
+ * fall back to plain alphabetical.
+ */
+function compareAbilityLinks(a: AbilityLink, b: AbilityLink): number {
+  const levelA = a.level ?? 0;
+  const levelB = b.level ?? 0;
+  if (levelA !== levelB) return levelA - levelB;
+  return a.name.localeCompare(b.name);
+}
+
 export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
   const catalog = await fetchAbilityCatalog(ctx.httpUrl, ctx.accountId, "lyrian-chronicles");
   const catalogByName = new Map(catalog.map((e) => [e.name, e]));
@@ -607,13 +626,21 @@ export const autoPopulateAbilities: ModActionFn = async (ctx, apply) => {
     const matchingLinks = ABILITY_LINKS.filter((link) => group.matches(link) && !addedThisRun.has(link.name) && !abilityAlreadyListed(ctx.pages, link.name));
     if (matchingLinks.length === 0) continue;
 
-    matchingLinks.sort((a, b) => a.name.localeCompare(b.name));
+    matchingLinks.sort(compareAbilityLinks);
     const rows = matchingLinks.map((link) => {
       addedThisRun.add(link.name);
       const entry = catalogByName.get(link.name) ?? { name: link.name, keywords: "", range: "", description: "", requirement: "", cost: "", benefits: "" };
       return abilityRowHtml(entry);
     });
-    groupBlocks.push(`\n\n<fieldset class="ability-group"><legend>${escapeHtml(group.heading)}</legend>${rows.join("")}</fieldset>`);
+    // Real request, 2026-10-29 (playtest): "add a collapse button
+    // similar to the i buttons that collapses the entire class, race,
+    // or breakthrough" -- a native `<details>` disclosure, same
+    // mechanism each individual ability's own "i" info button already
+    // uses, just wrapping the whole group instead of one description.
+    // `open` by default -- a freshly auto-populated group should be
+    // visible immediately, collapsing is something the player opts
+    // INTO afterward, not a default extra click to see anything at all.
+    groupBlocks.push(`\n\n<details class="ability-group" open><summary>${escapeHtml(group.heading)}</summary>${rows.join("")}</details>`);
   }
 
   if (groupBlocks.length > 0) apply({ pageEdits: [{ pageTitle: "Abilities", appendMarkdown: groupBlocks.join("") }] });
