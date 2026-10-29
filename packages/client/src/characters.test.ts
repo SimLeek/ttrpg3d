@@ -26,6 +26,11 @@ function mockFetch(url: string, init?: { method?: string; body?: string }): Prom
   if (url.includes("/character-sheet-libraries")) return Promise.resolve(jsonResponse(libraries));
   if (url.includes("/character-sheet-templates")) return Promise.resolve(jsonResponse(templates));
   if (url.includes("/character-sheet-preview") && method === "POST") return Promise.resolve(jsonResponse(previewResponse));
+  // Real request, 2026-10-29: renderTokenImageUpload (the Core &
+  // Variables tab's tokenImage row) always fetches this account's own
+  // uploaded-images list now -- defaults to empty so every PRE-
+  // EXISTING test that merely opens that tab still works unchanged.
+  if (url.includes("/uploads") && method === "GET") return Promise.resolve(jsonResponse({ urls: [] }));
 
   if (/\/accounts\/[^/]+\/mods\/[^/]+$/.test(url) && method === "DELETE") {
     const modId = url.split("/mods/")[1]!;

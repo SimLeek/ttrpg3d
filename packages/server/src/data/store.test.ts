@@ -542,3 +542,36 @@ describe("getAbilityCatalog/setAbilityCatalog (real request, 2026-10-28 -- \"gat
     expect(reopened.getAbilityCatalog("acct1", "lyrian-chronicles")).toEqual([{ name: "Persisted Ability", keywords: "", range: "", description: "", requirement: "", cost: "", apCost: "", manaCost: "", rpCost: "", benefits: "" }]);
   });
 });
+
+describe("recordUploadedImage/getUploadedImages (real request, 2026-10-29 -- \"we should be able to get the list of the image our specific account uploaded as well, so that we don't take up space\")", () => {
+  let dir: string;
+  let store: Store;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ttrpg3d-store-test-"));
+    store = createStore(dir, mkdtempSync(join(tmpdir(), "ttrpg3d-store-test-mods-")));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("an account with nothing uploaded yet gets an empty list, not a crash", () => {
+    expect(store.getUploadedImages("acct1")).toEqual([]);
+  });
+
+  it("returns only THIS account's own uploads, newest first", () => {
+    store.recordUploadedImage("acct1", "/uploads/one.png");
+    store.recordUploadedImage("acct2", "/uploads/other-account.png");
+    store.recordUploadedImage("acct1", "/uploads/two.png");
+
+    expect(store.getUploadedImages("acct1")).toEqual(["/uploads/two.png", "/uploads/one.png"]);
+    expect(store.getUploadedImages("acct2")).toEqual(["/uploads/other-account.png"]);
+  });
+
+  it("survives a reopen (reads a fresh createStore against the same baseDir)", () => {
+    store.recordUploadedImage("acct1", "/uploads/persisted.png");
+    const reopened = createStore(dir, mkdtempSync(join(tmpdir(), "ttrpg3d-store-test-mods-")));
+    expect(reopened.getUploadedImages("acct1")).toEqual(["/uploads/persisted.png"]);
+  });
+});

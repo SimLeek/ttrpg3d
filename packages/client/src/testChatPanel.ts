@@ -46,6 +46,9 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
       .test-chat-messages .empty { color: #777; font-style: italic; }
       .test-chat-messages .roll-result { font-weight: bold; text-decoration: underline dotted; cursor: help; }
       .test-chat-messages .roll-result-group { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 6px 8px; margin: 2px 0; }
+      /* Real request, 2026-10-29: "the abilities when clicked should show their description in tables with some background difference to differentiate them from the rest of the chat" -- .ability-info-table is the class lyrianChronicles.ts's own abilityInfoTableHtml already bakes in; same background-tint treatment as a roll-result-group, just shaped as a table instead. Mirrored in chatPanel.ts's own style block, same parity this round's own chat-rendering fix already established. */
+      .test-chat-messages .ability-info-table { background: rgba(255,255,255,0.06); border-radius: 4px; border-collapse: collapse; width: 100%; margin: 2px 0; }
+      .test-chat-messages .ability-info-table td { padding: 3px 6px; }
       .test-chat-compose { flex: none; display: flex; gap: 6px; padding: 8px; border-top: 1px solid rgba(200,200,200,0.3); }
       .test-chat-compose input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; font-size: 13px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }
       .test-chat-compose button { font-size: 13px; padding: 6px 10px; }

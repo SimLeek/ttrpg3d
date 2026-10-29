@@ -127,11 +127,24 @@ const postUpload = createEndpoint("/uploads", { method: "POST", scope: "http" },
   const dataBase64 = typeof ctx.body?.dataBase64 === "string" ? ctx.body.dataBase64 : "";
   try {
     const url = saveUploadedImage(join(process.cwd(), "data", "uploads"), mimeType, dataBase64);
+    store.recordUploadedImage(accountId, url);
     return { url };
   } catch (err) {
     if (err instanceof UploadRejected) throw new APIError("BAD_REQUEST", { message: err.message });
     throw err;
   }
+});
+
+// Real request, 2026-10-29: "we should be able to get the list of the
+// image our specific account uploaded as well, so that we don't take
+// up space" -- lets a token-image picker offer "reuse one already
+// uploaded" instead of only ever uploading a fresh copy. Same trust
+// level as postUpload above (a real account, nothing character/game-
+// scoped).
+const getAccountUploads = createEndpoint("/accounts/:id/uploads", { method: "GET", scope: "http" }, async (ctx) => {
+  const accountId = ctx.params.id;
+  if (!store.getAccount(accountId)) throw new APIError("UNAUTHORIZED", { message: "unknown account" });
+  return { urls: store.getUploadedImages(accountId) };
 });
 
 // Sets a character's template + variable values wholesale. Ownership-
@@ -466,6 +479,7 @@ const routes = createRouter({
   getAccountCharacterSheetLibraries,
   getAccountAbilityCatalog,
   postUpload,
+  getAccountUploads,
   putCharacterSheet,
   postCharacterImportSheet,
   getCharacter,

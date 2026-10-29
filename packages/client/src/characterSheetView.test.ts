@@ -15,9 +15,16 @@ function jsonResponse(body: unknown): Response {
   return { ok: true, json: () => Promise.resolve(body) } as Response;
 }
 
+let uploadedImages: string[] = [];
+
 function mockFetch(url: string, init?: { method?: string; body?: string }): Promise<Response> {
   const method = init?.method ?? "GET";
   if (url.includes("/character-sheet-preview") && method === "POST") return Promise.resolve(jsonResponse(previewResponse));
+  // Real request, 2026-10-29: renderTokenImageUpload (the Core &
+  // Variables tab's tokenImage row) always fetches this account's own
+  // uploaded-images list now -- defaults to empty so every PRE-
+  // EXISTING test that merely opens that tab still works unchanged.
+  if (url.includes("/uploads") && method === "GET") return Promise.resolve(jsonResponse({ urls: uploadedImages }));
   if (url.includes("/sheet") && method === "PUT") {
     const body = JSON.parse(init!.body!) as { templateId: string | null; customSheet: CharacterRecord["customSheet"]; variableValues: Record<string, number | string> };
     character = { ...character, ...body };
@@ -56,6 +63,7 @@ beforeEach(() => {
   posted.length = 0;
   postedHtml.length = 0;
   saved.length = 0;
+  uploadedImages = [];
   previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [], compoundRollSegments: [] };
   character = {
     id: "char-1",
@@ -505,6 +513,29 @@ describe("mountCharacterSheetView", () => {
 
     expect(bodies.length).toBeGreaterThan(0);
     expect(JSON.parse(bodies[0]).accountId).toBe("admin-9");
+  });
+
+  it("real request, 2026-10-29: \"we should be able to get the list of the image our specific account uploaded as well... please display the token image once it's chosen, either from a dropdown of already uploaded token pics or after uploading\" -- tokenImage's own row shows a live preview once set, and a dropdown of this account's past uploads that sets it when picked", async () => {
+    uploadedImages = ["/uploads/one.png", "/uploads/two.png"];
+    mountCharacterSheetView(container, baseOptions());
+    await flush();
+    container.querySelector<HTMLButtonElement>(".sheet-tab")!.click(); // Core & Variables
+    await flush();
+
+    // No image set yet -- no preview at all, but the reuse dropdown is already there, populated from this account's own past uploads.
+    expect(container.querySelector(".token-image-preview")).toBeNull();
+    const select = container.querySelector<HTMLSelectElement>(".token-image-reuse-select")!;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["", "/uploads/one.png", "/uploads/two.png"]);
+
+    // Picking one sets tokenImage AND shows the live preview, resolved the SAME way net.ts's own resolveTokenImageUrl resolves it for the real in-game token.
+    select.value = "/uploads/two.png";
+    select.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(saved.at(-1)!.variableValues.tokenImage).toBe("/uploads/two.png");
+    const preview = container.querySelector<HTMLImageElement>(".token-image-preview")!;
+    expect(preview).not.toBeNull();
+    expect(preview.src).toBe("http://test/uploads/two.png");
   });
 
   it("refresh() re-renders the dependency warning and, if Core & Variables is the active tab, its content", async () => {

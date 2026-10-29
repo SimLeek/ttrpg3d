@@ -30,7 +30,7 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, findCompoundRollSegments, evaluateCharacterSheetExpression, resolveVariableValue, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
-import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
+import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, fetchAccountUploads, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey, valueExpressionFieldKey } from "./characterSheetWidgets.js";
 import type { ModActionFn, ModActionOutcome } from "./modActions.js";
 import { colorToHex, hexToColor } from "./lobby.js";
@@ -143,11 +143,56 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
    * fills that SAME text widget's value in (same `onChange` write-
    * back `saveSheet` already uses) -- one value, two ways to set it,
    * not two competing fields.
+   *
+   * Real request, 2026-10-29: "we should be able to get the list of
+   * the image our specific account uploaded as well, so that we
+   * don't take up space... please display the token image once it's
+   * chosen, either from a dropdown of already uploaded token pics or
+   * after uploading." Adds a THIRD way to set it (a dropdown of this
+   * account's own past uploads, `fetchAccountUploads`) and a live
+   * `<img>` preview reflecting whichever of the three just ran --
+   * same `${httpUrl}${tokenImage}` resolution net.ts's own
+   * `resolveTokenImageUrl` already uses for the real in-game token
+   * (confirmed directly: `tokenImage` is always a server-relative
+   * path, e.g. "/uploads/<id>.png", never a full external URL, so
+   * this preview shows exactly what the token will actually look
+   * like in-game, not a guess).
    */
   function renderTokenImageUpload(parent: HTMLElement, def: CharacterSheetVariableDef): void {
     renderVariableRow(parent, def);
+
+    const currentUrl = character.variableValues[def.id] ?? def.default;
+    if (typeof currentUrl === "string" && currentUrl !== "") {
+      const preview = document.createElement("img");
+      preview.className = "token-image-preview";
+      preview.src = `${httpUrl}${currentUrl}`;
+      preview.alt = "Token image preview";
+      preview.style.cssText = "max-width: 96px; max-height: 96px; display: block; margin: 4px 0; border-radius: 4px; object-fit: cover;";
+      parent.append(preview);
+    }
+
     const row = document.createElement("div");
     row.className = "variable-row";
+
+    const reuseSelect = document.createElement("select");
+    reuseSelect.className = "token-image-reuse-select";
+    reuseSelect.innerHTML = `<option value="">Reuse an already-uploaded image...</option>`;
+    reuseSelect.addEventListener("change", () => {
+      if (!reuseSelect.value) return;
+      character.variableValues = { ...character.variableValues, [def.id]: reuseSelect.value };
+      saveSheet();
+      renderCoreTabContent(); // refreshes the preview + plain-text widget above
+    });
+    row.append(reuseSelect);
+    void fetchAccountUploads(httpUrl, viewerAccountId).then((urls) => {
+      for (const url of urls) {
+        const option = document.createElement("option");
+        option.value = url;
+        option.textContent = url;
+        reuseSelect.append(option);
+      }
+    });
+
     const fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept = "image/png,image/jpeg,image/webp";
@@ -157,7 +202,7 @@ export function mountCharacterSheetView(container: HTMLElement, options: Charact
       void uploadImage(httpUrl, viewerAccountId, file).then(({ url }) => {
         character.variableValues = { ...character.variableValues, [def.id]: url };
         saveSheet();
-        renderCoreTabContent(); // refreshes the plain-text widget above so it shows the newly-uploaded URL
+        renderCoreTabContent(); // refreshes the preview + plain-text widget above so it shows the newly-uploaded URL
       });
     });
     row.append(fileInput);

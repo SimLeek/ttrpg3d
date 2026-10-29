@@ -307,6 +307,7 @@ export function createStore(baseDir: string, modsDir: string = join(process.cwd(
   const charactersFile = join(baseDir, "characters.json");
   const gameCharacterLinksFile = join(baseDir, "gameCharacterLinks.json");
   const abilityCatalogsFile = join(baseDir, "abilityCatalogs.json");
+  const uploadedImagesFile = join(baseDir, "uploadedImages.json");
 
   function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
@@ -406,6 +407,30 @@ export function createStore(baseDir: string, modsDir: string = join(process.cwd(
 
   function saveAbilityCatalogs(records: AbilityCatalogRecord[]): void {
     writeJson(abilityCatalogsFile, records);
+  }
+
+  /**
+   * Real request, 2026-10-29: "if those are imported and saved, which
+   * they should be, we should be able to get the list of the image
+   * our specific account uploaded as well, so that we don't take up
+   * space." `saveUploadedImage` (data/uploads.ts) only ever wrote the
+   * file + handed back its URL -- nothing recorded WHICH account
+   * uploaded it, so there was never a list to show back. One flat
+   * file, same "an array of plain records, filtered by accountId on
+   * read" shape AbilityCatalogRecord above already uses.
+   */
+  interface UploadedImageRecord {
+    accountId: string;
+    url: string;
+    uploadedAt: number;
+  }
+
+  function loadUploadedImages(): UploadedImageRecord[] {
+    return readJson<UploadedImageRecord[]>(uploadedImagesFile, []);
+  }
+
+  function saveUploadedImages(records: UploadedImageRecord[]): void {
+    writeJson(uploadedImagesFile, records);
   }
 
   /**
@@ -546,6 +571,22 @@ export function createStore(baseDir: string, modsDir: string = join(process.cwd(
       if (existing) existing.catalog = catalog;
       else records.push({ accountId, modId, catalog });
       saveAbilityCatalogs(records);
+    },
+
+    /** Called right after `saveUploadedImage` writes the file -- records WHICH account uploaded it, so `getUploadedImages` below has something to return. A no-op-safe re-upload of the exact same URL (shouldn't happen, `saveUploadedImage` always mints a fresh UUID filename) would just add a harmless duplicate entry rather than erroring. */
+    recordUploadedImage(accountId: string, url: string): void {
+      const records = loadUploadedImages();
+      records.push({ accountId, url, uploadedAt: Date.now() });
+      saveUploadedImages(records);
+    },
+
+    /** Real request, 2026-10-29: "the list of the image our specific account uploaded... so that we don't take up space" -- lets the token-image picker offer "reuse one you already have" instead of only ever uploading a fresh copy. Newest first (most likely to be the one just used). */
+    getUploadedImages(accountId: string): string[] {
+      return loadUploadedImages()
+        .filter((r) => r.accountId === accountId)
+        .reverse() // latest-pushed-first, as the tiebreak below for two uploads landing in the SAME millisecond (confirmed live: a fast test -- plausibly a fast double-upload too -- ties Date.now())
+        .sort((a, b) => b.uploadedAt - a.uploadedAt) // stable sort (ES2019+): a genuine tie keeps the reversed, latest-first order from above
+        .map((r) => r.url);
     },
 
     createGame(name: string, ownerAccountId: string): GameRecord {

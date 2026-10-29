@@ -193,6 +193,12 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
       .chat-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
       .chat-messages .msg { margin-bottom: 4px; white-space: pre-wrap; }
       .chat-messages .err { margin-bottom: 4px; color: #e66; font-style: italic; }
+      /* Real request, 2026-10-29: "the chat in the main game... should be exactly the same [as test chat]" -- mirrors testChatPanel.ts's own .roll-result/.roll-result-group rules exactly, now that a compound roll's own html actually reaches this panel too. */
+      .chat-messages .roll-result { font-weight: bold; text-decoration: underline dotted; cursor: help; }
+      .chat-messages .roll-result-group { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 6px 8px; margin: 2px 0; }
+      /* Real request, 2026-10-29: "the abilities when clicked should show their description in tables with some background difference to differentiate them from the rest of the chat" -- .ability-info-table is the class lyrianChronicles.ts's own abilityInfoTableHtml already bakes in; same background-tint treatment as a roll-result-group, just shaped as a table instead. */
+      .chat-messages .ability-info-table { background: rgba(255,255,255,0.06); border-radius: 4px; border-collapse: collapse; width: 100%; margin: 2px 0; }
+      .chat-messages .ability-info-table td { padding: 3px 6px; }
       .chat-input-row { flex: none; padding: 8px; border-top: 1px solid rgba(200,200,200,0.3); }
       .chat-input-row input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }
       .chat-gm-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 12px; }

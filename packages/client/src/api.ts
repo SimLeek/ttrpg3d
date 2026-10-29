@@ -286,6 +286,13 @@ export async function uploadImage(httpUrl: string, accountId: string, file: File
   return res.json();
 }
 
+/** Real request, 2026-10-29: "we should be able to get the list of the image our specific account uploaded as well, so that we don't take up space" -- newest first (store.ts's own getUploadedImages). Lets a token-image picker offer "reuse one you already have" alongside "upload a new one." */
+export async function fetchAccountUploads(httpUrl: string, accountId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/uploads`);
+  const { urls } = await res.json();
+  return urls;
+}
+
 /**
  * MVP goal item 4, round 2 -- resolves a page's `{{modId.fn(args)}}`
  * library calls (findLibraryCalls) against the account's own

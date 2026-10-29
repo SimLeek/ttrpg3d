@@ -160,7 +160,17 @@ export function buildVariableWidgetHtml(def: CharacterSheetVariableDef, values: 
 
   if (def.type === "text") {
     const value = values[def.id] ?? def.default;
-    return `<input type="text" class="sheet-widget-text" data-var-key="${escapeAttr(def.id)}" value="${escapeAttr(typeof value === "string" ? value : String(value))}" />`;
+    // Real request, 2026-10-29 (inventory round): "the item names are
+    // typically the longest, so those boxes should expand
+    // preferentially" -- a plain `<input>` has no width of its own
+    // beyond the browser's fixed ~20-character default, so even a
+    // table cell with plenty of ROOM (a name column, naturally the
+    // widest under `table-layout: auto`'s own content-based sizing)
+    // still showed a cramped, fixed-width box. `width: 100%` just
+    // fills whatever the surrounding cell/row already allocated it --
+    // never WIDER than that, so a short text field elsewhere on a
+    // sheet isn't stretched awkwardly either.
+    return `<input type="text" class="sheet-widget-text" data-var-key="${escapeAttr(def.id)}" value="${escapeAttr(typeof value === "string" ? value : String(value))}" style="width: 100%; box-sizing: border-box;" />`;
   }
 
   // "number" -- a plain single value box, or (real request, 2026-10-26,
