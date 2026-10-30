@@ -26,7 +26,7 @@
 
 import { fetchCharacter, fetchCharacterSheetTemplates, fetchCharacterSheetLibraries, fetchAccountMods, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { mountCharacterSheetView, type CharacterSheetViewController } from "./characterSheetView.js";
-import { getAllModActions } from "./modActions.js";
+import { getAllModActions, ensureModActionsLoaded } from "./modActions.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
 import { SAFE_AREA_LEFT_VAR, SAFE_AREA_RIGHT_VAR, SAFE_AREA_TOP_VAR, SAFE_AREA_BOTTOM_VAR } from "./panelLayout.js";
 
@@ -137,6 +137,10 @@ export function mountCharacterSheetPopup(container: HTMLElement, options: Charac
           fetchAccountMods(httpUrl, character.ownerAccountId),
         ]);
         if (openCharacterId !== characterId) return;
+        // This popup never shows the account mods list/"Import" button
+        // itself -- same reasoning as characterSheetWindow.ts's own copy
+        // of this line.
+        for (const modId of importedModIds) void ensureModActionsLoaded(modId);
         view = mountCharacterSheetView(bodyEl, {
           httpUrl,
           viewerAccountId,

@@ -42,7 +42,7 @@ import { mountCharacterSheetView, type CharacterSheetViewController } from "./ch
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 import { colorToHex, hexToColor, randomCharacterColor } from "./lobby.js";
 import { fetchAndParseWorkbook } from "./characterSheetImport.js";
-import { getAllModActions } from "./modActions.js";
+import { getAllModActions, ensureModActionsLoaded } from "./modActions.js";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -165,6 +165,10 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       // that caused round 2's double-click bug.
       button.textContent = importing ? "Remove" : "Import";
       button.dataset.imported = String(importing);
+      // Real request, 2026-10-29: "run what [modActions.ts] does when
+      // the mod is imported by a user, like when clicking the mod
+      // import button" -- this IS that button.
+      if (importing) void ensureModActionsLoaded(modId);
       await Promise.all([refreshTemplates(), refreshLibraries()]);
       currentView?.refresh(templates, libraries, importedModIds);
     });
@@ -343,6 +347,9 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
 
   void (async () => {
     [availableMods, importedModIds, characters] = await Promise.all([fetchAvailableMods(httpUrl), fetchAccountMods(httpUrl, accountId), fetchCharactersForAccount(httpUrl, accountId)]);
+    // Covers a mod imported in an EARLIER session -- its own "Import"
+    // click (above) already handles THIS session's fresh import.
+    for (const modId of importedModIds) void ensureModActionsLoaded(modId);
     renderModsList();
     renderCharList();
     await Promise.all([refreshTemplates(), refreshLibraries()]);
