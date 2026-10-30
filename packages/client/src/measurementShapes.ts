@@ -86,6 +86,22 @@ export function movementStep(inputX: number, inputY: number, headingRad: number)
   return [Math.round(dirX), Math.round(dirZ)];
 }
 
+/**
+ * Real request, 2026-10-27: "a 'cube' option which is almost exactly
+ * the same as the sphere, and starts with the first point in the
+ * center, and the second point is the radius, and the other point
+ * takes the max distance in any axis aligned dimension and makes that
+ * the 'radius'." Unlike sphere's own radius (`minkowskiDistance` at
+ * p=2, the real corner-to-corner distance), this is the Chebyshev/
+ * max-norm distance -- deliberately NOT `minkowskiDistance(a, b,
+ * Infinity)` (that function explicitly falls back to Euclidean for a
+ * non-finite p, a different, unrelated real correction -- see
+ * shared/distance.ts's own test for why).
+ */
+function cubeRadius(center: Point3, edge: Point3): number {
+  return Math.max(Math.abs(center[0] - edge[0]), Math.abs(center[1] - edge[1]), Math.abs(center[2] - edge[2]));
+}
+
 function cross3(u: Point3, v: Point3): Point3 {
   return [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 }
@@ -139,21 +155,27 @@ export function frustumFarCorners(a: Point3, b: Point3, width: number): [Point3,
 /**
  * Billboard sizing's own shared AABB -- real request: "these should
  * all be using the same function to keep the code clean," fed each
- * shape's own axis-aligned bounding box. Exact for cube (the box IS
- * its own two corners) and sphere (center +/- radius); an honest
- * over-approximation for cone/beam (padded by the shape's own widest
- * radius in every axis, rather than computing the true AABB of an
- * arbitrarily-ROTATED cylinder/cone, which needs real per-rotation
- * geometry this feature doesn't otherwise need) -- fine for a
- * billboard's own rough size, not used for anything gameplay-exact.
+ * shape's own axis-aligned bounding box. Exact for box (the box IS
+ * its own two corners), sphere (center +/- radius), and cube (center
+ * +/- the same max-axis "radius" on every axis -- see `cubeRadius`
+ * below); an honest over-approximation for cone/beam (padded by the
+ * shape's own widest radius in every axis, rather than computing the
+ * true AABB of an arbitrarily-ROTATED cylinder/cone, which needs real
+ * per-rotation geometry this feature doesn't otherwise need) -- fine
+ * for a billboard's own rough size, not used for anything gameplay-
+ * exact.
  */
 export function shapeAabb(kind: MeasurementShapeKind, points: Point3[], coneDegreesOrBeamWidth?: number): { width: number; height: number; depth: number } {
-  if (kind === "cube") {
+  if (kind === "box") {
     const [a, b] = points;
     return { width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]), depth: Math.abs(a[2] - b[2]) };
   }
   if (kind === "sphere") {
     const radius = minkowskiDistance(points[0], points[1], 2);
+    return { width: radius * 2, height: radius * 2, depth: radius * 2 };
+  }
+  if (kind === "cube") {
+    const radius = cubeRadius(points[0], points[1]);
     return { width: radius * 2, height: radius * 2, depth: radius * 2 };
   }
   // cone/beam: pad the axis segment's own box by the widest radius.
@@ -532,23 +554,24 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
         const mid: Point3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.3, (a[2] + b[2]) / 2];
         addLabelAt(mid, `D: ${(segmentDistances[i] * ftPV).toFixed(1)}ft\nT: ${(totalDistance * ftPV).toFixed(1)}ft`);
       }
-    } else if (kind === "cube" && points.length === 2) {
+    } else if (kind === "box" && points.length === 2) {
       const [a, b] = points;
       const mid: Point3 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
-      const box = BABYLON.MeshBuilder.CreateBox(`${idPrefix}-cube`, { width: Math.abs(a[0] - b[0]) || 0.01, height: Math.abs(a[1] - b[1]) || 0.01, depth: Math.abs(a[2] - b[2]) || 0.01 }, scene);
+      const box = BABYLON.MeshBuilder.CreateBox(`${idPrefix}-box`, { width: Math.abs(a[0] - b[0]) || 0.01, height: Math.abs(a[1] - b[1]) || 0.01, depth: Math.abs(a[2] - b[2]) || 0.01 }, scene);
       box.position = new BABYLON.Vector3(...mid);
       box.material = mat;
       box.isPickable = pickable;
       noa.rendering.addMeshToScene(box, false);
       meshes.push(box);
-      const aabb = shapeAabb("cube", points);
-      // Real request, 2026-10-24: "Cube should have W, H, and D all on
-      // different lines on top of each other" -- replaces the single
-      // corner-to-corner diagonal distance with the cube's own three
-      // real axis extents, one per line (needs a 3rd line's worth of
-      // vertical room -- see distanceLabel.ts's own `lines` param).
-      const cubeText = `W: ${(aabb.width * ftPV).toFixed(1)}ft\nH: ${(aabb.height * ftPV).toFixed(1)}ft\nD: ${(aabb.depth * ftPV).toFixed(1)}ft`;
-      addLabelAt([mid[0], mid[1] + aabb.height / 2 + 0.3, mid[2]], cubeText, billboardScaleFor(aabb), 3);
+      const aabb = shapeAabb("box", points);
+      // Real request, 2026-10-24: "Cube [now Box] should have W, H,
+      // and D all on different lines on top of each other" -- replaces
+      // the single corner-to-corner diagonal distance with the box's
+      // own three real axis extents, one per line (needs a 3rd line's
+      // worth of vertical room -- see distanceLabel.ts's own `lines`
+      // param).
+      const boxText = `W: ${(aabb.width * ftPV).toFixed(1)}ft\nH: ${(aabb.height * ftPV).toFixed(1)}ft\nD: ${(aabb.depth * ftPV).toFixed(1)}ft`;
+      addLabelAt([mid[0], mid[1] + aabb.height / 2 + 0.3, mid[2]], boxText, billboardScaleFor(aabb), 3);
     } else if (kind === "sphere" && points.length === 2) {
       const [center, edge] = points;
       const radius = minkowskiDistance(center, edge, 2);
@@ -559,6 +582,22 @@ export function installMeasurementShapes(noa: Engine, room: Room, _playerControl
       noa.rendering.addMeshToScene(sphere, false);
       meshes.push(sphere);
       const aabb = shapeAabb("sphere", points);
+      addLabelAt([center[0], center[1] + radius + 0.3, center[2]], `r=${ftPerVoxelLabel(radius, ftPV)}`, billboardScaleFor(aabb));
+    } else if (kind === "cube" && points.length === 2) {
+      // Real request, 2026-10-27: "almost exactly the same as the
+      // sphere" -- same center-then-radius-point input, but the
+      // "radius" is the LARGEST single-axis distance (not the real
+      // corner-to-corner distance), and the rendered shape is an
+      // equal-sided BOX (width=height=depth=2*radius), not a sphere.
+      const [center, edge] = points;
+      const radius = cubeRadius(center, edge);
+      const cube = BABYLON.MeshBuilder.CreateBox(`${idPrefix}-cube`, { size: Math.max(radius, 0.025) * 2 }, scene);
+      cube.position = new BABYLON.Vector3(...center);
+      cube.material = mat;
+      cube.isPickable = pickable;
+      noa.rendering.addMeshToScene(cube, false);
+      meshes.push(cube);
+      const aabb = shapeAabb("cube", points);
       addLabelAt([center[0], center[1] + radius + 0.3, center[2]], `r=${ftPerVoxelLabel(radius, ftPV)}`, billboardScaleFor(aabb));
     } else if ((kind === "cone" || kind === "beam") && points.length === 2) {
       const [a, b] = points;

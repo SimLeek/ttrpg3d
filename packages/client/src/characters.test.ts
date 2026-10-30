@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import * as XLSX from "xlsx";
 import { mountCharactersPage } from "./characters.js";
 import type { ModManifest, CharacterRecord, CharacterSheetTemplateCatalogEntry, CharacterSheetLibraryCatalogEntry, CharacterSheetPreviewResult } from "./api.js";
 
@@ -15,7 +16,7 @@ let libraries: CharacterSheetLibraryCatalogEntry[];
 let previewResponse: CharacterSheetPreviewResult;
 
 function jsonResponse(body: unknown): Response {
-  return { json: () => Promise.resolve(body) } as Response;
+  return { ok: true, json: () => Promise.resolve(body) } as Response;
 }
 
 function mockFetch(url: string, init?: { method?: string; body?: string }): Promise<Response> {
@@ -25,6 +26,11 @@ function mockFetch(url: string, init?: { method?: string; body?: string }): Prom
   if (url.includes("/character-sheet-libraries")) return Promise.resolve(jsonResponse(libraries));
   if (url.includes("/character-sheet-templates")) return Promise.resolve(jsonResponse(templates));
   if (url.includes("/character-sheet-preview") && method === "POST") return Promise.resolve(jsonResponse(previewResponse));
+  // Real request, 2026-10-29: renderTokenImageUpload (the Core &
+  // Variables tab's tokenImage row) always fetches this account's own
+  // uploaded-images list now -- defaults to empty so every PRE-
+  // EXISTING test that merely opens that tab still works unchanged.
+  if (url.includes("/uploads") && method === "GET") return Promise.resolve(jsonResponse({ urls: [] }));
 
   if (/\/accounts\/[^/]+\/mods\/[^/]+$/.test(url) && method === "DELETE") {
     const modId = url.split("/mods/")[1]!;
@@ -63,7 +69,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   importedModIds = [];
-  previewResponse = { resolvedMarkdown: "", segments: [] };
+  previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [], compoundRollSegments: [] };
   character = {
     id: "char-1",
     ownerAccountId: "account-1",
@@ -84,6 +90,7 @@ beforeEach(() => {
         variables: [{ id: "str", label: "Strength", type: "number", default: 10 }],
         pages: [{ title: "Overview", markdown: "Strength: {str}, modifier: {{default.modifier(str)}}", variableIds: ["str"] }],
       },
+      hasImporter: false,
     },
   ];
   libraries = [];
@@ -165,6 +172,60 @@ describe("mountCharactersPage", () => {
     expect(container.querySelectorAll("#char-list .select-char-btn").length).toBe(1); // unchanged
   });
 
+  it("real request, 2026-10-26 -- 'Import from URL' on the TOP-LEVEL characters page only shows for an importer-capable template, and creates + imports a brand-new character in one click", async () => {
+    templates = [{ modId: "lyrian-chronicles", manifest: { id: "lyrian-chronicles", name: "Lyrian Chronicles", version: "0.1.0", entry: "entry.ts" }, template: { name: "Lyrian Chronicles", pages: [], variables: [] }, hasImporter: true }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([["Name", "Alba", "HP", 70]]), "Core");
+    const xlsxBuffer = XLSX.write(workbook, { type: "array" }) as ArrayBuffer;
+    const importRequests: { url: string; body: string }[] = [];
+    const importedCharacter: CharacterRecord = {
+      id: "char-imported",
+      ownerAccountId: "account-1",
+      name: "Alba",
+      token: { color: [0.1, 0.2, 0.3] },
+      statusEffects: [],
+      createdAt: 0,
+      templateId: "lyrian-chronicles",
+      customSheet: { name: "Lyrian Chronicles", pages: [{ title: "Core", markdown: "HP: {hp}", variableIds: ["hp"] }], variables: [{ id: "hp", label: "HP", type: "number", default: 70 }], bars: [] },
+      variableValues: { hp: 70 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string; body?: string }) => {
+        if (url === "https://example.com/sheet.xlsx") return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(xlsxBuffer) } as Response);
+        if (url.includes("/import-sheet") && init?.method === "POST") {
+          importRequests.push({ url, body: init.body! });
+          return Promise.resolve(jsonResponse(importedCharacter));
+        }
+        return mockFetch(url, init);
+      }),
+    );
+
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const importListEl = container.querySelector<HTMLDivElement>("#import-new-character-list")!;
+    const importRows = importListEl.querySelectorAll(".import-row");
+    expect(importRows).toHaveLength(1);
+    expect(importRows[0].getAttribute("data-mod-id")).toBe("lyrian-chronicles");
+
+    importListEl.querySelector<HTMLInputElement>(".import-new-character-name")!.value = "Alba";
+    importListEl.querySelector<HTMLInputElement>(".import-url-input")!.value = "https://example.com/sheet.xlsx";
+    importListEl.querySelector<HTMLButtonElement>(".import-from-url-btn")!.click();
+    await flush();
+    await flush(); // create -> fetch+parse -> import-sheet is a few microtask hops deep
+
+    expect(importRequests).toHaveLength(1);
+    const body = JSON.parse(importRequests[0].body) as { accountId: string; modId: string };
+    expect(body.accountId).toBe("account-1");
+    expect(body.modId).toBe("lyrian-chronicles");
+
+    const names = Array.from(container.querySelectorAll<HTMLButtonElement>("#char-list .select-char-btn")).map((b) => b.textContent);
+    expect(names).toEqual(["Aria", "Alba"]);
+    expect(container.querySelector<HTMLButtonElement>(".select-char-btn.selected")!.textContent).toBe("Alba"); // the newly imported character is selected
+    expect(container.querySelector(".sheet-tab")?.textContent).toBe("Core & Variables"); // landed on the real imported sheet, not a start-prompt
+  });
+
   it("importing a mod flips only that button in place, without rebuilding the whole list", async () => {
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
@@ -231,6 +292,8 @@ describe("mountCharactersPage", () => {
     previewResponse = {
       resolvedMarkdown: "Strength: 12, modifier: 1",
       segments: [{ start: 18, end: 41, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "button" }],
+      expressionSegments: [],
+      compoundRollSegments: [],
     };
     character.variableValues = { str: 12 };
     mountCharactersPage(container, "http://test", "account-1");
@@ -248,7 +311,7 @@ describe("mountCharactersPage", () => {
 
   it("an inline {variableId} box sits exactly where written in the markdown and is directly editable, persisting the change (round 4's actual request -- not a list below the page)", async () => {
     importedModIds = ["default"];
-    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }] };
+    previewResponse = { resolvedMarkdown: "Strength: 10, modifier: 0", segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "0", display: "button" }], expressionSegments: [], compoundRollSegments: [] };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
     container.querySelector<HTMLButtonElement>(".start-template-btn")!.click();
@@ -359,7 +422,7 @@ describe("mountCharactersPage", () => {
 
   it("a {{modId.fn(args):box}} library call renders as a plain, non-clickable value instead of a chat-chip", async () => {
     importedModIds = ["default"];
-    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }] };
+    previewResponse = { resolvedMarkdown: "Modifier: 1", segments: [{ start: 10, end: 44, modId: "default", functionName: "modifier", args: ["str"], value: "1", display: "box" }], expressionSegments: [], compoundRollSegments: [] };
     character.customSheet = { name: "Sheet", pages: [{ title: "Overview", markdown: "Modifier: {{default.modifier(str):box}}", variableIds: [] }], variables: [] };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
@@ -527,6 +590,8 @@ describe("mountCharactersPage", () => {
     previewResponse = {
       resolvedMarkdown: "Strength: 10, modifier: 3",
       segments: [{ start: 14, end: 37, modId: "default", functionName: "modifier", args: ["str"], value: "3", display: "button" }],
+      expressionSegments: [],
+      compoundRollSegments: [],
     };
     mountCharactersPage(container, "http://test", "account-1");
     await flush();
@@ -538,5 +603,25 @@ describe("mountCharactersPage", () => {
     expect(testChatMessages.textContent).toContain("Aria");
     expect(testChatMessages.textContent).toContain("default.modifier");
     expect(testChatMessages.textContent).toContain("3");
+  });
+
+  it("real request, 2026-10-26 -- clicking a dice-roll chip posts to the test chat panel with the richer tooltip HTML, not just the plain fallback text", async () => {
+    character.customSheet = { name: "Aria's Sheet", pages: [{ title: "Core", markdown: "Attack: {{1d20 + {bonus}:button}}", variableIds: [] }], variables: [], bars: [] };
+    character.variableValues = { bonus: 3 };
+    mountCharactersPage(container, "http://test", "account-1");
+    await flush();
+
+    const rollBtn = container.querySelector<HTMLButtonElement>(".dice-roll-chip")!;
+    previewResponse = { resolvedMarkdown: "", segments: [], expressionSegments: [{ start: 0, end: 25, expression: "1d20 + {bonus}", display: "button", value: 15, text: "1d20+3: [12]+3 = 15" }], compoundRollSegments: [] };
+    rollBtn.click();
+    await flush();
+    await flush();
+
+    const testChatMessages = container.querySelector("#test-chat-messages")!;
+    const span = testChatMessages.querySelector<HTMLElement>(".roll-result")!;
+    expect(span).not.toBeNull();
+    expect(span.title).toBe("1d20+3: [12]+3 = 15");
+    expect(span.textContent).toBe("15");
+    expect(testChatMessages.textContent).toContain("Aria");
   });
 });

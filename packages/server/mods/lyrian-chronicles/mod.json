@@ -1,0 +1,7 @@
+{
+  "id": "lyrian-chronicles",
+  "name": "Lyrian Chronicles",
+  "version": "0.1.0",
+  "entry": "entry.ts",
+  "characterSheet": true
+}

@@ -26,7 +26,8 @@ import { installWaypoints } from "./waypoints.js";
 import { mountMeasurementPanel } from "./measurementPanel.js";
 import { installMeasurementShapes, type MeasurementShapeLike } from "./measurementShapes.js";
 import type { PlayerController } from "./movement/PlayerController.js";
-import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, tokenScaleFor, type PlayerBodyMesh } from "./playerBodyMesh.js";
+import { PLAYER_BODY_HEIGHT, resizeLocalPlayerBody, resizeEntityBody, createBodyAnchor, tokenScaleFor, buildWireframeBox, type PlayerBodyMesh } from "./playerBodyMesh.js";
+import { createCharacterTokenFace, type CharacterTokenFace } from "./characterTokenFace.js";
 import { CHARACTER_STORAGE_KEY } from "./api.js";
 
 /** Scoped per-world (an instanceId only ever makes sense within the world it was placed/piloted in) -- real correction, 2026-10-23: "disconnecting and reconnecting puts the player back to where they were exactly instead of respawning." Read back at connect time below (JoinOptions.instanceId), written whenever the locally-piloted instance's own id changes (the tick loop's local-player branch). */
@@ -91,6 +92,8 @@ interface OtherCharacterLike {
   bodyWidth: number;
   bodyHeight: number;
   bodyDepth: number;
+  /** docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the reserved tokenImage variable's synced value; "" means no image set (the circular token billboard's own ASCII-smiley fallback instead). */
+  tokenImage: string;
   statusEffects: StatusEffectLike[];
   /** Real correction, 2026-10-24: moved here from RemotePlayerLike -- waypoints/waypointColor* now belong to the piloted/placed INSTANCE, not the piloting session, so a waypoint chain follows whichever character it belongs to across focus-swaps (see waypoints.ts's own OtherCharacterLike doc). */
   waypointColorR?: number;
@@ -664,18 +667,37 @@ export async function connectAndStreamWorld(
     return heightAboveFeet - bodyHeight / 2;
   }
   const remoteEntities = new Map<string, number>(); // sessionId -> noa entity id
-  const remoteMaterials = new Map<string, BABYLON.StandardMaterial>();
   const remoteBodyMeshes = new Map<string, BABYLON.Mesh>(); // sessionId -> body box mesh, for tokenPicking.ts's extraHitboxMeshes
   const remoteTokens = new Map<string, CharacterToken>();
+  // docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the circular token-face
+  // billboard, one per session/instance, same key space as every other
+  // per-character map here. Replaces the old `remoteMaterials` map --
+  // a wireframe box's own material is now disposed TOGETHER with the
+  // mesh that owns it on every rebuild (resizeEntityBody's own
+  // `mesh.dispose(false, true)`), so there's no separate material
+  // lifecycle left to track here.
+  const remoteTokenFaces = new Map<string, CharacterTokenFace>();
   const remoteTokenAnchors = new Map<string, BABYLON.TransformNode>(); // sessionId -> the scale-cancelling anchor the token is actually parented to, see playerBodyMesh.ts's own doc
   // MVP goal item 4 follow-up -- last-applied body size per session (local uses the fixed "local" key), so resize only happens on an ACTUAL change rather than every tick.
   const appliedBodySizes = new Map<string, [number, number, number]>();
+  // docs/CHARACTER_SHEET_IMPORT.md, part 2 -- same idea, for the wireframe box's own color (a rebuild needs to happen on either change now, not just size).
+  const appliedBodyColors = new Map<string, [number, number, number]>();
   const LOCAL_BODY_SIZE_KEY = "__local__";
   function bodySizeChanged(key: string, width: number, height: number, depth: number): boolean {
     const prev = appliedBodySizes.get(key);
     const changed = !prev || prev[0] !== width || prev[1] !== height || prev[2] !== depth;
     if (changed) appliedBodySizes.set(key, [width, height, depth]);
     return changed;
+  }
+  function bodyColorChanged(key: string, r: number, g: number, b: number): boolean {
+    const prev = appliedBodyColors.get(key);
+    const changed = !prev || prev[0] !== r || prev[1] !== g || prev[2] !== b;
+    if (changed) appliedBodyColors.set(key, [r, g, b]);
+    return changed;
+  }
+  /** docs/CHARACTER_SHEET_IMPORT.md, part 2 -- `tokenImage` is a server-relative path (e.g. "/uploads/<id>.png", see uploads.ts), resolved against this connection's own httpUrl the same way api.ts's calls already are. "" (no image set) resolves to undefined, which createCharacterTokenFace.setImage reads as "show the ASCII-smiley fallback instead." */
+  function resolveTokenImageUrl(tokenImage: string): string | undefined {
+    return tokenImage ? `${httpUrl}${tokenImage}` : undefined;
   }
   const trackedTokens: TrackedToken[] = [];
   let hoveredTokenKey: string | undefined;
@@ -727,7 +749,13 @@ export async function connectAndStreamWorld(
       // is an EXTRA, coarser pick target for the same token -- see
       // tokenPicking.ts's TrackedToken doc for the real "the player should
       // be easier [to pick than the thin billboard]" request this answers.
+      // Real correction, 2026-10-25: the wireframe box (buildWireframeBox)
+      // made that hitbox practically just its own thin lines -- "the
+      // character box can no longer be right clicked (practically)" --
+      // the circular token-FACE billboard is now ALSO an extra hitbox,
+      // the bigger/easier target in its place.
       const bodyMesh = owned ? playerBodyMesh.mesh : remoteBodyMeshes.get(sessionId);
+      const faceMesh = remoteTokenFaces.get(sessionId)?.mesh;
       trackedTokens.push({
         sessionId,
         characterId: p.currentInstance.characterId,
@@ -742,7 +770,7 @@ export async function connectAndStreamWorld(
         isPiloted: true,
         owned: !!p.currentInstance.characterId && owned,
         planeMesh: token.mesh,
-        extraHitboxMeshes: bodyMesh ? [bodyMesh] : undefined,
+        extraHitboxMeshes: [bodyMesh, faceMesh].filter((m): m is BABYLON.Mesh => !!m),
       });
     }
     // MVP goal item 4 follow-up (multi-character presence, then world-
@@ -758,6 +786,7 @@ export async function connectAndStreamWorld(
       const otherToken = remoteTokens.get(other.instanceId);
       if (!otherToken) continue;
       const otherBodyMesh = remoteBodyMeshes.get(other.instanceId);
+      const otherFaceMesh = remoteTokenFaces.get(other.instanceId)?.mesh;
       trackedTokens.push({
         sessionId: room!.sessionId,
         characterId: other.characterId,
@@ -766,7 +795,7 @@ export async function connectAndStreamWorld(
         isPiloted: false,
         owned: other.placedByAccountId === accountId,
         planeMesh: otherToken.mesh,
-        extraHitboxMeshes: otherBodyMesh ? [otherBodyMesh] : undefined,
+        extraHitboxMeshes: [otherBodyMesh, otherFaceMesh].filter((m): m is BABYLON.Mesh => !!m),
       });
     }
   }
@@ -898,6 +927,7 @@ export async function connectAndStreamWorld(
       // own needed, playerBodyMesh.ts already owns that.
       if (sessionId === room.sessionId) {
         let localToken = remoteTokens.get(sessionId);
+        let localTokenFace = remoteTokenFaces.get(sessionId);
         if (!localToken) {
           localToken = createCharacterToken(scene, c.characterName || p.name);
           // Parented to the scale-cancelling anchor, NOT the body mesh
@@ -917,6 +947,16 @@ export async function connectAndStreamWorld(
           // `mesh` ECS component already does for the box fixes this.
           noa.rendering.addMeshToScene(localToken.mesh, false);
           remoteTokens.set(sessionId, localToken);
+
+          // docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the circular token-
+          // face billboard, centered INSIDE the box (local position
+          // zero on the SAME scale-cancelling anchor the name/bars
+          // token above uses), not above it.
+          localTokenFace = createCharacterTokenFace(scene, `local-${sessionId}`, Math.min(c.bodyWidth, c.bodyHeight, c.bodyDepth), new BABYLON.Color3(0.3, 0.5, 0.9));
+          localTokenFace.mesh.parent = playerBodyMesh.tokenAnchor;
+          localTokenFace.mesh.position = BABYLON.Vector3.Zero();
+          noa.rendering.addMeshToScene(localTokenFace.mesh, false);
+          remoteTokenFaces.set(sessionId, localTokenFace);
         }
         // isPickable too, not just isVisible -- Babylon's pick/pickWithRay
         // ignores isVisible entirely, and in first person this token sits
@@ -925,40 +965,32 @@ export async function connectAndStreamWorld(
         const thirdPerson = playerBodyMesh.isThirdPerson();
         localToken.mesh.isVisible = thirdPerson;
         localToken.mesh.isPickable = thirdPerson;
+        localTokenFace!.mesh.isVisible = thirdPerson;
 
         // Real bug found live: "changing colors only updates after
         // tabbing through, so changing to blue because selected/
         // controlled, and changing to blue shouldn't even be a thing."
         // The local body's own material was a FIXED blue, set ONCE at
-        // creation (playerBodyMesh.ts's installPlayerBodyMesh). The
-        // natural fix -- reassigning `.diffuseColor` on that SAME
-        // material object every tick, the exact pattern remote players'/
-        // otherCharacters' materials already use successfully -- turned
-        // out NOT to work, confirmed by direct experiment, not a guess:
-        // a live console check showed the property correctly holding
-        // the target character's color the entire time, yet the mesh
-        // kept rendering the original creation-time blue regardless.
-        // Swapping in a BRAND NEW StandardMaterial with that same color
-        // renders correctly immediately. The likely difference: this is
-        // the only body box attached to a PRE-EXISTING entity
+        // creation (playerBodyMesh.ts's installPlayerBodyMesh), and
+        // plain property mutation on that SAME material object (the
+        // pattern remote players'/otherCharacters' materials used
+        // successfully, back when every body was a StandardMaterial
+        // box) was confirmed by direct experiment NOT to work for this
+        // one body specifically -- the likely difference being that
+        // this is the only body attached to a PRE-EXISTING entity
         // (`noa.playerEntity`, via a raw `addComponent` call) rather
-        // than a fresh entity from `noa.entities.add()` like every
-        // remote/other box -- something about that path appears to pin
-        // the mesh's initial material in a way plain property mutation
-        // can't undo. Rather than chase that further, swap in a fresh
-        // material whenever the color actually needs to change (not
-        // every tick -- that leaks a new material object per frame).
+        // than a fresh entity from `noa.entities.add()`. docs/
+        // CHARACTER_SHEET_IMPORT.md's own wireframe box rebuilds the
+        // WHOLE mesh (geometry + material together) on any appearance
+        // change anyway now (GreasedLine's own color lives on a
+        // material plugin, not a plain mutable property either), so
+        // this real, measured quirk is moot either way -- just noting
+        // why "swap/rebuild, don't mutate" was already the proven right
+        // call for this specific body before this feature even existed.
         const localBodyR = c.characterId ? c.tokenColorR : 0.3;
         const localBodyG = c.characterId ? c.tokenColorG : 0.5;
         const localBodyB = c.characterId ? c.tokenColorB : 0.9;
-        if (!lastLocalBodyColor || lastLocalBodyColor[0] !== localBodyR || lastLocalBodyColor[1] !== localBodyG || lastLocalBodyColor[2] !== localBodyB) {
-          lastLocalBodyColor = [localBodyR, localBodyG, localBodyB];
-          const freshMaterial = new BABYLON.StandardMaterial("local-player-body-mat", scene);
-          freshMaterial.diffuseColor = new BABYLON.Color3(localBodyR, localBodyG, localBodyB);
-          playerBodyMesh.mesh.material?.dispose();
-          playerBodyMesh.mesh.material = freshMaterial;
-          playerBodyMesh.material = freshMaterial;
-        }
+        const localColorChanged = !lastLocalBodyColor || lastLocalBodyColor[0] !== localBodyR || lastLocalBodyColor[1] !== localBodyG || lastLocalBodyColor[2] !== localBodyB;
 
         // Real bug found live: "the currently controlled character is
         // always blue" after a hard refresh. Root cause wasn't this
@@ -989,11 +1021,20 @@ export async function connectAndStreamWorld(
           localStorage.setItem(instanceStorageKey, c.instanceId);
         }
 
-        if (bodySizeChanged(LOCAL_BODY_SIZE_KEY, c.bodyWidth, c.bodyHeight, c.bodyDepth)) {
-          resizeLocalPlayerBody(noa, playerBodyMesh, c.bodyWidth, c.bodyHeight, c.bodyDepth);
+        const localSizeChanged = bodySizeChanged(LOCAL_BODY_SIZE_KEY, c.bodyWidth, c.bodyHeight, c.bodyDepth);
+        if (localSizeChanged || localColorChanged) {
+          lastLocalBodyColor = [localBodyR, localBodyG, localBodyB];
+          resizeLocalPlayerBody(noa, playerBodyMesh, c.bodyWidth, c.bodyHeight, c.bodyDepth, new BABYLON.Color3(localBodyR, localBodyG, localBodyB));
+          // resizeLocalPlayerBody rebuilds playerBodyMesh.mesh and
+          // reparents tokenAnchor onto the new one in place -- the
+          // tokens below stay correctly attached with no extra work,
+          // only their own size/position/color need recomputing.
           localToken.mesh.position.y = tokenYOffsetFor(c.bodyWidth, c.bodyHeight, c.bodyDepth);
           localToken.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
+          localTokenFace!.setDiameter(Math.min(c.bodyWidth, c.bodyHeight, c.bodyDepth));
+          localTokenFace!.setColor(new BABYLON.Color3(localBodyR, localBodyG, localBodyB));
         }
+        localTokenFace!.setImage(resolveTokenImageUrl(c.tokenImage));
         localToken.update({
           name: c.characterName || p.name,
           bars: toTokenBars(c.bars),
@@ -1003,29 +1044,26 @@ export async function connectAndStreamWorld(
       }
 
       let eid = remoteEntities.get(sessionId);
-      let material = remoteMaterials.get(sessionId);
       let token = remoteTokens.get(sessionId);
-      if (eid === undefined || !material || !token) {
-        // Default red (the project's original fixed color) when no real
-        // character is selected -- a characterless join is a real state
-        // (see WorldRoom.ts's onJoin), not an error, and still needs to
-        // render as SOMETHING.
-        const hasCharacter = !!c.characterId;
-        material = new BABYLON.StandardMaterial(`remotePlayerMat-${sessionId}`, scene);
-        material.diffuseColor = hasCharacter ? new BABYLON.Color3(c.tokenColorR, c.tokenColorG, c.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
-        remoteMaterials.set(sessionId, material);
-
+      let tokenFace = remoteTokenFaces.get(sessionId);
+      // Default red (the project's original fixed color) when no real
+      // character is selected -- a characterless join is a real state
+      // (see WorldRoom.ts's onJoin), not an error, and still needs to
+      // render as SOMETHING.
+      const hasCharacter = !!c.characterId;
+      const bodyColor = hasCharacter ? new BABYLON.Color3(c.tokenColorR, c.tokenColorG, c.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
+      if (eid === undefined || !token || !tokenFace) {
         // MVP goal item 4 follow-up: built at THIS player's own current
         // body size (not the shared PLAYER_BODY_WIDTH/HEIGHT/DEPTH
         // constants) -- a brand-new remote entity always starts sized
         // correctly, same spirit as the resize-on-change branch below
         // for one already seen before.
-        const mesh = BABYLON.MeshBuilder.CreateBox(`remote-${sessionId}`, { width: c.bodyWidth, height: c.bodyHeight, depth: c.bodyDepth }, scene);
-        mesh.material = material;
+        const mesh = buildWireframeBox(scene, `remote-${sessionId}`, c.bodyWidth, c.bodyHeight, c.bodyDepth, bodyColor);
         eid = noa.entities.add([c.x, c.y, c.z], c.bodyWidth, c.bodyHeight, mesh, [0, c.bodyHeight / 2, 0], false, false);
         remoteEntities.set(sessionId, eid);
         remoteBodyMeshes.set(sessionId, mesh);
         appliedBodySizes.set(sessionId, [c.bodyWidth, c.bodyHeight, c.bodyDepth]);
+        appliedBodyColors.set(sessionId, [bodyColor.r, bodyColor.g, bodyColor.b]);
         const anchor = createBodyAnchor(mesh);
         remoteTokenAnchors.set(sessionId, anchor);
 
@@ -1040,16 +1078,29 @@ export async function connectAndStreamWorld(
         token.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
         noa.rendering.addMeshToScene(token.mesh, false); // see the matching comment on the local-token branch above -- same real bug, same fix
         remoteTokens.set(sessionId, token);
+
+        // docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the circular token-
+        // face billboard, centered inside the box.
+        tokenFace = createCharacterTokenFace(scene, `remote-${sessionId}`, Math.min(c.bodyWidth, c.bodyHeight, c.bodyDepth), bodyColor);
+        tokenFace.mesh.parent = anchor;
+        tokenFace.mesh.position = BABYLON.Vector3.Zero();
+        noa.rendering.addMeshToScene(tokenFace.mesh, false);
+        remoteTokenFaces.set(sessionId, tokenFace);
       } else {
         noa.entities.setPosition(eid, [c.x, c.y, c.z]);
-        material.diffuseColor = c.characterId ? new BABYLON.Color3(c.tokenColorR, c.tokenColorG, c.tokenColorB) : new BABYLON.Color3(0.9, 0.2, 0.2);
-        if (bodySizeChanged(sessionId, c.bodyWidth, c.bodyHeight, c.bodyDepth)) {
-          resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, c.bodyWidth, c.bodyHeight, c.bodyDepth);
+        const sizeChanged = bodySizeChanged(sessionId, c.bodyWidth, c.bodyHeight, c.bodyDepth);
+        const colorChanged = bodyColorChanged(sessionId, bodyColor.r, bodyColor.g, bodyColor.b);
+        if (sizeChanged || colorChanged) {
+          const newMesh = resizeEntityBody(noa, eid, remoteBodyMeshes.get(sessionId)!, remoteTokenAnchors.get(sessionId)!, c.bodyWidth, c.bodyHeight, c.bodyDepth, bodyColor);
+          remoteBodyMeshes.set(sessionId, newMesh);
           token.mesh.position.y = tokenYOffsetFor(c.bodyWidth, c.bodyHeight, c.bodyDepth);
           token.mesh.scaling.setAll(billboardScale(c.bodyWidth, c.bodyHeight, c.bodyDepth));
+          tokenFace.setDiameter(Math.min(c.bodyWidth, c.bodyHeight, c.bodyDepth));
+          tokenFace.setColor(bodyColor);
         }
       }
 
+      tokenFace.setImage(resolveTokenImageUrl(c.tokenImage));
       token.update({
         name: c.characterName || p.name,
         bars: toTokenBars(c.bars),
@@ -1075,19 +1126,16 @@ export async function connectAndStreamWorld(
       seen.add(key);
 
       let eid = remoteEntities.get(key);
-      let material = remoteMaterials.get(key);
       let token = remoteTokens.get(key);
-      if (eid === undefined || !material || !token) {
-        material = new BABYLON.StandardMaterial(`otherCharacterMat-${key}`, scene);
-        material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
-        remoteMaterials.set(key, material);
-
-        const mesh = BABYLON.MeshBuilder.CreateBox(`other-${key}`, { width: other.bodyWidth, height: other.bodyHeight, depth: other.bodyDepth }, scene);
-        mesh.material = material;
+      let tokenFace = remoteTokenFaces.get(key);
+      const bodyColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
+      if (eid === undefined || !token || !tokenFace) {
+        const mesh = buildWireframeBox(scene, `other-${key}`, other.bodyWidth, other.bodyHeight, other.bodyDepth, bodyColor);
         eid = noa.entities.add([other.x, other.y, other.z], other.bodyWidth, other.bodyHeight, mesh, [0, other.bodyHeight / 2, 0], false, false);
         remoteEntities.set(key, eid);
         remoteBodyMeshes.set(key, mesh);
         appliedBodySizes.set(key, [other.bodyWidth, other.bodyHeight, other.bodyDepth]);
+        appliedBodyColors.set(key, [bodyColor.r, bodyColor.g, bodyColor.b]);
         const anchor = createBodyAnchor(mesh);
         remoteTokenAnchors.set(key, anchor);
 
@@ -1097,16 +1145,27 @@ export async function connectAndStreamWorld(
         token.mesh.scaling.setAll(billboardScale(other.bodyWidth, other.bodyHeight, other.bodyDepth));
         noa.rendering.addMeshToScene(token.mesh, false);
         remoteTokens.set(key, token);
+
+        tokenFace = createCharacterTokenFace(scene, `other-${key}`, Math.min(other.bodyWidth, other.bodyHeight, other.bodyDepth), bodyColor);
+        tokenFace.mesh.parent = anchor;
+        tokenFace.mesh.position = BABYLON.Vector3.Zero();
+        noa.rendering.addMeshToScene(tokenFace.mesh, false);
+        remoteTokenFaces.set(key, tokenFace);
       } else {
         noa.entities.setPosition(eid, [other.x, other.y, other.z]);
-        material.diffuseColor = new BABYLON.Color3(other.tokenColorR, other.tokenColorG, other.tokenColorB);
-        if (bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth)) {
-          resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth);
+        const sizeChanged = bodySizeChanged(key, other.bodyWidth, other.bodyHeight, other.bodyDepth);
+        const colorChanged = bodyColorChanged(key, bodyColor.r, bodyColor.g, bodyColor.b);
+        if (sizeChanged || colorChanged) {
+          const newMesh = resizeEntityBody(noa, eid, remoteBodyMeshes.get(key)!, remoteTokenAnchors.get(key)!, other.bodyWidth, other.bodyHeight, other.bodyDepth, bodyColor);
+          remoteBodyMeshes.set(key, newMesh);
           token.mesh.position.y = tokenYOffsetFor(other.bodyWidth, other.bodyHeight, other.bodyDepth);
           token.mesh.scaling.setAll(billboardScale(other.bodyWidth, other.bodyHeight, other.bodyDepth));
+          tokenFace.setDiameter(Math.min(other.bodyWidth, other.bodyHeight, other.bodyDepth));
+          tokenFace.setColor(bodyColor);
         }
       }
 
+      tokenFace.setImage(resolveTokenImageUrl(other.tokenImage));
       token.update({
         name: other.characterName,
         bars: toTokenBars(other.bars),
@@ -1124,18 +1183,27 @@ export async function connectAndStreamWorld(
     // separate cleanup code needed for either.
     for (const [key, eid] of remoteEntities) {
       if (!seen.has(key)) {
+        // The wireframe box's own material isn't disposed by
+        // deleteEntity's cascade below (noa's mesh component's
+        // onRemove calls plain `state.mesh.dispose()`, which defaults
+        // to NOT also disposing the mesh's own material) -- read it
+        // off the tracked mesh and dispose it explicitly, same
+        // reasoning the old (now-removed) `remoteMaterials` map
+        // existed for in the first place.
+        remoteBodyMeshes.get(key)?.material?.dispose();
         // deleteEntity is inherited from ent-comp's ECS base class -- see
         // the same cast rationale in movement/PlayerController.ts.
         (noa.entities as unknown as { deleteEntity(id: number): void }).deleteEntity(eid);
         remoteEntities.delete(key);
         remoteBodyMeshes.delete(key); // the mesh itself is disposed by deleteEntity above (noa's mesh component's onRemove)
         appliedBodySizes.delete(key);
+        appliedBodyColors.delete(key);
         remoteTokenAnchors.get(key)?.dispose();
         remoteTokenAnchors.delete(key);
         remoteTokens.get(key)?.dispose();
         remoteTokens.delete(key);
-        remoteMaterials.get(key)?.dispose();
-        remoteMaterials.delete(key);
+        remoteTokenFaces.get(key)?.dispose();
+        remoteTokenFaces.delete(key);
       }
     }
 
@@ -1222,7 +1290,8 @@ export async function connectAndStreamWorld(
       measurementPanel.destroy();
       measurementShapes.destroy();
       for (const token of remoteTokens.values()) token.dispose();
-      for (const material of remoteMaterials.values()) material.dispose();
+      for (const tokenFace of remoteTokenFaces.values()) tokenFace.dispose();
+      for (const mesh of remoteBodyMeshes.values()) mesh.material?.dispose();
       room.leave();
     },
 

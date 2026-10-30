@@ -11,9 +11,29 @@
 // column (not `position: fixed`/draggable/collapsible like that file
 // -- this is one column within the characters page's own layout, not
 // a persistent overlay across the whole app).
+//
+// Real request, 2026-10-26: "Hopefully the chat supports some html
+// and alt text" -- "when moused over that special 22 should display
+// the formula behind it." `addMessage`'s own optional `html` is
+// sanitized (DOMPurify) right before insertion, same "ONE deliberate
+// innerHTML-of-untrusted-content spot" discipline characterSheetView.ts's
+// own page rendering already follows -- the PLAIN `text` form (used
+// for every message this panel ALREADY rendered before this feature,
+// including the compose box's own human-typed input) stays on the
+// existing, unconditionally-safe `textContent` path.
+//
+// Real correction, 2026-10-29: "the chat in the main game doesn't seem
+// to allow the same tables and formatting as test chat and they
+// should be exactly the same" -- the real in-game chat (chatPanel.ts/
+// GameRoom.ts) now carries the SAME `html` through, over the network,
+// to every player; this panel's own line-rendering (the part that
+// actually matters here) is `chatMessageRendering.ts`'s shared
+// `appendChatLine`, not a second copy of the same logic.
+
+import { appendChatLine } from "./chatMessageRendering.js";
 
 export interface TestChatPanelController {
-  addMessage(text: string): void;
+  addMessage(text: string, html?: string): void;
 }
 
 export function mountTestChatPanel(container: HTMLElement): TestChatPanelController {
@@ -22,8 +42,13 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
       .test-chat-panel { display: flex; flex-direction: column; height: 100%; background: rgba(20,20,24,0.85); border: 1px solid rgba(200,200,200,0.3); border-radius: 6px; font-family: system-ui, sans-serif; color: #eee; }
       .test-chat-panel h3 { margin: 0; padding: 8px 10px; font-size: 0.9rem; font-weight: normal; color: #999; border-bottom: 1px solid rgba(200,200,200,0.3); flex: none; }
       .test-chat-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
-      .test-chat-messages .msg { margin-bottom: 4px; }
+      .test-chat-messages .msg { margin-bottom: 4px; white-space: pre-wrap; }
       .test-chat-messages .empty { color: #777; font-style: italic; }
+      .test-chat-messages .roll-result { font-weight: bold; text-decoration: underline dotted; cursor: help; }
+      .test-chat-messages .roll-result-group { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 6px 8px; margin: 2px 0; }
+      /* Real request, 2026-10-29: "the abilities when clicked should show their description in tables with some background difference to differentiate them from the rest of the chat" -- .ability-info-table is the class lyrianChronicles.ts's own abilityInfoTableHtml already bakes in; same background-tint treatment as a roll-result-group, just shaped as a table instead. Mirrored in chatPanel.ts's own style block, same parity this round's own chat-rendering fix already established. */
+      .test-chat-messages .ability-info-table { background: rgba(255,255,255,0.06); border-radius: 4px; border-collapse: collapse; width: 100%; margin: 2px 0; }
+      .test-chat-messages .ability-info-table td { padding: 3px 6px; }
       .test-chat-compose { flex: none; display: flex; gap: 6px; padding: 8px; border-top: 1px solid rgba(200,200,200,0.3); }
       .test-chat-compose input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; font-size: 13px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }
       .test-chat-compose button { font-size: 13px; padding: 6px 10px; }
@@ -43,16 +68,12 @@ export function mountTestChatPanel(container: HTMLElement): TestChatPanelControl
   const sendBtn = container.querySelector<HTMLButtonElement>("#test-chat-send-btn")!;
   let hasMessages = false;
 
-  function addMessage(text: string): void {
+  function addMessage(text: string, html?: string): void {
     if (!hasMessages) {
       messagesEl.innerHTML = "";
       hasMessages = true;
     }
-    const line = document.createElement("div");
-    line.className = "msg";
-    line.textContent = text;
-    messagesEl.appendChild(line);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    appendChatLine(messagesEl, text, "msg", html);
   }
 
   function sendFromInput(): void {

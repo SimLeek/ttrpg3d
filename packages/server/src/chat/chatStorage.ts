@@ -20,11 +20,26 @@ export interface ChatMessage {
   senderName: string;
   /** Already-resolved display text (any /roll or [[...]] segments substituted in) -- never raw notation plus separate roll data, so there's exactly one thing to render. */
   text: string;
+  /**
+   * Real request, 2026-10-29: "the chat in the main game doesn't seem
+   * to allow the same tables and formatting as test chat and they
+   * should be exactly the same." A richer, OPTIONAL rendering of the
+   * same information `text` already carries (a compound-roll's own
+   * breakdown table, an ability's own info table) -- sanitized with
+   * DOMPurify on every RECEIVING client before ever touching
+   * `innerHTML` (chatMessageRendering.ts), same trust boundary any
+   * other untrusted-string-over-the-network value already has; never
+   * trusted blindly just because this message's OWN sender typed it.
+   * `text` always stays the plain fallback, so a client that can't/
+   * won't render HTML (or an old version) still shows something
+   * correct.
+   */
+  html?: string;
   createdAt: number;
 }
 
 export interface ChatStorage {
-  append(senderName: string, text: string): ChatMessage;
+  append(senderName: string, text: string, html?: string): ChatMessage;
   /** The `limit` most recent messages, oldest first (ready to render top-to-bottom). */
   recent(limit: number): ChatMessage[];
   /** Up to `limit` messages strictly older than `beforeId`, oldest first -- scrollback pagination. */
@@ -44,27 +59,38 @@ export function createChatStorage(baseDir: string, gameId: string): ChatStorage 
       created_at INTEGER NOT NULL
     )
   `);
+  // Real request, 2026-10-29: an existing database (every game created
+  // before this field existed) has no `html` column yet -- same
+  // additive-migration shape this project's other SQLite stores
+  // already use for a new nullable column (a bare ALTER, swallowed if
+  // it already exists, never a destructive rebuild).
+  try {
+    db.exec("ALTER TABLE messages ADD COLUMN html TEXT");
+  } catch {
+    // already has the column -- fine
+  }
 
-  const appendStmt = db.prepare("INSERT INTO messages (sender_name, text, created_at) VALUES (?, ?, ?)");
-  const recentStmt = db.prepare("SELECT id, sender_name, text, created_at FROM messages ORDER BY id DESC LIMIT ?");
-  const beforeStmt = db.prepare("SELECT id, sender_name, text, created_at FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?");
+  const appendStmt = db.prepare("INSERT INTO messages (sender_name, text, html, created_at) VALUES (?, ?, ?, ?)");
+  const recentStmt = db.prepare("SELECT id, sender_name, text, html, created_at FROM messages ORDER BY id DESC LIMIT ?");
+  const beforeStmt = db.prepare("SELECT id, sender_name, text, html, created_at FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?");
 
   interface Row {
     id: number;
     sender_name: string;
     text: string;
+    html: string | null;
     created_at: number;
   }
 
   function toMessage(row: Row): ChatMessage {
-    return { id: row.id, senderName: row.sender_name, text: row.text, createdAt: row.created_at };
+    return { id: row.id, senderName: row.sender_name, text: row.text, html: row.html ?? undefined, createdAt: row.created_at };
   }
 
   return {
-    append(senderName, text) {
+    append(senderName, text, html) {
       const createdAt = Date.now();
-      const result = appendStmt.run(senderName, text, createdAt);
-      return { id: Number(result.lastInsertRowid), senderName, text, createdAt };
+      const result = appendStmt.run(senderName, text, html ?? null, createdAt);
+      return { id: Number(result.lastInsertRowid), senderName, text, html, createdAt };
     },
 
     recent(limit) {

@@ -148,6 +148,8 @@ export const OtherCharacterState = schema(
     bodyWidth: t.number().default(0.6),
     bodyHeight: t.number().default(1.8),
     bodyDepth: t.number().default(0.6),
+    /** docs/CHARACTER_SHEET_IMPORT.md, part 2 -- the reserved tokenImage variable's own synced value (a URL from POST /uploads, or "" for no image set, which renders the circular token billboard's ASCII-smiley fallback instead). Same reserved tier/sync pattern as bodyWidth/Height/Depth above. */
+    tokenImage: t.string().default(""),
     statusEffects: t.array(StatusEffectState),
     /**
      * docs/BATTLE_SYSTEM.md's waypoint/distance measurement -- real
@@ -244,7 +246,7 @@ export const TurnOrderEntryState = schema(
   "TurnOrderEntryState",
 );
 
-/** docs/BATTLE_SYSTEM.md's measurement shapes -- one point in a shape's own point list. Meaning depends on the owning shape's `kind`: for "chain" an arbitrary-length ordered waypoint-style list; for "cube" exactly 2 (opposite corners); for "sphere" exactly 2 (center, then a point whose DISTANCE from the center is the radius -- the point's own position beyond that distance is not otherwise meaningful); for "cone"/"beam" exactly 2 (start, end). */
+/** docs/BATTLE_SYSTEM.md's measurement shapes -- one point in a shape's own point list. Meaning depends on the owning shape's `kind`: for "chain" an arbitrary-length ordered waypoint-style list; for "box" exactly 2 (opposite corners); for "sphere" exactly 2 (center, then a point whose DISTANCE from the center is the radius); for "cube" exactly 2 (center, then a point whose LARGEST single-axis distance from the center is the "radius" applied to all three axes -- real request, 2026-10-27, same input shape as sphere, an equal-sided box instead of a sphere); for "cone"/"beam" exactly 2 (start, end). */
 export const MeasurementPointState = schema(
   {
     x: t.number().default(0),
@@ -256,9 +258,9 @@ export const MeasurementPointState = schema(
 
 /**
  * docs/BATTLE_SYSTEM.md's "Measurement shapes" -- a finalized,
- * persisted measurement/area-effect object (distance chain, cube,
- * sphere, cone/frustum, or beam). Unlike the waypoint system, this is
- * its OWN standalone tool, independent of the turn tracker/
+ * persisted measurement/area-effect object (distance chain, box,
+ * sphere, cube, cone/frustum, or beam). Unlike the waypoint system,
+ * this is its OWN standalone tool, independent of the turn tracker/
  * `waypointsEnabled` entirely.
  *
  * Real scoping decision, 2026-10-24 (the doc's own Gherkin leaves this
@@ -266,8 +268,8 @@ export const MeasurementPointState = schema(
  * is still being actively placed is pure CLIENT-side state -- nothing
  * is sent to the server until the shape is actually finalized (a
  * chain via Enter, same convention the waypoint system's own Finalize
- * already uses; a fixed-point-count shape -- cube/sphere/cone/beam --
- * automatically the moment its LAST required point is placed, since
+ * already uses; a fixed-point-count shape -- box/sphere/cube/cone/beam
+ * -- automatically the moment its LAST required point is placed, since
  * there's no further editing possible once a 2-point shape has both
  * points). Only the finalized result ever reaches this schema.
  *
@@ -284,7 +286,7 @@ export const MeasurementPointState = schema(
 export const MeasurementShapeState = schema(
   {
     shapeId: t.string().default(""),
-    /** "chain" | "cube" | "sphere" | "cone" | "beam". */
+    /** "chain" | "box" | "sphere" | "cube" | "cone" | "beam". */
     kind: t.string().default("chain"),
     ownerAccountId: t.string().default(""),
     points: t.array(MeasurementPointState),

@@ -252,7 +252,7 @@ function enterGame(game: GameRecord, worldId: string, worldName: string, account
         httpUrl,
         gameId: game.id,
         viewerAccountId: account.id,
-        onPostToChat: (characterId, text) => connection.send(text, characterId),
+        onPostToChat: (characterId, text, html) => connection.send(text, characterId, html),
       });
 
       runningChat = {

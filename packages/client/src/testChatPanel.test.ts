@@ -51,4 +51,35 @@ describe("mountTestChatPanel", () => {
     dispatchKey(input, "Enter");
     expect(container.querySelector(".msg")!.textContent).toBe("via enter");
   });
+
+  it("real request, 2026-10-26 -- addMessage's optional html renders as SANITIZED innerHTML (a tooltip span survives), not the plain text fallback", () => {
+    const panel = mountTestChatPanel(container);
+    panel.addMessage("Aria: Save Bonus -> 22", 'Aria: Save Bonus: <span class="roll-result" title="1d20 + 5: [17]+5 = 22">22</span>');
+
+    const line = container.querySelector(".msg")!;
+    const span = line.querySelector<HTMLElement>(".roll-result")!;
+    expect(span).not.toBeNull();
+    expect(span.title).toBe("1d20 + 5: [17]+5 = 22");
+    expect(span.textContent).toBe("22");
+  });
+
+  it("a message with NO html still renders as plain escaped text -- a dangerous-looking compose-box message never executes as HTML", () => {
+    const panel = mountTestChatPanel(container);
+    panel.addMessage('<img src=x onerror="window.__pwned = true">');
+
+    expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
+    expect(container.querySelector(".msg")!.textContent).toBe('<img src=x onerror="window.__pwned = true">');
+    expect(container.querySelector(".msg img")).toBeNull();
+  });
+
+  it("html IS sanitized -- a dangerous tag/attribute smuggled into a roll's own html is stripped, not executed", () => {
+    const panel = mountTestChatPanel(container);
+    panel.addMessage("plain fallback", '<span onclick="window.__pwned = true">22</span><script>window.__pwned = true</script>');
+
+    expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
+    const line = container.querySelector(".msg")!;
+    expect(line.querySelector("script")).toBeNull();
+    expect(line.querySelector("span")!.getAttribute("onclick")).toBeNull();
+    expect(line.textContent).toBe("22");
+  });
 });

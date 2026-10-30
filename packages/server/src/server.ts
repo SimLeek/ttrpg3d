@@ -10,9 +10,12 @@ import { WorldRoom, notifyCharacterSheetChanged } from "./rooms/WorldRoom.js";
 import { GameRoom } from "./rooms/GameRoom.js";
 import { store } from "./data/store.js";
 import { createChatStorage } from "./chat/chatStorage.js";
-import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown } from "./mods/modLoader.js";
-import { findLibraryCalls } from "@ttrpg3d/shared";
+import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibraries, resolveCharacterSheetMarkdown, importCharacterSheet } from "./mods/modLoader.js";
+import { findLibraryCalls, findExpressionSegments, findCompoundRollSegments, type ImportedWorkbook } from "@ttrpg3d/shared";
 import { join } from "node:path";
+import express from "express";
+import { validateUpload, mintUploadUrl, writeUploadedImageBytes, UploadRejected } from "./data/uploads.js";
+import { rollCharacterSheetExpression, rollCompoundPart } from "./chat/diceRoll.js";
 
 store.ensureSeedData();
 
@@ -109,6 +112,58 @@ const getAccountCharacterSheetLibraries = createEndpoint("/accounts/:id/characte
   return libraries.map(({ modId, manifest, library }) => ({ modId, manifest, functionNames: Object.keys(library) }));
 });
 
+// docs/CHARACTER_SHEET_IMPORT.md, part 2 -- "a new upload endpoint,
+// writing to disk; the tokenImage variable holds a URL." Generic (not
+// token-image-specific) on purpose -- just "an account uploads an
+// image, gets a URL back" -- the caller decides what to DO with that
+// URL (set it as a character's reserved tokenImage variable, same as
+// any other sheet edit, via the existing putCharacterSheet above).
+// Ungated beyond "a real account" (no character/game involved at
+// all), same trust level postAccountCharacter already has.
+//
+// Real request, 2026-10-29: "store the uploaded image link with the
+// account before the image is successfully uploaded and not after,
+// so that all images are linked to an account even in case of
+// crashes or mid code drops... all significant uploads should be
+// like that." Order here is deliberate: VALIDATE first (pure, no
+// disk I/O -- a bad mime type/size never reaches the filesystem or
+// gets an account record at all), mint the url, RECORD it against
+// the account, only THEN write the actual bytes. A crash between the
+// record and the write leaves a dangling record (harmless, filterable
+// later) instead of the old failure mode -- a real file on disk that
+// nothing could ever find or attribute to anyone, pure unaccountable
+// waste. See data/uploads.ts's own header for the fuller reasoning;
+// this is the template any FUTURE upload endpoint should follow too.
+const postUpload = createEndpoint("/uploads", { method: "POST", scope: "http" }, async (ctx) => {
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (!store.getAccount(accountId)) throw new APIError("UNAUTHORIZED", { message: "unknown account" });
+  const mimeType = typeof ctx.body?.mimeType === "string" ? ctx.body.mimeType : "";
+  const dataBase64 = typeof ctx.body?.dataBase64 === "string" ? ctx.body.dataBase64 : "";
+  let ext: string, buffer: Buffer;
+  try {
+    ({ ext, buffer } = validateUpload(mimeType, dataBase64));
+  } catch (err) {
+    if (err instanceof UploadRejected) throw new APIError("BAD_REQUEST", { message: err.message });
+    throw err;
+  }
+  const url = mintUploadUrl(ext);
+  store.recordUploadedImage(accountId, url);
+  writeUploadedImageBytes(join(process.cwd(), "data", "uploads"), url, buffer);
+  return { url };
+});
+
+// Real request, 2026-10-29: "we should be able to get the list of the
+// image our specific account uploaded as well, so that we don't take
+// up space" -- lets a token-image picker offer "reuse one already
+// uploaded" instead of only ever uploading a fresh copy. Same trust
+// level as postUpload above (a real account, nothing character/game-
+// scoped).
+const getAccountUploads = createEndpoint("/accounts/:id/uploads", { method: "GET", scope: "http" }, async (ctx) => {
+  const accountId = ctx.params.id;
+  if (!store.getAccount(accountId)) throw new APIError("UNAUTHORIZED", { message: "unknown account" });
+  return { urls: store.getUploadedImages(accountId) };
+});
+
 // Sets a character's template + variable values wholesale. Ownership-
 // gated (the caller must actually own this character) -- a NEW gate
 // shape, not isGameAdmin, since no game is involved at all; same
@@ -137,6 +192,87 @@ const putCharacterSheet = createEndpoint("/characters/:id/sheet", { method: "PUT
   // trigger a refresh. See notifyCharacterSheetChanged's own doc.
   notifyCharacterSheetChanged(characterId);
   return store.getCharacter(characterId);
+});
+
+// docs/CHARACTER_SHEET_IMPORT.md, part 1 -- the un-deferred "mod-based
+// sheet importers" item. `workbook` is already a parsed
+// `ImportedWorkbook` (tabName -> raw grid of cell values) by the time
+// it reaches here -- the CLIENT does the actual fetch-the-export-URL
+// + XLSX-parse work (see that doc's own open-question-1 resolution:
+// the server never fetches an arbitrary URL itself). Same ownership
+// gate as putCharacterSheet above (this IS a sheet write, just
+// sourced from an import instead of manual edits), plus a mod-
+// allowlist check `putCharacterSheet` doesn't need (picking a
+// template already goes through `getAccountCharacterSheetTemplates`,
+// itself scoped to `importedModIds` -- this is the same trust
+// boundary for the import path).
+const postCharacterImportSheet = createEndpoint("/characters/:id/import-sheet", { method: "POST", scope: "http" }, async (ctx) => {
+  const characterId = ctx.params.id;
+  const character = store.getCharacter(characterId);
+  if (!character) throw new APIError("NOT_FOUND", { message: "no such character" });
+  const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
+  if (accountId !== character.ownerAccountId && !store.canAccountEditCharacter(accountId, characterId)) throw new APIError("UNAUTHORIZED", { message: "not this character's owner or an admin of a game it's linked to" });
+  const modId = typeof ctx.body?.modId === "string" ? ctx.body.modId : "";
+  if (!modId) throw new APIError("BAD_REQUEST", { message: "modId is required" });
+  const account = store.getAccount(accountId);
+  if (!account?.importedModIds.includes(modId)) throw new APIError("UNAUTHORIZED", { message: "this account hasn't imported that mod" });
+  const workbook = typeof ctx.body?.workbook === "object" && ctx.body.workbook !== null ? (ctx.body.workbook as ImportedWorkbook) : null;
+  if (!workbook) throw new APIError("BAD_REQUEST", { message: "workbook is required" });
+  const imported = await importCharacterSheet(join(process.cwd(), "mods"), modId, workbook);
+  if (!imported) throw new APIError("BAD_REQUEST", { message: "that mod has no character-sheet importer" });
+  const { template, result } = imported;
+  // Clone source + defaults, same spirit as characterSheetView.ts's
+  // own `structuredClone(entry.template)` for the manual "pick a
+  // template" flow -- an import is really the SAME clone, just with
+  // the import's own real values overlaid afterward instead of
+  // starting (and staying) at the template's own defaults.
+  const customSheet = structuredClone(template);
+  // Real request, 2026-10-29 (inventory round): a page title ALREADY
+  // on the static template (e.g. "Core"/"Inventory," both of which now
+  // need PER-CHARACTER content -- injury checkboxes, the real weapon/
+  // armor table) is OVERRIDDEN in place here, same id-based
+  // find-replace-or-push shape `result.variables`' own merge already
+  // uses just below -- plain concatenation (the ONLY thing this did
+  // until now) silently duplicated the tab instead, confirmed the hard
+  // way the moment "Core" needed to be one of these.
+  for (const p of result.pages) {
+    const idx = customSheet.pages.findIndex((existing) => existing.title === p.title);
+    if (idx === -1) customSheet.pages.push(p);
+    else customSheet.pages[idx] = p;
+  }
+  // Real request/architecture fix, 2026-10-26 (skills rework): merge
+  // the importer's own `variables` by id -- an id ALREADY on the
+  // template (e.g. a fixed skill's own `<id>Bonus`) is OVERRIDDEN in
+  // place (this real sheet's own data can refine it, e.g. setting a
+  // live valueExpression from its governing-stat column); a brand new
+  // id (e.g. a dynamically-named crafting skill's own `<id>Bonus`/
+  // `<id>SkillPoints`) is APPENDED. See CharacterSheetImportResult's
+  // own doc for why this didn't exist before.
+  for (const v of result.variables ?? []) {
+    const idx = customSheet.variables.findIndex((existing) => existing.id === v.id);
+    if (idx === -1) customSheet.variables.push(v);
+    else customSheet.variables[idx] = v;
+  }
+  const defaults = Object.fromEntries(customSheet.variables.map((v) => [v.id, v.default]));
+  const variableValues = { ...defaults, ...result.variableValues };
+  store.updateCharacterSheet(characterId, modId, customSheet, variableValues);
+  // Real request, 2026-10-28 (Abilities round): a workbook carrying
+  // the real sheet's own "All Abilities" tab (characterSheetImport.ts's
+  // own named exception to the hidden-tab skip) refreshes this
+  // ACCOUNT's own stored ability catalog -- see
+  // CharacterSheetImportResult.abilityCatalog's own doc for why this
+  // is account-scoped, not written onto the character record itself.
+  if (result.abilityCatalog) store.setAbilityCatalog(accountId, modId, result.abilityCatalog);
+  notifyCharacterSheetChanged(characterId);
+  return store.getCharacter(characterId);
+});
+
+// Real request, 2026-10-28: the "Add Ability" search popup's own
+// catalog -- this account's own stored list (refreshed by their last
+// import that carried "All Abilities," falling back to the mod's own
+// bundled default the first time this account ever asks).
+const getAccountAbilityCatalog = createEndpoint("/accounts/:id/mods/:modId/ability-catalog", { method: "GET", scope: "http" }, async (ctx) => {
+  return store.getAbilityCatalog(ctx.params.id, ctx.params.modId);
 });
 
 // Fetches a single character by id for a viewer who doesn't necessarily
@@ -199,7 +335,30 @@ const postCharacterSheetPreview = createEndpoint("/accounts/:id/character-sheet-
       value: await resolveCharacterSheetMarkdown(modsDir, account.importedModIds, markdown.slice(segment.start, segment.end), variableValues),
     })),
   );
-  return { resolvedMarkdown, segments };
+  // docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
+  // 2026-10-25 (second pass): the client now resolves plain
+  // `{{expression}}` arithmetic entirely on its own (shared/
+  // characterSheet.ts's own evaluateCharacterSheetExpression, via
+  // expr-eval) -- this round trip is no longer asked to fill out
+  // every expression in the markdown, only the ones that turn out to
+  // need a REAL dice roll (rollCharacterSheetExpression returns
+  // undefined for everything else, since the client already resolved
+  // it, value or error, with nothing left for the server to add).
+  const expressionSegments = findExpressionSegments(markdown)
+    .map((segment) => {
+      const roll = rollCharacterSheetExpression(segment.expression, variableValues, segment.display === "button");
+      return roll ? { ...segment, ...roll } : undefined;
+    })
+    .filter((segment): segment is NonNullable<typeof segment> => segment !== undefined);
+  // Real request, 2026-10-26: a compound roll's own parts are ALWAYS
+  // evaluated here (never partially client-side) -- it only ever
+  // exists at all as an explicit button/action, same reasoning
+  // rollCompoundPart's own doc covers.
+  const compoundRollSegments = findCompoundRollSegments(markdown).map((segment) => ({
+    ...segment,
+    parts: segment.parts.map((part) => ({ ...part, ...rollCompoundPart(part, variableValues) })),
+  }));
+  return { resolvedMarkdown, segments, expressionSegments, compoundRollSegments };
 });
 
 const getGames = createEndpoint("/games", { method: "GET", scope: "http" }, async (ctx) => {
@@ -335,7 +494,11 @@ const routes = createRouter({
   deleteAccountMod,
   getAccountCharacterSheetTemplates,
   getAccountCharacterSheetLibraries,
+  getAccountAbilityCatalog,
+  postUpload,
+  getAccountUploads,
   putCharacterSheet,
+  postCharacterImportSheet,
   getCharacter,
   deleteCharacterEndpoint,
   postCharacterSheetPreview,
@@ -372,4 +535,13 @@ export const server = defineServer({
     game: defineRoom(GameRoom).filterBy(["gameId"]),
   },
   routes,
+  // Serves back whatever postUpload above just wrote to disk --
+  // `createEndpoint`'s own JSON-only response shape has no way to
+  // return raw file bytes, so this plain Express static mount (the
+  // one customization hook `ServerOptions.express` exposes, confirmed
+  // directly in @colyseus/core's own Server.d.ts) is the actual
+  // "serve a file back" half of that endpoint.
+  express: (app) => {
+    app.use("/uploads", express.static(join(process.cwd(), "data", "uploads")));
+  },
 });

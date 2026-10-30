@@ -52,10 +52,24 @@ interface ChatSendMessage {
   text: string;
   /** MVP goal item 4 follow-up ("characters" tab): "a player should be able to drop down and select what character they want to post as out of all the characters they have access to." Optional -- omitted/invalid/unpermitted falls back to the session's own account name, same "stale id, not a crash" spirit used everywhere else, never an error. */
   asCharacterId?: string;
+  /** Real request, 2026-10-29: "the chat in the main game doesn't seem to allow the same tables and formatting as test chat and they should be exactly the same" -- a character sheet click (a roll result, an ability's own info table) already computes this client-side; carried through verbatim (never touched/validated server-side beyond this) since every RECEIVING client sanitizes with DOMPurify before ever rendering it, the same trust boundary `text` itself already has. Never set for a typed `/roll` or `[[...]]` message -- those have no rich rendering of their own, only `text`. */
+  html?: string;
 }
 
-/** Substitutes every `[[...]]` segment in `text` with its resolved roll result (or an inline error marker for a malformed segment) -- graceful per-segment degradation, never drops the whole message over one bad segment. */
-function resolveInlineRolls(text: string): string {
+/**
+ * Substitutes every `[[...]]` segment in `text` with its resolved
+ * roll result (or an inline error marker for a malformed segment) --
+ * graceful per-segment degradation, never drops the whole message
+ * over one bad segment. `variableValues` -- the same character-
+ * variable substitution `{{expression}}` sheet formulas already use
+ * (rollNotation's own `variableValues` param, shared/characterSheet.ts's
+ * substituteVariableRefs under it) -- lets a typed `[[1d20+{initiative}]]`
+ * resolve against whichever character this message is being posted
+ * AS (see this file's own chatSend handler for how that's chosen);
+ * defaults to `{}` so a message posted under the sender's own account
+ * name (no character selected) behaves exactly as before.
+ */
+function resolveInlineRolls(text: string, variableValues: Readonly<Record<string, number | string>> = {}): string {
   const segments = findInlineRolls(text);
   if (segments.length === 0) return text;
 
@@ -63,7 +77,7 @@ function resolveInlineRolls(text: string): string {
   let cursor = 0;
   for (const segment of segments) {
     result += text.slice(cursor, segment.start);
-    const rolled = rollNotation(segment.notation);
+    const rolled = rollNotation(segment.notation, variableValues);
     result += rolled.ok ? rolled.text : `[invalid dice: ${segment.notation}]`;
     cursor = segment.end;
   }
@@ -89,10 +103,17 @@ export class GameRoom extends Room<{ state: GameStateType }> {
       // character (owns it, or it's shared/linked visibly to them).
       const asCharacter = message.asCharacterId && sender?.accountId && store.canAccountViewCharacter(sender.accountId, message.asCharacterId) ? store.getCharacter(message.asCharacterId) : undefined;
       const senderName = asCharacter?.name ?? sender?.name ?? "Unknown";
+      // Rolling AS a character means its own variableValues are in
+      // scope for `[[...]]`/`/roll` notation (e.g. `[[1d20+{initiative}]]`)
+      // -- same substitution rule {{expression}} sheet formulas
+      // already use. Posting under just the account name (no
+      // character selected) has no character variables to draw on,
+      // same as before this wiring existed.
+      const variableValues = asCharacter?.variableValues ?? {};
 
       const rollArg = parseSlashRoll(text);
       if (rollArg !== null) {
-        const result = rollNotation(rollArg);
+        const result = rollNotation(rollArg, variableValues);
         if (!result.ok) {
           // Sender-only, never persisted/broadcast -- keeps the shared
           // log free of typo'd notation attempts.
@@ -103,13 +124,13 @@ export class GameRoom extends Room<{ state: GameStateType }> {
         return;
       }
 
-      this.persistAndBroadcast(senderName, resolveInlineRolls(text));
+      this.persistAndBroadcast(senderName, resolveInlineRolls(text, variableValues), message.html);
     });
   }
 
-  private persistAndBroadcast(senderName: string, text: string): void {
-    const message = this.storage.append(senderName, text);
-    this.broadcast("chatMessage", message);
+  private persistAndBroadcast(senderName: string, text: string, html?: string): void {
+    const stored = this.storage.append(senderName, text, html);
+    this.broadcast("chatMessage", stored);
   }
 
   onJoin(client: Client, options?: JoinOptions) {

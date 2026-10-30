@@ -32,6 +32,7 @@ import {
   fetchCharacterSheetLibraries,
   deleteCharacter,
   createCharacter,
+  importCharacterSheetFromWorkbook,
   type ModManifest,
   type CharacterRecord,
   type CharacterSheetTemplateCatalogEntry,
@@ -40,6 +41,12 @@ import {
 import { mountCharacterSheetView, type CharacterSheetViewController } from "./characterSheetView.js";
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 import { colorToHex, hexToColor, randomCharacterColor } from "./lobby.js";
+import { fetchAndParseWorkbook } from "./characterSheetImport.js";
+import { getAllModActions, ensureModActionsLoaded } from "./modActions.js";
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 export function mountCharactersPage(container: HTMLElement, httpUrl: string, accountId: string): void {
   container.innerHTML = `
@@ -106,6 +113,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
               <input id="new-character-color" type="color" title="Token color" />
               <button type="button" id="create-character-btn">+ Create new character</button>
             </div>
+            <div id="import-new-character-list"></div>
           </section>
           <section id="sheet-section"></section>
         </div>
@@ -121,6 +129,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
   const newCharacterNameInput = container.querySelector<HTMLInputElement>("#new-character-name")!;
   const newCharacterColorInput = container.querySelector<HTMLInputElement>("#new-character-color")!;
   const createCharacterBtn = container.querySelector<HTMLButtonElement>("#create-character-btn")!;
+  const importNewCharacterListEl = container.querySelector<HTMLDivElement>("#import-new-character-list")!;
   newCharacterColorInput.value = colorToHex(randomCharacterColor());
 
   let availableMods: ModManifest[] = [];
@@ -156,6 +165,10 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       // that caused round 2's double-click bug.
       button.textContent = importing ? "Remove" : "Import";
       button.dataset.imported = String(importing);
+      // Real request, 2026-10-29: "run what [modActions.ts] does when
+      // the mod is imported by a user, like when clicking the mod
+      // import button" -- this IS that button.
+      if (importing) void ensureModActionsLoaded(modId);
       await Promise.all([refreshTemplates(), refreshLibraries()]);
       currentView?.refresh(templates, libraries, importedModIds);
     });
@@ -217,8 +230,83 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
     });
   });
 
+  /**
+   * Real request, 2026-10-26: "add an import-url option to the
+   * characters page when the mod is imported, because I want to see
+   * how it looks like visually too... rather than expecting something
+   * good to show up from default/0 values." A one-click "create +
+   * import" path on THIS page's own top-level Characters section
+   * (not nested inside an already-selected character's own sheet
+   * view, which only ever offers importing for a brand-new, no-sheet-
+   * yet character) -- one row per importer-capable template (same
+   * `hasImporter` catalog flag characterSheetView.ts's own import
+   * section already checks), each creating a fresh character and
+   * immediately importing into it in one step.
+   */
+  function renderImportNewCharacterSection(): void {
+    const importers = templates.filter((t) => t.hasImporter);
+    importNewCharacterListEl.innerHTML = importers
+      .map(
+        (t) => `
+      <div class="variable-row import-row" data-mod-id="${t.modId}">
+        <span class="import-label">${escapeHtml(t.template.name)}:</span>
+        <input type="text" class="import-new-character-name" placeholder="New character name" />
+        <input type="text" class="import-url-input" placeholder="Google Sheets URL (the ordinary edit/share link is fine)" />
+        <button type="button" class="import-from-url-btn">Create + Import</button>
+        <span class="import-status"></span>
+      </div>`,
+      )
+      .join("");
+  }
+
+  importNewCharacterListEl.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>(".import-from-url-btn");
+    if (!button) return;
+    const row = button.closest<HTMLDivElement>(".import-row")!;
+    const modId = row.dataset.modId!;
+    const template = templates.find((t) => t.modId === modId);
+    const nameInput = row.querySelector<HTMLInputElement>(".import-new-character-name")!;
+    const urlInput = row.querySelector<HTMLInputElement>(".import-url-input")!;
+    const statusEl = row.querySelector<HTMLSpanElement>(".import-status")!;
+    const url = urlInput.value.trim();
+    if (!url) return;
+    const name = nameInput.value.trim() || `${template?.template.name ?? "Imported"} character`;
+    statusEl.textContent = "Importing...";
+    button.disabled = true;
+    void createCharacter(httpUrl, accountId, name, randomCharacterColor())
+      .then((newCharacter) =>
+        fetchAndParseWorkbook(url)
+          .then((workbook) => importCharacterSheetFromWorkbook(httpUrl, newCharacter.id, accountId, modId, workbook))
+          .catch((err: unknown) => {
+            // The character itself was created even though the import
+            // failed (a bad URL, say) -- keep it (same "stale id, not
+            // a crash" spirit as everywhere else) rather than silently
+            // losing track of it, so the session can just retry the
+            // import from its own now-existing sheet section instead.
+            characters.push(newCharacter);
+            renderCharList();
+            throw err;
+          }),
+      )
+      .then((updated) => {
+        characters.push(updated);
+        selectedCharacterId = updated.id;
+        nameInput.value = "";
+        urlInput.value = "";
+        statusEl.textContent = "";
+        button.disabled = false;
+        renderCharList();
+        renderSheetSection();
+      })
+      .catch((err: unknown) => {
+        statusEl.textContent = `Import failed: ${err instanceof Error ? err.message : String(err)}`;
+        button.disabled = false;
+      });
+  });
+
   async function refreshTemplates(): Promise<void> {
     templates = await fetchCharacterSheetTemplates(httpUrl, accountId);
+    renderImportNewCharacterSection();
   }
 
   async function refreshLibraries(): Promise<void> {
@@ -243,7 +331,13 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       libraries,
       importedModIds,
       canEdit: true,
-      onPostToChat: (label, value) => testChatPanel.addMessage(`${character.name}: ${label} -> ${value}`),
+      modActions: getAllModActions(),
+      // Real request, 2026-10-26 (third pass): a single-part roll
+      // (e.g. "evasion: 13") arrives with an empty `label`, posted
+      // verbatim with no "-> " wrapper -- see characterSheetView.ts's
+      // own single-part posting path.
+      onPostToChat: (label, value, html) =>
+        testChatPanel.addMessage(`${character.name}: ${label ? `${label} -> ${value}` : value}`, html !== undefined ? `${escapeHtml(character.name)}: ${html}` : undefined),
       onSaved: (updated) => {
         const index = characters.findIndex((c) => c.id === updated.id);
         if (index !== -1) characters[index] = updated;
@@ -253,6 +347,9 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
 
   void (async () => {
     [availableMods, importedModIds, characters] = await Promise.all([fetchAvailableMods(httpUrl), fetchAccountMods(httpUrl, accountId), fetchCharactersForAccount(httpUrl, accountId)]);
+    // Covers a mod imported in an EARLIER session -- its own "Import"
+    // click (above) already handles THIS session's fresh import.
+    for (const modId of importedModIds) void ensureModActionsLoaded(modId);
     renderModsList();
     renderCharList();
     await Promise.all([refreshTemplates(), refreshLibraries()]);

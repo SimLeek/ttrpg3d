@@ -226,7 +226,7 @@ describe("WorldRoom", () => {
     it("a join with a real characterId populates the flattened character fields plus the resolved bars from its sheet; a missing/unknown one leaves them at defaults and doesn't crash", async () => {
       const character = store.createCharacter(owner.id, "Aria", [0.5, 0.25, 0.75]);
       const customSheet = { name: "Aria's Sheet", pages: [], variables: [{ id: "hp", label: "HP", type: "xOfY" as const, default: 10, max: 10 }], bars: [{ variableId: "hp", color: [0.75, 0.22, 0.17] as [number, number, number] }] };
-      store.updateCharacterSheet(character.id, null, customSheet, { hp: 7, bodyWidth: 1.0, bodyHeight: 2.2, bodyDepth: 0.8 });
+      store.updateCharacterSheet(character.id, null, customSheet, { hp: 7, bodyWidth: 1.0, bodyHeight: 2.2, bodyDepth: 0.8, tokenImage: "/uploads/aria.png" });
       const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
 
       const withCharacter = await colyseus.connectTo(room, { characterId: character.id });
@@ -238,12 +238,15 @@ describe("WorldRoom", () => {
       expect(joined.currentInstance.bars[0]).toMatchObject({ variableId: "hp", label: "HP", value: 7, max: 10, colorR: 0.75, colorG: 0.22, colorB: 0.17 });
       // MVP goal item 4 follow-up ("I tried adjusting the character width/height/depth and that did nothing") -- real bug fix.
       expect([joined.currentInstance.bodyWidth, joined.currentInstance.bodyHeight, joined.currentInstance.bodyDepth]).toEqual([1.0, 2.2, 0.8]);
+      // docs/CHARACTER_SHEET_IMPORT.md, part 2 -- same reserved-variable-to-live-target sync, now also tokenImage.
+      expect(joined.currentInstance.tokenImage).toBe("/uploads/aria.png");
 
       const withoutCharacter = await colyseus.connectTo(room);
       const joinedBare = room.state.players.get(withoutCharacter.sessionId)!;
       expect(joinedBare.currentInstance.characterId).toBe("");
       expect(joinedBare.currentInstance.bars).toHaveLength(0);
       expect([joinedBare.currentInstance.bodyWidth, joinedBare.currentInstance.bodyHeight, joinedBare.currentInstance.bodyDepth]).toEqual([0.6, 1.8, 0.6]); // RESERVED_BODY_SIZE_VARIABLES' own shared defaults
+      expect(joinedBare.currentInstance.tokenImage).toBe(""); // RESERVED_TOKEN_IMAGE_VARIABLES' own shared default
 
       const withUnknownCharacter = await colyseus.connectTo(room, { characterId: "not-a-real-character" });
       const joinedUnknown = room.state.players.get(withUnknownCharacter.sessionId)!;
@@ -1770,6 +1773,22 @@ describe("WorldRoom", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       expect(room.state.measurementShapes).toHaveLength(0);
+    });
+
+    it("real request, 2026-10-27 -- 'box' (renamed from 'cube') and the new sphere-like 'cube' are both accepted kinds", async () => {
+      const owner = trackedAccount(`WorldRoom-test-ms-box-cube-owner-${Date.now()}`);
+      const game = trackedGame(`WorldRoom-test-ms-box-cube-game-${Date.now()}`, owner.id);
+      const world = trackedWorld(game.id, "Measurement Box Cube Test World", "limestone_slab", SLAB_PARAMS);
+      const room = await colyseus.createRoom<WorldRoom>("world", { worldId: world.id });
+      const client = await colyseus.connectTo(room, { accountId: owner.id });
+
+      client.send("placeMeasurementShape", { kind: "box", points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 3, z: 4 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes[0].kind).toBe("box");
+
+      client.send("placeMeasurementShape", { kind: "cube", points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 3, z: 4 }], broadcast: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(room.state.measurementShapes[0].kind).toBe("cube"); // replaced the box, same single-slot-per-session rule
     });
 
     it("cone/beam settings (coneDegrees/isFrustum/beamWidth) are stored as sent", async () => {

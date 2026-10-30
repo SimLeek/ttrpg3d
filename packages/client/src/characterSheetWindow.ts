@@ -14,6 +14,7 @@
 import { fetchAccounts, fetchCharacter, fetchCharacterSheetTemplates, fetchCharacterSheetLibraries, fetchAccountMods, ACCOUNT_STORAGE_KEY } from "./api.js";
 import { connectChat } from "./chatNet.js";
 import { mountCharacterSheetView } from "./characterSheetView.js";
+import { getAllModActions, ensureModActionsLoaded } from "./modActions.js";
 
 export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl: string, wsUrl: string, gameId: string, characterId: string): Promise<void> {
   container.innerHTML = `
@@ -71,6 +72,12 @@ export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl:
     connectChat(wsUrl, gameId, account.displayName, account.id, characterId),
   ]);
 
+  // This window never shows the account mods list/"Import" button itself
+  // (see this file's own header) -- the owning account already imported
+  // whatever's in `importedModIds` in an earlier session, so that's the
+  // only trigger this window ever gets.
+  for (const modId of importedModIds) void ensureModActionsLoaded(modId);
+
   statusEl.textContent = `Connected to this game's chat as ${account.displayName} -- posts from this window attribute to ${character.name}.`;
   connection.onError((reason) => {
     statusEl.textContent = `Chat error: ${reason}`;
@@ -85,6 +92,12 @@ export async function mountCharacterSheetWindow(container: HTMLElement, httpUrl:
     libraries,
     importedModIds,
     canEdit,
-    onPostToChat: (label, value) => connection.send(`${label} -> ${value}`, characterId),
+    modActions: getAllModActions(),
+    // Real request, 2026-10-26 (third pass): a single-part label-as-
+    // button roll (e.g. "evasion: 13") posts its own already-complete
+    // "label: value" text with an empty `label` arg (characterSheetView.ts's
+    // own single-part posting path) -- shown verbatim, no "-> " wrapper,
+    // unlike a multi-part bundled action (e.g. "Light Attack -> atk: 24, damage: 12").
+    onPostToChat: (label, value, html) => connection.send(label ? `${label} -> ${value}` : value, characterId, html),
   });
 }

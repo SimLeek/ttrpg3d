@@ -25,13 +25,13 @@
 // Pure, non-3D/non-physics logic -- this is exactly the kind of thing that
 // should have real unit tests (see store.test.ts), unlike the client's
 // movement/physics code which gets verified by actual playtesting instead.
-// Factored as createStore(baseDir) rather than module-level state
+// Factored as createStore(baseDir, modsDir) rather than module-level state
 // specifically so tests can point it at an isolated temp directory instead
 // of this process's real `data/`.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type CharacterSheetTemplate } from "@ttrpg3d/shared";
+import { DEFAULT_GENERATOR_ID, type GeneratorId, type GeneratorParams, type CharacterSheetTemplate, type AbilityCatalogEntry } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -152,7 +152,7 @@ export interface WorldRecord {
 /** The persisted half of WorldState.ts's `MeasurementShapeState` -- a 1:1 mirror (nothing here is derived/re-resolvable from elsewhere, same tier as TurnOrderEntryRecord). */
 export interface MeasurementShapeRecord {
   shapeId: string;
-  kind: "chain" | "cube" | "sphere" | "cone" | "beam";
+  kind: "chain" | "box" | "sphere" | "cube" | "cone" | "beam";
   ownerAccountId: string;
   points: { x: number; y: number; z: number }[];
   broadcast: boolean;
@@ -300,12 +300,14 @@ function newId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-export function createStore(baseDir: string) {
+export function createStore(baseDir: string, modsDir: string = join(process.cwd(), "mods")) {
   const accountsFile = join(baseDir, "accounts.json");
   const gamesFile = join(baseDir, "games.json");
   const worldsFile = join(baseDir, "worlds.json");
   const charactersFile = join(baseDir, "characters.json");
   const gameCharacterLinksFile = join(baseDir, "gameCharacterLinks.json");
+  const abilityCatalogsFile = join(baseDir, "abilityCatalogs.json");
+  const uploadedImagesFile = join(baseDir, "uploadedImages.json");
 
   function readJson<T>(path: string, fallback: T): T {
     if (!existsSync(path)) return fallback;
@@ -382,6 +384,68 @@ export function createStore(baseDir: string) {
 
   function saveGameCharacterLinks(links: GameCharacterLink[]): void {
     writeJson(gameCharacterLinksFile, links);
+  }
+
+  /**
+   * Real request, 2026-10-28 (Abilities round): one `AbilityCatalogEntry[]`
+   * per (account, modId) pair -- see shared/characterSheet.ts's own
+   * doc on `CharacterSheetImportResult.abilityCatalog` for why this is
+   * account-scoped (not per-character: it's the game's own rulebook
+   * data, not any one character's) and not mod-wide-shared (one
+   * account's own import shouldn't silently overwrite what a
+   * DIFFERENT account is seeing).
+   */
+  interface AbilityCatalogRecord {
+    accountId: string;
+    modId: string;
+    catalog: AbilityCatalogEntry[];
+  }
+
+  function loadAbilityCatalogs(): AbilityCatalogRecord[] {
+    return readJson<AbilityCatalogRecord[]>(abilityCatalogsFile, []);
+  }
+
+  function saveAbilityCatalogs(records: AbilityCatalogRecord[]): void {
+    writeJson(abilityCatalogsFile, records);
+  }
+
+  /**
+   * Real request, 2026-10-29: "if those are imported and saved, which
+   * they should be, we should be able to get the list of the image
+   * our specific account uploaded as well, so that we don't take up
+   * space." `saveUploadedImage` (data/uploads.ts) only ever wrote the
+   * file + handed back its URL -- nothing recorded WHICH account
+   * uploaded it, so there was never a list to show back. One flat
+   * file, same "an array of plain records, filtered by accountId on
+   * read" shape AbilityCatalogRecord above already uses.
+   */
+  interface UploadedImageRecord {
+    accountId: string;
+    url: string;
+    uploadedAt: number;
+  }
+
+  function loadUploadedImages(): UploadedImageRecord[] {
+    return readJson<UploadedImageRecord[]>(uploadedImagesFile, []);
+  }
+
+  function saveUploadedImages(records: UploadedImageRecord[]): void {
+    writeJson(uploadedImagesFile, records);
+  }
+
+  /**
+   * The mod's own BUNDLED default catalog (this project's own
+   * `scripts/generate-lyrian-ability-data.mjs`, read from disk once
+   * per call -- these files are small/rarely read compared to the
+   * account-scoped records above, no need to cache). Real sheet
+   * confirmed directly: the hidden "All Abilities" tab IS the game's
+   * single rulebook list, so a mod that doesn't ship this file simply
+   * has no default (an account that's never imported sees an empty
+   * catalog until they do, rather than a crash).
+   */
+  function loadBundledAbilityCatalogSeed(modId: string): AbilityCatalogEntry[] {
+    const seedPath = join(modsDir, modId, "data", "abilityCatalogSeed.json");
+    return readJson<AbilityCatalogEntry[]>(seedPath, []);
   }
 
   /** Deterministic, no-two-defaults-look-identical color for an auto-created default character -- real request: picking a character shouldn't be required just to see something other than a flat gray/placeholder box. Not cryptographic, just spread across the color space. */
@@ -479,6 +543,50 @@ export function createStore(baseDir: string) {
       if (!account) return;
       account.importedModIds = account.importedModIds.filter((id) => id !== modId);
       saveAccounts(accounts);
+    },
+
+    /**
+     * Real request, 2026-10-28: "gathered from their imported
+     * character sheet xlsx since that has the updated list, and then
+     * a default list if that wasn't imported." Lazily seeds from the
+     * mod's own bundled `data/abilityCatalogSeed.json` (and persists
+     * that seed immediately, so every later read is a plain lookup,
+     * not a re-seed) the first time this account asks for THIS mod's
+     * catalog with nothing stored yet.
+     */
+    getAbilityCatalog(accountId: string, modId: string): AbilityCatalogEntry[] {
+      const records = loadAbilityCatalogs();
+      const existing = records.find((r) => r.accountId === accountId && r.modId === modId);
+      if (existing) return existing.catalog;
+      const seeded = loadBundledAbilityCatalogSeed(modId);
+      records.push({ accountId, modId, catalog: seeded });
+      saveAbilityCatalogs(records);
+      return seeded;
+    },
+
+    /** Real request, 2026-10-28: refreshed wholesale by a NEW import that happens to carry the real sheet's own "All Abilities" tab (characterSheetImport.ts's own named exception to the hidden-tab skip) -- overwrites whatever this account had before, never merged, since a fresher import is always MORE current than what's already stored. */
+    setAbilityCatalog(accountId: string, modId: string, catalog: AbilityCatalogEntry[]): void {
+      const records = loadAbilityCatalogs();
+      const existing = records.find((r) => r.accountId === accountId && r.modId === modId);
+      if (existing) existing.catalog = catalog;
+      else records.push({ accountId, modId, catalog });
+      saveAbilityCatalogs(records);
+    },
+
+    /** Called right after `saveUploadedImage` writes the file -- records WHICH account uploaded it, so `getUploadedImages` below has something to return. A no-op-safe re-upload of the exact same URL (shouldn't happen, `saveUploadedImage` always mints a fresh UUID filename) would just add a harmless duplicate entry rather than erroring. */
+    recordUploadedImage(accountId: string, url: string): void {
+      const records = loadUploadedImages();
+      records.push({ accountId, url, uploadedAt: Date.now() });
+      saveUploadedImages(records);
+    },
+
+    /** Real request, 2026-10-29: "the list of the image our specific account uploaded... so that we don't take up space" -- lets the token-image picker offer "reuse one you already have" instead of only ever uploading a fresh copy. Newest first (most likely to be the one just used). */
+    getUploadedImages(accountId: string): string[] {
+      return loadUploadedImages()
+        .filter((r) => r.accountId === accountId)
+        .reverse() // latest-pushed-first, as the tiebreak below for two uploads landing in the SAME millisecond (confirmed live: a fast test -- plausibly a fast double-upload too -- ties Date.now())
+        .sort((a, b) => b.uploadedAt - a.uploadedAt) // stable sort (ES2019+): a genuine tie keeps the reversed, latest-first order from above
+        .map((r) => r.url);
     },
 
     createGame(name: string, ownerAccountId: string): GameRecord {

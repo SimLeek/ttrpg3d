@@ -26,6 +26,7 @@
 
 import { fetchCharacter, fetchCharacterSheetTemplates, fetchCharacterSheetLibraries, fetchAccountMods, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { mountCharacterSheetView, type CharacterSheetViewController } from "./characterSheetView.js";
+import { getAllModActions, ensureModActionsLoaded } from "./modActions.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
 import { SAFE_AREA_LEFT_VAR, SAFE_AREA_RIGHT_VAR, SAFE_AREA_TOP_VAR, SAFE_AREA_BOTTOM_VAR } from "./panelLayout.js";
 
@@ -35,8 +36,8 @@ export interface CharacterSheetPopupOptions {
   httpUrl: string;
   gameId: string;
   viewerAccountId: string;
-  /** Sends through the already-open, real game chat connection (main.ts's runningChat.connection), attributed to this character. */
-  onPostToChat(characterId: string, text: string): void;
+  /** Sends through the already-open, real game chat connection (main.ts's runningChat.connection), attributed to this character. `html` (real request, 2026-10-29 -- "the chat in the main game... should be exactly the same [as test chat]") is the same richer rendering test chat's own onPostToChat already carries. */
+  onPostToChat(characterId: string, text: string, html?: string): void;
 }
 
 export interface CharacterSheetPopupController {
@@ -136,6 +137,10 @@ export function mountCharacterSheetPopup(container: HTMLElement, options: Charac
           fetchAccountMods(httpUrl, character.ownerAccountId),
         ]);
         if (openCharacterId !== characterId) return;
+        // This popup never shows the account mods list/"Import" button
+        // itself -- same reasoning as characterSheetWindow.ts's own copy
+        // of this line.
+        for (const modId of importedModIds) void ensureModActionsLoaded(modId);
         view = mountCharacterSheetView(bodyEl, {
           httpUrl,
           viewerAccountId,
@@ -145,7 +150,13 @@ export function mountCharacterSheetPopup(container: HTMLElement, options: Charac
           libraries,
           importedModIds,
           canEdit,
-          onPostToChat: (label, value) => options.onPostToChat(characterId, `${label} -> ${value}`),
+          modActions: getAllModActions(),
+          // Real request, 2026-10-26 (third pass): a single-part roll
+          // (e.g. "evasion: 13") arrives with an empty `label` and an
+          // already-complete `value` text (characterSheetView.ts's own
+          // single-part posting path) -- posted verbatim, no "-> "
+          // wrapper, unlike a multi-part bundled action.
+          onPostToChat: (label, value, html) => options.onPostToChat(characterId, label ? `${label} -> ${value}` : value, html),
         });
       });
     },

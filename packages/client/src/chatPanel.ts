@@ -61,6 +61,11 @@
 import type { ChatMessage, ModManifest, VisibleGameCharacterEntry } from "./api.js";
 import { requestCapture, releaseCapture } from "./inputCapture.js";
 import { PERSISTENT_PANEL_Z_INDEX, SAFE_AREA_RIGHT_VAR, setSafeAreaInset } from "./panelLayout.js";
+import { appendChatLine } from "./chatMessageRendering.js";
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 640;
@@ -126,6 +131,17 @@ function formatMessage(message: ChatMessage): string {
   return `${message.senderName}: ${message.text}`;
 }
 
+/**
+ * Real request, 2026-10-29: "the chat in the main game doesn't seem
+ * to allow the same tables and formatting as test chat and they
+ * should be exactly the same." The sender name is always plain text
+ * (escaped) in front of the richer `html`, same "name: rendering"
+ * shape `formatMessage` above already uses for the plain fallback.
+ */
+function formatMessageHtml(message: ChatMessage): string | undefined {
+  return message.html === undefined ? undefined : `${escapeHtml(message.senderName)}: ${message.html}`;
+}
+
 export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions): ChatPanelController {
   container.innerHTML = `
     <style>
@@ -175,8 +191,14 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
          index.html's html/body overflow:hidden would otherwise make any
          chat longer than one screen simply unreachable). */
       .chat-messages { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 13px; line-height: 1.4; word-break: break-word; }
-      .chat-messages .msg { margin-bottom: 4px; }
+      .chat-messages .msg { margin-bottom: 4px; white-space: pre-wrap; }
       .chat-messages .err { margin-bottom: 4px; color: #e66; font-style: italic; }
+      /* Real request, 2026-10-29: "the chat in the main game... should be exactly the same [as test chat]" -- mirrors testChatPanel.ts's own .roll-result/.roll-result-group rules exactly, now that a compound roll's own html actually reaches this panel too. */
+      .chat-messages .roll-result { font-weight: bold; text-decoration: underline dotted; cursor: help; }
+      .chat-messages .roll-result-group { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 6px 8px; margin: 2px 0; }
+      /* Real request, 2026-10-29: "the abilities when clicked should show their description in tables with some background difference to differentiate them from the rest of the chat" -- .ability-info-table is the class lyrianChronicles.ts's own abilityInfoTableHtml already bakes in; same background-tint treatment as a roll-result-group, just shaped as a table instead. */
+      .chat-messages .ability-info-table { background: rgba(255,255,255,0.06); border-radius: 4px; border-collapse: collapse; width: 100%; margin: 2px 0; }
+      .chat-messages .ability-info-table td { padding: 3px 6px; }
       .chat-input-row { flex: none; padding: 8px; border-top: 1px solid rgba(200,200,200,0.3); }
       .chat-input-row input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 13px; background: rgba(0,0,0,0.3); border: 1px solid rgba(200,200,200,0.4); border-radius: 4px; color: #eee; }
       .chat-gm-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; font-size: 12px; }
@@ -460,15 +482,11 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
   }
   applyWidth(DEFAULT_WIDTH);
 
-  function appendLine(text: string, className: string): void {
-    const line = document.createElement("div");
-    line.className = className;
-    line.textContent = text;
-    messagesEl.appendChild(line);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+  function appendLine(text: string, className: string, html?: string): void {
+    appendChatLine(messagesEl, text, className, html);
   }
 
-  for (const message of options.initialMessages) appendLine(formatMessage(message), "msg");
+  for (const message of options.initialMessages) appendLine(formatMessage(message), "msg", formatMessageHtml(message));
 
   function setFocused(focused: boolean): void {
     if (focused) requestCapture("chat");
@@ -560,7 +578,7 @@ export function mountChatPanel(container: HTMLElement, options: ChatPanelOptions
 
   return {
     addMessage(message) {
-      appendLine(formatMessage(message), "msg");
+      appendLine(formatMessage(message), "msg", formatMessageHtml(message));
     },
     showError(reason) {
       appendLine(reason, "err");

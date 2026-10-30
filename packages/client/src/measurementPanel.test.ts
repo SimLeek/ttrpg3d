@@ -50,7 +50,16 @@ describe("mountMeasurementPanel", () => {
 
   it("renders a button for every shape kind, and clicking one calls onSelectKind", () => {
     const { options } = mount();
+    const boxBtn = parent.querySelector<HTMLButtonElement>('button[data-kind="box"]')!;
+    boxBtn.click();
+    expect(options.onSelectKind).toHaveBeenCalledWith("box");
+  });
+
+  it("real request, 2026-10-27 -- the 'cube' button is a SEPARATE, sphere-like shape, distinct from the renamed 'box' button", () => {
+    const { options } = mount();
     const cubeBtn = parent.querySelector<HTMLButtonElement>('button[data-kind="cube"]')!;
+    expect(cubeBtn).not.toBeNull();
+    expect(cubeBtn.textContent).toBe("Cube");
     cubeBtn.click();
     expect(options.onSelectKind).toHaveBeenCalledWith("cube");
   });

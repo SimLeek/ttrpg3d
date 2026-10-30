@@ -9,7 +9,7 @@
 // (pageManager.ts), not from this outer lobby. See docs/ROADMAP.md's
 // Standing Decisions for the full Game/World split.
 
-import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment } from "@ttrpg3d/shared";
+import type { GeneratorId, GeneratorParams, CharacterSheetTemplate, LibraryCallSegment, ImportedWorkbook, ExpressionSegment, ExpressionEvalResult, CompoundRollSegment, CompoundRollPart, AbilityCatalogEntry } from "@ttrpg3d/shared";
 
 export interface Account {
   id: string;
@@ -55,6 +55,8 @@ export interface ChatMessage {
   id: number;
   senderName: string;
   text: string;
+  /** Real request, 2026-10-29: "the chat in the main game... should be exactly the same [as test chat]." Mirrors chatStorage.ts's own ChatMessage.html -- sanitized with DOMPurify before ever touching `innerHTML` (chatMessageRendering.ts), never trusted just because it arrived over the wire. */
+  html?: string;
   createdAt: number;
 }
 
@@ -208,6 +210,8 @@ export interface CharacterSheetTemplateCatalogEntry {
   modId: string;
   manifest: ModManifest;
   template: CharacterSheetTemplate;
+  /** docs/CHARACTER_SHEET_IMPORT.md, part 1 -- whether this mod also exports a characterSheetImporter, for an "Import from URL" action distinct from "start from this template" blank-cloning. */
+  hasImporter: boolean;
 }
 
 /** Scoped to the account's OWN importedModIds -- not every mod on disk, not any game's modIds. */
@@ -229,6 +233,15 @@ export async function fetchCharacterSheetLibraries(httpUrl: string, accountId: s
   return res.json();
 }
 
+/**
+ * Real request, 2026-10-28 (Abilities round) -- the "Add Ability" search popup's own catalog, scoped to this account: refreshed by their last import that carried the real sheet's own "All Abilities" tab, falling back to the mod's own bundled default the first time this account ever asks (see store.ts's own getAbilityCatalog).
+ * Generic (real request, 2026-10-29: `AbilityCatalogEntry` is now just `{name, [field: string]: string}` -- a mod's own concrete shape, e.g. Lyrian Chronicles' own `LyrianAbilityCatalogEntry`, is supplied by the CALLER via `T`, not hardcoded here; this function stays agnostic to which mod it's fetching for.
+ */
+export async function fetchAbilityCatalog<T extends AbilityCatalogEntry = AbilityCatalogEntry>(httpUrl: string, accountId: string, modId: string): Promise<T[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/mods/${encodeURIComponent(modId)}/ability-catalog`);
+  return res.json();
+}
+
 /** Ownership-gated server-side (must be the character's own ownerAccountId) -- accountId is the caller's own, not trusted blindly, just checked fresh. Replaces templateId/customSheet/variableValues wholesale. Returns the updated CharacterRecord. */
 export async function updateCharacterSheet(httpUrl: string, characterId: string, accountId: string, templateId: string | null, customSheet: CharacterSheetTemplate | null, variableValues: Record<string, number | string>): Promise<CharacterRecord> {
   const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}/sheet`, {
@@ -237,6 +250,50 @@ export async function updateCharacterSheet(httpUrl: string, characterId: string,
     body: JSON.stringify({ accountId, templateId, customSheet, variableValues }),
   });
   return res.json();
+}
+
+/** docs/CHARACTER_SHEET_IMPORT.md, part 1 -- `workbook` is already parsed client-side (characterSheetImport.ts's fetchAndParseWorkbook); this just uploads it to the chosen mod's own characterSheetImporter. Same ownership gate as updateCharacterSheet above, plus a check that `accountId` has actually imported `modId`. Throws with the server's own message on failure (an unauthorized mod, a mod with no importer, a malformed workbook) rather than silently returning a stale character. */
+export async function importCharacterSheetFromWorkbook(httpUrl: string, characterId: string, accountId: string, modId: string, workbook: ImportedWorkbook): Promise<CharacterRecord> {
+  const res = await fetch(`${httpUrl}/characters/${encodeURIComponent(characterId)}/import-sheet`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, modId, workbook }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "import failed");
+  return res.json();
+}
+
+/**
+ * docs/CHARACTER_SHEET_IMPORT.md, part 2 -- "a new upload endpoint,
+ * writing to disk." `file` is read+base64-encoded here (no multipart/
+ * FormData handling exists anywhere in this project's HTTP layer --
+ * this keeps the SAME plain-JSON-body convention every other endpoint
+ * already uses). Returns a URL PATH (e.g. "/uploads/<id>.png"), not a
+ * full origin -- same convention `httpUrl` itself already follows;
+ * callers resolve it against `httpUrl`'s own origin when they need an
+ * absolute URL (e.g. to feed a Babylon texture loader).
+ */
+export async function uploadImage(httpUrl: string, accountId: string, file: File): Promise<{ url: string }> {
+  const dataBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const res = await fetch(`${httpUrl}/uploads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accountId, mimeType: file.type, dataBase64 }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "upload failed");
+  return res.json();
+}
+
+/** Real request, 2026-10-29: "we should be able to get the list of the image our specific account uploaded as well, so that we don't take up space" -- newest first (store.ts's own getUploadedImages). Lets a token-image picker offer "reuse one you already have" alongside "upload a new one." */
+export async function fetchAccountUploads(httpUrl: string, accountId: string): Promise<string[]> {
+  const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/uploads`);
+  const { urls } = await res.json();
+  return urls;
 }
 
 /**
@@ -251,6 +308,19 @@ export async function updateCharacterSheet(httpUrl: string, characterId: string,
 export interface CharacterSheetPreviewResult {
   resolvedMarkdown: string;
   segments: (LibraryCallSegment & { value: string })[];
+  /**
+   * docs/CHARACTER_SHEET_IMPORT.md, part 1 -- real correction,
+   * 2026-10-25 (second pass): plain `{{expression}}` arithmetic now
+   * resolves entirely client-side (characterSheetView.ts, via shared/
+   * characterSheet.ts's evaluateCharacterSheetExpression) -- this
+   * array only ever carries segments that turned out to need a REAL
+   * dice roll (real RNG, which only the server may compute), so it's
+   * frequently empty, and this whole round trip is skipped by the
+   * caller entirely when nothing on the page needs it at all.
+   */
+  expressionSegments: (ExpressionSegment & ExpressionEvalResult)[];
+  /** Real request, 2026-10-26 -- a `{{Label; part: expr | part: expr}}` compound roll's own parts, each already rolled (ALWAYS server-evaluated, unlike `expressionSegments` above -- a compound roll only ever exists as an explicit button/action, never a value shown passively, so there's no client-resolved case to skip). */
+  compoundRollSegments: (Omit<CompoundRollSegment, "parts"> & { parts: (CompoundRollPart & ExpressionEvalResult)[] })[];
 }
 
 export async function fetchCharacterSheetPreview(httpUrl: string, accountId: string, markdown: string, variableValues: Record<string, number | string>): Promise<CharacterSheetPreviewResult> {
