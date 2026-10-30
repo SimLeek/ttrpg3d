@@ -13,7 +13,7 @@ import {
   addExpeditionInventoryItem,
 } from "./lyrianChronicles.js";
 import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
-import type { ModActionContext, ModActionOutcome } from "../modActions.js";
+import type { ModActionContext, ModActionOutcome } from "../modActionRegistry.js";
 
 function classDefs(id: string): CharacterSheetVariableDef[] {
   return [

@@ -156,24 +156,26 @@ export interface CharacterSheetImportResult {
 }
 
 /**
- * One row of the real sheet's own "All Abilities" rulebook tab --
- * confirmed directly: that tab (and the game's own master rulebook it
- * IMPORTRANGEs from) is the single authoritative list of every
- * ability that exists in Lyrian Chronicles, independent of which
- * character has which. See `CharacterSheetImportResult.abilityCatalog`
- * above for how/when this gets captured.
+ * One row of a mod's own game-system reference data (e.g. the real
+ * Lyrian Chronicles sheet's hidden "All Abilities" rulebook tab) --
+ * see `CharacterSheetImportResult.abilityCatalog` above for how/when
+ * this gets captured. Deliberately generic: `name` is the only field
+ * the PLATFORM (store.ts, api.ts) ever reads, since it's the only
+ * thing search/display needs regardless of which mod's catalog this
+ * is. Real request, 2026-10-29: "AbilityCatalogEntry is lyrianChronicles
+ * specific while... not being part of the lyrian chronicles mod. Other
+ * character sheets wouldn't have the same stuff" -- this used to
+ * hardcode Lyrian's own exact field list (keywords/range/cost/apCost/
+ * manaCost/rpCost/benefits) right here in the SHARED package; that
+ * concrete shape now lives in the mod itself (packages/server/mods/
+ * lyrian-chronicles/entry.ts's and packages/client/src/mods/
+ * lyrianChronicles.ts's own `LyrianAbilityCatalogEntry`, each
+ * `extends` this type), which is free to add whatever fields its own
+ * catalog needs without this type ever changing.
  */
 export interface AbilityCatalogEntry {
   name: string;
-  keywords: string;
-  range: string;
-  description: string;
-  requirement: string;
-  cost: string;
-  apCost: string;
-  manaCost: string;
-  rpCost: string;
-  benefits: string;
+  [field: string]: string;
 }
 
 /**

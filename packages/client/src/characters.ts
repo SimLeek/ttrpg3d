@@ -42,7 +42,7 @@ import { mountCharacterSheetView, type CharacterSheetViewController } from "./ch
 import { mountTestChatPanel, type TestChatPanelController } from "./testChatPanel.js";
 import { colorToHex, hexToColor, randomCharacterColor } from "./lobby.js";
 import { fetchAndParseWorkbook } from "./characterSheetImport.js";
-import { MOD_ACTIONS } from "./modActions.js";
+import { getAllModActions } from "./modActions.js";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -327,7 +327,7 @@ export function mountCharactersPage(container: HTMLElement, httpUrl: string, acc
       libraries,
       importedModIds,
       canEdit: true,
-      modActions: MOD_ACTIONS,
+      modActions: getAllModActions(),
       // Real request, 2026-10-26 (third pass): a single-part roll
       // (e.g. "evasion: 13") arrives with an empty `label`, posted
       // verbatim with no "-> " wrapper -- see characterSheetView.ts's

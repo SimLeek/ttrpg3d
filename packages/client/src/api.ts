@@ -233,8 +233,11 @@ export async function fetchCharacterSheetLibraries(httpUrl: string, accountId: s
   return res.json();
 }
 
-/** Real request, 2026-10-28 (Abilities round) -- the "Add Ability" search popup's own catalog, scoped to this account: refreshed by their last import that carried the real sheet's own "All Abilities" tab, falling back to the mod's own bundled default the first time this account ever asks (see store.ts's own getAbilityCatalog). */
-export async function fetchAbilityCatalog(httpUrl: string, accountId: string, modId: string): Promise<AbilityCatalogEntry[]> {
+/**
+ * Real request, 2026-10-28 (Abilities round) -- the "Add Ability" search popup's own catalog, scoped to this account: refreshed by their last import that carried the real sheet's own "All Abilities" tab, falling back to the mod's own bundled default the first time this account ever asks (see store.ts's own getAbilityCatalog).
+ * Generic (real request, 2026-10-29: `AbilityCatalogEntry` is now just `{name, [field: string]: string}` -- a mod's own concrete shape, e.g. Lyrian Chronicles' own `LyrianAbilityCatalogEntry`, is supplied by the CALLER via `T`, not hardcoded here; this function stays agnostic to which mod it's fetching for.
+ */
+export async function fetchAbilityCatalog<T extends AbilityCatalogEntry = AbilityCatalogEntry>(httpUrl: string, accountId: string, modId: string): Promise<T[]> {
   const res = await fetch(`${httpUrl}/accounts/${encodeURIComponent(accountId)}/mods/${encodeURIComponent(modId)}/ability-catalog`);
   return res.json();
 }

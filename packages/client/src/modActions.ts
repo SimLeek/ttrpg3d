@@ -16,98 +16,29 @@
 // server-side when there's a REAL reason to" rule diceRoll.ts's own
 // header already states for dice.
 //
-// Real generalization, 2026-10-28 (Abilities round): "Auto-Calculate
-// Costs" (the ORIGINAL action, synchronous, just a values patch) was
-// enough for itself, but "Add Ability" (opens a search popup, THEN
-// applies whatever gets picked, an indeterminate time later) and
-// "Auto-Populate Abilities" (needs new variable DEFS and a Markdown
-// edit onto the Abilities page, not just values) both need more than
-// that shape allows. Generalized via a CALLBACK instead of a return
-// value -- `apply` can be invoked zero times (the action just opens
-// UI and gives up if the session cancels out), once (the common
-// case), or more than once, from WHENEVER the action is actually
-// ready (immediately, for a pure calculation; after a popup's own
-// "Add" button is clicked, for a search flow) -- one mechanism for
-// every shape, rather than a growing union of action "kinds."
+// Real correction, 2026-10-29: "this looks like special privileges
+// for some mod... mods should be able to do this without elevated
+// privileges." This file used to hardcode a `MOD_ACTIONS` constant
+// keyed by "lyrian-chronicles," importing every one of its action
+// functions directly. The actual registry (and the `ModActionContext`/
+// `ModActionOutcome`/`ModActionFn` types) now lives in
+// modActionRegistry.ts, which knows nothing about any specific mod;
+// a mod's own client code self-registers by calling that file's own
+// `registerModActions`. This file's only remaining job is the
+// bootstrap list of which mods' own client files to eagerly import,
+// so their self-registering side effect actually runs -- adding a new
+// mod's client actions means adding ONE import line here, never
+// touching the registry itself. (The registry/bootstrap split avoids
+// a circular import: a mod's own file needs `registerModActions`, and
+// this file needs to import that mod's file -- putting both in one
+// file would make that a real cycle.)
 //
-// This registry is the ONE place characterSheetView.ts (otherwise
-// completely mod-agnostic) is told what a given mod's own action
-// actually DOES -- every caller of `mountCharacterSheetView` passes
-// this SAME constant as its `modActions` option, same as `templates`/
-// `libraries` are already shared verbatim across every caller.
+// This genuinely isn't "mods need zero elevated privileges" yet --
+// a mod's client file still has to physically live in this repo's own
+// bundle for its import (below) to find it. A mod whose client code
+// is instead fetched+loaded dynamically at runtime would close that
+// gap entirely; a bigger, separate feature, not done here.
 
-import type { CharacterSheetVariableDef, CharacterSheetPageDef } from "@ttrpg3d/shared";
-import {
-  recalculateTraitsCosts,
-  addAbility,
-  addCustomAbility,
-  autoPopulateAbilities,
-  addClass,
-  addBreakthrough,
-  addCombatLoadoutItem,
-  addAdventurersKitItem,
-  addAlchemyRigItem,
-  addExpeditionInventoryItem,
-} from "./mods/lyrianChronicles.js";
+import "./mods/lyrianChronicles.js";
 
-/**
- * Everything an action needs to decide what to do -- a snapshot, not
- * a live reference (the action never mutates the sheet directly, it
- * only ever calls `apply`). An action that wants its OWN UI (a search
- * popup) mounts/removes it entirely on its own, directly against
- * `document.body` -- same self-contained pattern measurementShapes.ts's
- * own right-click context menu already uses -- there's nothing here
- * for that; `apply` is the only coordination point back into the
- * sheet.
- */
-export interface ModActionContext {
-  variableValues: Readonly<Record<string, number | string>>;
-  defs: readonly CharacterSheetVariableDef[];
-  /** This character's CURRENT pages -- lets an action read e.g. the Abilities page's own markdown before deciding whether an ability's already listed on it, without a second round trip. */
-  pages: readonly CharacterSheetPageDef[];
-  httpUrl: string;
-  /** The character's OWNER's account -- same scope `sheetOwnerAccountId` already uses elsewhere in characterSheetView.ts, for any server data this action needs to fetch (e.g. the ability catalog). */
-  accountId: string;
-}
-
-/**
- * What an action hands back to actually commit -- merged into the
- * character's own sheet by characterSheetView.ts's own generic
- * handler (same merge-by-id `variables` logic server.ts's own import
- * endpoint already uses).
- *
- * A page edit is either `appendMarkdown` (added to the END of that
- * page's own CURRENT markdown -- fine for the Abilities page, where
- * every new row is independent, order doesn't matter) or
- * `replaceMarkdown` (the action's own FULL replacement for that
- * page's markdown). Real request, 2026-10-28: "+ Add Class"/"+ Add
- * Breakthrough" need the latter -- a new row has to land INSIDE an
- * existing markdown TABLE (a table is a contiguous block; a bare row
- * appended at the very end of the whole PAGE would land after later
- * sections too, and wouldn't even render as part of the table at
- * all), so the action itself reads the page's CURRENT markdown
- * (`ModActionContext.pages`) and does the string surgery, handing
- * back the complete result rather than a fragment.
- */
-export interface ModActionOutcome {
-  variableValues?: Record<string, number | string>;
-  variables?: CharacterSheetVariableDef[];
-  pageEdits?: { pageTitle: string; appendMarkdown?: string; replaceMarkdown?: string }[];
-}
-
-export type ModActionFn = (ctx: ModActionContext, apply: (outcome: ModActionOutcome) => void) => void | Promise<void>;
-
-export const MOD_ACTIONS: Readonly<Record<string, Readonly<Record<string, ModActionFn>>>> = {
-  "lyrian-chronicles": {
-    recalculateTraitsCosts,
-    addAbility,
-    addCustomAbility,
-    autoPopulateAbilities,
-    addClass,
-    addBreakthrough,
-    addCombatLoadoutItem,
-    addAdventurersKitItem,
-    addAlchemyRigItem,
-    addExpeditionInventoryItem,
-  },
-};
+export { registerModActions, getAllModActions, type ModActionContext, type ModActionOutcome, type ModActionFn } from "./modActionRegistry.js";

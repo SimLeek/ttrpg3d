@@ -1214,6 +1214,30 @@ function findBreakthroughs(workbook: ImportedWorkbook): { name: string; cost: nu
 }
 
 /**
+ * This mod's own concrete catalog-entry shape -- `@ttrpg3d/shared`'s
+ * `AbilityCatalogEntry` only guarantees `name`; every field below is
+ * Lyrian Chronicles' own business. Real request, 2026-10-29:
+ * "AbilityCatalogEntry is lyrianChronicles specific while... not being
+ * part of the lyrian chronicles mod" -- moved here from the shared
+ * package for exactly that reason. Mirrors packages/client/src/mods/
+ * lyrianChronicles.ts's own `LyrianAbilityCatalogEntry` -- client and
+ * server mod halves don't share a types module beyond the generic
+ * shared package, so this is duplicated deliberately rather than
+ * invented.
+ */
+interface LyrianAbilityCatalogEntry extends AbilityCatalogEntry {
+  keywords: string;
+  range: string;
+  description: string;
+  requirement: string;
+  cost: string;
+  apCost: string;
+  manaCost: string;
+  rpCost: string;
+  benefits: string;
+}
+
+/**
  * Real request, 2026-10-28 (Abilities round): "gathered from their
  * imported character sheet xlsx since that has the updated list."
  * The real sheet's own hidden "All Abilities" tab IS the game's full
@@ -1225,10 +1249,10 @@ function findBreakthroughs(workbook: ImportedWorkbook): { name: string; cost: nu
  * own named exception is what lets it survive the client's general
  * "skip every hidden tab" rule in the first place.
  */
-function findAbilityCatalog(workbook: ImportedWorkbook): AbilityCatalogEntry[] | undefined {
+function findAbilityCatalog(workbook: ImportedWorkbook): LyrianAbilityCatalogEntry[] | undefined {
   const grid = workbook["All Abilities"];
   if (!grid) return undefined;
-  const catalog: AbilityCatalogEntry[] = [];
+  const catalog: LyrianAbilityCatalogEntry[] = [];
   for (let r = 1; r < grid.length; r++) {
     const name = asText(grid[r]?.[0], "");
     if (name === "") continue;

@@ -14,7 +14,7 @@ import { listAvailableMods, listCharacterSheetTemplates, listCharacterSheetLibra
 import { findLibraryCalls, findExpressionSegments, findCompoundRollSegments, type ImportedWorkbook } from "@ttrpg3d/shared";
 import { join } from "node:path";
 import express from "express";
-import { saveUploadedImage, UploadRejected } from "./data/uploads.js";
+import { validateUpload, mintUploadUrl, writeUploadedImageBytes, UploadRejected } from "./data/uploads.js";
 import { rollCharacterSheetExpression, rollCompoundPart } from "./chat/diceRoll.js";
 
 store.ensureSeedData();
@@ -120,19 +120,36 @@ const getAccountCharacterSheetLibraries = createEndpoint("/accounts/:id/characte
 // any other sheet edit, via the existing putCharacterSheet above).
 // Ungated beyond "a real account" (no character/game involved at
 // all), same trust level postAccountCharacter already has.
+//
+// Real request, 2026-10-29: "store the uploaded image link with the
+// account before the image is successfully uploaded and not after,
+// so that all images are linked to an account even in case of
+// crashes or mid code drops... all significant uploads should be
+// like that." Order here is deliberate: VALIDATE first (pure, no
+// disk I/O -- a bad mime type/size never reaches the filesystem or
+// gets an account record at all), mint the url, RECORD it against
+// the account, only THEN write the actual bytes. A crash between the
+// record and the write leaves a dangling record (harmless, filterable
+// later) instead of the old failure mode -- a real file on disk that
+// nothing could ever find or attribute to anyone, pure unaccountable
+// waste. See data/uploads.ts's own header for the fuller reasoning;
+// this is the template any FUTURE upload endpoint should follow too.
 const postUpload = createEndpoint("/uploads", { method: "POST", scope: "http" }, async (ctx) => {
   const accountId = typeof ctx.body?.accountId === "string" ? ctx.body.accountId : "";
   if (!store.getAccount(accountId)) throw new APIError("UNAUTHORIZED", { message: "unknown account" });
   const mimeType = typeof ctx.body?.mimeType === "string" ? ctx.body.mimeType : "";
   const dataBase64 = typeof ctx.body?.dataBase64 === "string" ? ctx.body.dataBase64 : "";
+  let ext: string, buffer: Buffer;
   try {
-    const url = saveUploadedImage(join(process.cwd(), "data", "uploads"), mimeType, dataBase64);
-    store.recordUploadedImage(accountId, url);
-    return { url };
+    ({ ext, buffer } = validateUpload(mimeType, dataBase64));
   } catch (err) {
     if (err instanceof UploadRejected) throw new APIError("BAD_REQUEST", { message: err.message });
     throw err;
   }
+  const url = mintUploadUrl(ext);
+  store.recordUploadedImage(accountId, url);
+  writeUploadedImageBytes(join(process.cwd(), "data", "uploads"), url, buffer);
+  return { url };
 });
 
 // Real request, 2026-10-29: "we should be able to get the list of the

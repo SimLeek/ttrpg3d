@@ -32,7 +32,7 @@ import DOMPurify from "dompurify";
 import { RESERVED_CHARACTER_VARIABLES, RESERVED_TOKEN_IMAGE_VARIABLES, computeMissingModDependencies, findVariableRefs, findLibraryCalls, findExpressionSegments, findCompoundRollSegments, evaluateCharacterSheetExpression, resolveVariableValue, xOfYMaxKey, type CharacterSheetVariableDef, type CharacterSheetVariableType, type CharacterSheetPageDef, type CharacterSheetBarDef } from "@ttrpg3d/shared";
 import { fetchCharacterSheetTemplates, fetchCharacterSheetPreview, updateCharacterSheet, uploadImage, fetchAccountUploads, importCharacterSheetFromWorkbook, type CharacterRecord, type CharacterSheetTemplateCatalogEntry, type CharacterSheetLibraryCatalogEntry } from "./api.js";
 import { renderVariableWidget, buildVariableComponentHtml, buildVariableChipHtml, wireVariableWidgets, maxExpressionFieldKey, valueExpressionFieldKey } from "./characterSheetWidgets.js";
-import type { ModActionFn, ModActionOutcome } from "./modActions.js";
+import type { ModActionFn, ModActionOutcome } from "./modActionRegistry.js";
 import { colorToHex, hexToColor } from "./lobby.js";
 import { fetchAndParseWorkbook } from "./characterSheetImport.js";
 
@@ -60,13 +60,16 @@ export interface CharacterSheetViewOptions {
    * Real request, 2026-10-26 (traits & abilities round): registered
    * client-side functions a mod's own page markdown can trigger via a
    * literal `<button data-mod-action="modId.actionName">` (see
-   * modActions.ts's own header for why this is a THIRD, distinct
+   * modActionRegistry.ts's own header for why this is a THIRD, distinct
    * mechanism from a plain `{{expression}}` or a `{{modId.fn()}}`
    * library call). Optional -- every EXISTING caller that doesn't
    * pass one simply never matches any `[data-mod-action]` button
    * (there's nothing to look up), same as before this option existed.
-   * Every real caller passes the SAME shared `MOD_ACTIONS` constant,
-   * same as `templates`/`libraries` already are.
+   * Every real caller passes the SAME `getAllModActions()` snapshot
+   * (modActions.ts), same as `templates`/`libraries` already are --
+   * this file itself never hardcodes or imports any specific mod's
+   * own actions, same reasoning it never imports a specific mod's
+   * template/library either.
    */
   modActions?: Readonly<Record<string, Readonly<Record<string, ModActionFn>>>>;
   /**
